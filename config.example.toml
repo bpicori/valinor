@@ -1,0 +1,4 @@
+# OpenAI client configuration
+api_key = ""
+base_url = ""
+model = ""
