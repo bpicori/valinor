@@ -1,0 +1,3 @@
+- [ ] Cap agent iterations at a configurable maximum (e.g., 20) to prevent runaway loops
+- [ ] Introduce a sandboxed terminal execution tool for running shell commands safely
+- [ ] Support persistent sessions to preserve context across multiple interactions
