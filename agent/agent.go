@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,9 @@ import (
 	"github.com/openai/openai-go/v3"
 	"valinor/tools"
 )
+
+//go:embed system_prompt.md
+var systemPrompt string
 
 // Agent manages conversation state and API calls.
 type Agent struct {
@@ -33,7 +37,7 @@ func New(client openai.Client, model string, rootPath string) (*Agent, error) {
 	return &Agent{
 		client:   client,
 		model:    model,
-		messages: nil,
+		messages: []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(systemPrompt)},
 		tools:    tools.BuildTools(sb),
 		sandbox:  sb,
 	}, nil
@@ -150,7 +154,7 @@ func (a *Agent) Send(ctx context.Context, userMessage string, contentOut, refusa
 	}
 }
 
-// NewConversation clears the conversation history.
+// NewConversation clears the conversation history, keeping only the system prompt.
 func (a *Agent) NewConversation() {
-	a.messages = nil
+	a.messages = []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(systemPrompt)}
 }
