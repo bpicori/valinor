@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"valinor/agent"
-	"valinor/config"
+	"valinor/internal/agent"
+	"valinor/internal/config"
 )
 
 // toolPrefix is the prefix the agent uses for tool call logs.

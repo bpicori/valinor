@@ -3,7 +3,7 @@
 BINARY := bin/valinor
 
 build:
-	go build -o $(BINARY) .
+	go build -o $(BINARY) ./cmd/valinor
 
 run: build
 	./$(BINARY)
@@ -25,4 +25,4 @@ lint:
 	go vet ./...
 
 install: build
-	go install .
+	go install ./cmd/valinor

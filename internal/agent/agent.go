@@ -9,7 +9,7 @@ import (
 	"os"
 
 	"github.com/openai/openai-go/v3"
-	"valinor/tools"
+	"valinor/internal/tools"
 )
 
 //go:embed system_prompt.md
