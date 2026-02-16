@@ -5,7 +5,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 
 	"github.com/openai/openai-go/v3"
@@ -61,9 +60,33 @@ type Usage struct {
 	TotalTokens      int64
 }
 
-// Send sends a user message, streams the assistant's reply and logs to the provided writers, and returns the reply content and usage statistics.
-// contentOut: main reply, refusalOut: refusals, toolOut: tool logs (nil to suppress).
-func (a *Agent) Send(ctx context.Context, userMessage string, contentOut, refusalOut, toolOut io.Writer) (assistantContent string, usage Usage, err error) {
+// EventType identifies what kind of streaming event occurred.
+type EventType int
+
+const (
+	EventContentDelta  EventType = iota // Streamed content chunk
+	EventRefusal                        // Model refusal
+	EventToolCallStart                  // Tool call initiated
+	EventToolCallDone                   // Tool call finished with result
+	EventDone                           // Agent finished (includes usage)
+	EventError                          // An error occurred
+)
+
+// Event represents a streaming event from the agent.
+type Event struct {
+	Type       EventType
+	Content    string // For ContentDelta, Refusal
+	ToolCallID string // For ToolCallStart, ToolCallDone
+	ToolName   string // For ToolCallStart, ToolCallDone
+	ToolArgs   string // For ToolCallStart (JSON string)
+	ToolResult string // For ToolCallDone
+	Usage      Usage  // For EventDone
+	Error      error  // For EventError
+}
+
+// Send sends a user message and calls onEvent for each streaming event.
+// It blocks until the full response (including all tool calls) is complete.
+func (a *Agent) Send(ctx context.Context, userMessage string, onEvent func(Event)) error {
 	a.messages = append(a.messages, openai.UserMessage(userMessage))
 
 	params := openai.ChatCompletionNewParams{
@@ -81,6 +104,9 @@ func (a *Agent) Send(ctx context.Context, userMessage string, contentOut, refusa
 		}
 		params.Tools = defs
 	}
+
+	var usage Usage
+	var assistantContent string
 
 	for {
 		stream := a.client.Chat.Completions.NewStreaming(ctx, params)
@@ -102,27 +128,28 @@ func (a *Agent) Send(ctx context.Context, userMessage string, contentOut, refusa
 			delta := chunk.Choices[0].Delta
 			if delta.Content != "" {
 				assistantContent += delta.Content
-				if contentOut != nil {
-					_, _ = contentOut.Write([]byte(delta.Content))
-				}
+				onEvent(Event{Type: EventContentDelta, Content: delta.Content})
 			}
-			if delta.Refusal != "" && refusalOut != nil {
-				_, _ = refusalOut.Write([]byte(delta.Refusal))
+			if delta.Refusal != "" {
+				onEvent(Event{Type: EventRefusal, Content: delta.Refusal})
 			}
 		}
 
-		if err = stream.Err(); err != nil {
-			return "", usage, err
+		if err := stream.Err(); err != nil {
+			onEvent(Event{Type: EventError, Error: err})
+			return err
 		}
 
 		if len(acc.Choices) == 0 {
-			return assistantContent, usage, nil
+			onEvent(Event{Type: EventDone, Usage: usage})
+			return nil
 		}
 		msg := acc.Choices[0].Message
 
 		if len(msg.ToolCalls) == 0 {
 			a.messages = append(a.messages, openai.AssistantMessage(assistantContent))
-			return assistantContent, usage, nil
+			onEvent(Event{Type: EventDone, Usage: usage})
+			return nil
 		}
 
 		a.messages = append(a.messages, msg.ToParam())
@@ -132,9 +159,12 @@ func (a *Agent) Send(ctx context.Context, userMessage string, contentOut, refusa
 			if tc.Function.Arguments != "" {
 				args = json.RawMessage(tc.Function.Arguments)
 			}
-			if toolOut != nil {
-				fmt.Fprintf(toolOut, "[tool] %s %s\n", tc.Function.Name, string(args))
-			}
+			onEvent(Event{
+				Type:       EventToolCallStart,
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
+				ToolArgs:   string(args),
+			})
 			var result string
 			for _, t := range a.tools {
 				if t.Name == tc.Function.Name {
@@ -146,6 +176,12 @@ func (a *Agent) Send(ctx context.Context, userMessage string, contentOut, refusa
 					break
 				}
 			}
+			onEvent(Event{
+				Type:       EventToolCallDone,
+				ToolCallID: tc.ID,
+				ToolName:   tc.Function.Name,
+				ToolResult: result,
+			})
 			a.messages = append(a.messages, openai.ToolMessage(result, tc.ID))
 		}
 
