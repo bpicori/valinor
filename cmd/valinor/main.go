@@ -7,9 +7,9 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"valinor/internal/agent"
 	"valinor/internal/bus"
 	"valinor/internal/config"
+	"valinor/internal/session"
 	"valinor/internal/tui"
 )
 
@@ -19,17 +19,27 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	b := bus.New()
-
-	ag, err := agent.New(cfg.NewClient(), cfg.Model, "./agent_workspace", b)
+	sessionsDir, err := cfg.ResolveSessionDir()
 	if err != nil {
-		log.Fatalf("init agent: %v", err)
+		log.Fatalf("resolve session dir: %v", err)
 	}
-	defer ag.Close()
+
+	b := bus.New()
+	sm := session.NewManager(sessionsDir)
+
+	sess, err := sm.Create(context.Background(), session.CreateConfig{
+		Model:  cfg.Model,
+		Client: cfg.NewClient(),
+		Bus:    b,
+	})
+	if err != nil {
+		log.Fatalf("create session: %v", err)
+	}
+	defer sess.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go ag.Run(ctx)
+	go sess.Run(ctx)
 
 	model := tui.New(b, cfg.Model)
 	p := tea.NewProgram(model,

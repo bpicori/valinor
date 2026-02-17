@@ -15,6 +15,11 @@ import (
 //go:embed system_prompt.md
 var systemPrompt string
 
+// SystemPrompt returns the embedded system prompt for session reconstruction.
+func SystemPrompt() string {
+	return systemPrompt
+}
+
 // Agent manages conversation state and API calls. It subscribes to the bus for
 // user intent events and publishes streaming events back.
 type Agent struct {
@@ -222,4 +227,9 @@ func (a *Agent) sendAndPublish(ctx context.Context, userMessage string) error {
 // NewConversation clears the conversation history, keeping only the system prompt.
 func (a *Agent) NewConversation() {
 	a.messages = []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(systemPrompt)}
+}
+
+// RestoreMessages replaces the conversation history. Used when resuming a session.
+func (a *Agent) RestoreMessages(msgs []openai.ChatCompletionMessageParamUnion) {
+	a.messages = msgs
 }
