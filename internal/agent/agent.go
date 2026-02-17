@@ -23,18 +23,20 @@ func SystemPrompt() string {
 // Agent manages conversation state and API calls. It subscribes to the bus for
 // user intent events and publishes streaming events back.
 type Agent struct {
-	client   openai.Client
-	model    string
-	messages []openai.ChatCompletionMessageParamUnion
-	tools    []tools.Tool
-	sandbox  *tools.Sandbox
-	bus      *bus.Bus
-	sub      *bus.Subscription
+	client           openai.Client
+	model            string
+	messages         []openai.ChatCompletionMessageParamUnion
+	tools            []tools.Tool
+	sandbox          *tools.Sandbox
+	bus              *bus.Bus
+	sub              *bus.Subscription
+	maxIterations    int
 }
 
-// New creates an agent with the given client, model, workspace root path, and bus.
+// New creates an agent with the given client, model, workspace root path, bus, and max iterations.
 // The root path is created if it does not exist. Call Close when done.
-func New(client openai.Client, model string, rootPath string, b *bus.Bus) (*Agent, error) {
+// maxIterations caps tool-call loops per user message; if <= 0, a default of 20 is used.
+func New(client openai.Client, model string, rootPath string, b *bus.Bus, maxIterations int) (*Agent, error) {
 	if err := os.MkdirAll(rootPath, 0755); err != nil {
 		return nil, err
 	}
@@ -42,14 +44,18 @@ func New(client openai.Client, model string, rootPath string, b *bus.Bus) (*Agen
 	if err != nil {
 		return nil, err
 	}
+	if maxIterations <= 0 {
+		maxIterations = 20
+	}
 	return &Agent{
-		client:   client,
-		model:    model,
-		messages: []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(systemPrompt)},
-		tools:    tools.BuildTools(sb),
-		sandbox:  sb,
-		bus:      b,
-		sub:      b.Subscribe(bus.EventUserMessage, bus.EventNewConversation),
+		client:        client,
+		model:         model,
+		messages:      []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(systemPrompt)},
+		tools:         tools.BuildTools(sb),
+		sandbox:       sb,
+		bus:           b,
+		sub:           b.Subscribe(bus.EventUserMessage, bus.EventNewConversation),
+		maxIterations: maxIterations,
 	}, nil
 }
 
@@ -66,7 +72,7 @@ func (a *Agent) Run(ctx context.Context) {
 			switch ev.Type {
 			case bus.EventUserMessage:
 				p := ev.Payload.(bus.UserMessagePayload)
-				_ = a.sendAndPublish(ctx, p.Content)
+				_ = a.runTurn(ctx, p.Content)
 			case bus.EventNewConversation:
 				a.NewConversation()
 			}
@@ -92,8 +98,8 @@ type Usage struct {
 	TotalTokens      int64
 }
 
-// sendAndPublish sends a user message and publishes each streaming event to the bus.
-func (a *Agent) sendAndPublish(ctx context.Context, userMessage string) error {
+// runTurn processes a user message through the model and publishes each streaming event to the bus.
+func (a *Agent) runTurn(ctx context.Context, userMessage string) error {
 	a.messages = append(a.messages, openai.UserMessage(userMessage))
 
 	params := openai.ChatCompletionNewParams{
@@ -114,8 +120,20 @@ func (a *Agent) sendAndPublish(ctx context.Context, userMessage string) error {
 
 	var usage Usage
 	var assistantContent string
+	iterations := 0
 
 	for {
+		if iterations >= a.maxIterations {
+			a.bus.Publish(bus.Event{
+				Type: bus.EventAgentError,
+				Payload: bus.AgentErrorPayload{
+					Error: fmt.Errorf("max agent iterations (%d) reached; stopping to prevent runaway loop", a.maxIterations),
+				},
+			})
+			return fmt.Errorf("max agent iterations (%d) reached", a.maxIterations)
+		}
+		iterations++
+
 		stream := a.client.Chat.Completions.NewStreaming(ctx, params)
 		acc := openai.ChatCompletionAccumulator{}
 

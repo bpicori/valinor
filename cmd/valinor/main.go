@@ -28,9 +28,10 @@ func main() {
 	sm := session.NewManager(sessionsDir)
 
 	sess, err := sm.Create(context.Background(), session.CreateConfig{
-		Model:  cfg.Model,
-		Client: cfg.NewClient(),
-		Bus:    b,
+		Model:              cfg.Model,
+		Client:             cfg.NewClient(),
+		Bus:                b,
+		MaxAgentIterations: cfg.MaxAgentIterations,
 	})
 	if err != nil {
 		log.Fatalf("create session: %v", err)

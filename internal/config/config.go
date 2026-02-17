@@ -16,12 +16,16 @@ const DefaultBaseURL = "https://api.openai.com/v1"
 // Each session is stored at session_dir/<uuid>/ with workspace at session_dir/<uuid>/workspace/.
 const DefaultSessionDir = "~/.valinor/sessions"
 
+// DefaultMaxAgentIterations is the default cap on agent tool-call iterations per user message.
+const DefaultMaxAgentIterations = 20
+
 // Config holds OpenAI client configuration and paths.
 type Config struct {
-	APIKey     string `toml:"api_key"`
-	BaseURL    string `toml:"base_url"`
-	Model      string `toml:"model"`
-	SessionDir string `toml:"session_dir"`
+	APIKey               string `toml:"api_key"`
+	BaseURL              string `toml:"base_url"`
+	Model                string `toml:"model"`
+	SessionDir           string `toml:"session_dir"`
+	MaxAgentIterations   int    `toml:"max_agent_iterations"`
 }
 
 // LoadFromFile loads configuration from a TOML file.
@@ -38,6 +42,9 @@ func LoadFromFile(path string) (Config, error) {
 	}
 	if cfg.SessionDir == "" {
 		cfg.SessionDir = DefaultSessionDir
+	}
+	if cfg.MaxAgentIterations <= 0 {
+		cfg.MaxAgentIterations = DefaultMaxAgentIterations
 	}
 	return cfg, nil
 }

@@ -18,9 +18,10 @@ const workspaceSubdir = "workspace"
 
 // CreateConfig holds parameters for creating a new session.
 type CreateConfig struct {
-	Model  string
-	Client openai.Client
-	Bus    *bus.Bus
+	Model               string
+	Client              openai.Client
+	Bus                 *bus.Bus
+	MaxAgentIterations  int
 }
 
 // Manager manages session lifecycle.
@@ -60,7 +61,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	ag, err := agent.New(cfg.Client, cfg.Model, workspaceDir, cfg.Bus)
+	ag, err := agent.New(cfg.Client, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create agent: %w", err)
@@ -101,7 +102,7 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 	}
 
 	workspaceDir := filepath.Join(dir, workspaceSubdir)
-	ag, err := agent.New(cfg.Client, meta.Model, workspaceDir, cfg.Bus)
+	ag, err := agent.New(cfg.Client, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create agent: %w", err)
