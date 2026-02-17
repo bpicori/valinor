@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"valinor/internal/agent"
+	"valinor/internal/bus"
 	"valinor/internal/config"
-	"valinor/internal/ui"
+	"valinor/internal/tui"
 )
 
 func main() {
@@ -17,13 +19,19 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	ag, err := agent.New(cfg.NewClient(), cfg.Model, "./agent_workspace")
+	b := bus.New()
+
+	ag, err := agent.New(cfg.NewClient(), cfg.Model, "./agent_workspace", b)
 	if err != nil {
 		log.Fatalf("init agent: %v", err)
 	}
 	defer ag.Close()
 
-	model := ui.New(ag, cfg.Model)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go ag.Run(ctx)
+
+	model := tui.New(b, cfg.Model)
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),

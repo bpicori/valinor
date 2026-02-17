@@ -8,7 +8,7 @@ const (
 	EventUserMessage     EventType = iota // User sent a chat message.
 	EventNewConversation                  // User requested /new or /clear.
 
-	// Agent streaming events (published by AgentHandler).
+	// Agent streaming events (published by Agent).
 	EventAgentContentDelta // Streamed content chunk.
 	EventAgentRefusal      // Model refusal.
 	EventAgentToolCallStart // Tool call initiated.

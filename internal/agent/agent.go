@@ -8,24 +8,28 @@ import (
 	"os"
 
 	"github.com/openai/openai-go/v3"
+	"valinor/internal/bus"
 	"valinor/internal/tools"
 )
 
 //go:embed system_prompt.md
 var systemPrompt string
 
-// Agent manages conversation state and API calls.
+// Agent manages conversation state and API calls. It subscribes to the bus for
+// user intent events and publishes streaming events back.
 type Agent struct {
 	client   openai.Client
 	model    string
 	messages []openai.ChatCompletionMessageParamUnion
 	tools    []tools.Tool
 	sandbox  *tools.Sandbox
+	bus      *bus.Bus
+	sub      *bus.Subscription
 }
 
-// New creates an agent with the given client, model, and workspace root path.
+// New creates an agent with the given client, model, workspace root path, and bus.
 // The root path is created if it does not exist. Call Close when done.
-func New(client openai.Client, model string, rootPath string) (*Agent, error) {
+func New(client openai.Client, model string, rootPath string, b *bus.Bus) (*Agent, error) {
 	if err := os.MkdirAll(rootPath, 0755); err != nil {
 		return nil, err
 	}
@@ -39,7 +43,30 @@ func New(client openai.Client, model string, rootPath string) (*Agent, error) {
 		messages: []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(systemPrompt)},
 		tools:    tools.BuildTools(sb),
 		sandbox:  sb,
+		bus:      b,
+		sub:      b.Subscribe(bus.EventUserMessage, bus.EventNewConversation),
 	}, nil
+}
+
+// Run processes bus events until ctx is cancelled. Call in a goroutine.
+func (a *Agent) Run(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-a.sub.Ch():
+			if !ok {
+				return
+			}
+			switch ev.Type {
+			case bus.EventUserMessage:
+				p := ev.Payload.(bus.UserMessagePayload)
+				_ = a.sendAndPublish(ctx, p.Content)
+			case bus.EventNewConversation:
+				a.NewConversation()
+			}
+		}
+	}
 }
 
 // Close releases the sandbox root. Call when the agent is no longer needed.
@@ -60,33 +87,8 @@ type Usage struct {
 	TotalTokens      int64
 }
 
-// EventType identifies what kind of streaming event occurred.
-type EventType int
-
-const (
-	EventContentDelta  EventType = iota // Streamed content chunk
-	EventRefusal                        // Model refusal
-	EventToolCallStart                  // Tool call initiated
-	EventToolCallDone                   // Tool call finished with result
-	EventDone                           // Agent finished (includes usage)
-	EventError                          // An error occurred
-)
-
-// Event represents a streaming event from the agent.
-type Event struct {
-	Type       EventType
-	Content    string // For ContentDelta, Refusal
-	ToolCallID string // For ToolCallStart, ToolCallDone
-	ToolName   string // For ToolCallStart, ToolCallDone
-	ToolArgs   string // For ToolCallStart (JSON string)
-	ToolResult string // For ToolCallDone
-	Usage      Usage  // For EventDone
-	Error      error  // For EventError
-}
-
-// Send sends a user message and calls onEvent for each streaming event.
-// It blocks until the full response (including all tool calls) is complete.
-func (a *Agent) Send(ctx context.Context, userMessage string, onEvent func(Event)) error {
+// sendAndPublish sends a user message and publishes each streaming event to the bus.
+func (a *Agent) sendAndPublish(ctx context.Context, userMessage string) error {
 	a.messages = append(a.messages, openai.UserMessage(userMessage))
 
 	params := openai.ChatCompletionNewParams{
@@ -128,27 +130,50 @@ func (a *Agent) Send(ctx context.Context, userMessage string, onEvent func(Event
 			delta := chunk.Choices[0].Delta
 			if delta.Content != "" {
 				assistantContent += delta.Content
-				onEvent(Event{Type: EventContentDelta, Content: delta.Content})
+				a.bus.Publish(bus.Event{
+					Type:    bus.EventAgentContentDelta,
+					Payload: bus.ContentDeltaPayload{Content: delta.Content},
+				})
 			}
 			if delta.Refusal != "" {
-				onEvent(Event{Type: EventRefusal, Content: delta.Refusal})
+				a.bus.Publish(bus.Event{
+					Type:    bus.EventAgentRefusal,
+					Payload: bus.RefusalPayload{Content: delta.Refusal},
+				})
 			}
 		}
 
 		if err := stream.Err(); err != nil {
-			onEvent(Event{Type: EventError, Error: err})
+			a.bus.Publish(bus.Event{
+				Type:    bus.EventAgentError,
+				Payload: bus.AgentErrorPayload{Error: err},
+			})
 			return err
 		}
 
 		if len(acc.Choices) == 0 {
-			onEvent(Event{Type: EventDone, Usage: usage})
+			a.bus.Publish(bus.Event{
+				Type: bus.EventAgentDone,
+				Payload: bus.AgentDonePayload{
+					PromptTokens:     usage.PromptTokens,
+					CompletionTokens: usage.CompletionTokens,
+					TotalTokens:      usage.TotalTokens,
+				},
+			})
 			return nil
 		}
 		msg := acc.Choices[0].Message
 
 		if len(msg.ToolCalls) == 0 {
 			a.messages = append(a.messages, openai.AssistantMessage(assistantContent))
-			onEvent(Event{Type: EventDone, Usage: usage})
+			a.bus.Publish(bus.Event{
+				Type: bus.EventAgentDone,
+				Payload: bus.AgentDonePayload{
+					PromptTokens:     usage.PromptTokens,
+					CompletionTokens: usage.CompletionTokens,
+					TotalTokens:      usage.TotalTokens,
+				},
+			})
 			return nil
 		}
 
@@ -159,11 +184,13 @@ func (a *Agent) Send(ctx context.Context, userMessage string, onEvent func(Event
 			if tc.Function.Arguments != "" {
 				args = json.RawMessage(tc.Function.Arguments)
 			}
-			onEvent(Event{
-				Type:       EventToolCallStart,
-				ToolCallID: tc.ID,
-				ToolName:   tc.Function.Name,
-				ToolArgs:   string(args),
+			a.bus.Publish(bus.Event{
+				Type: bus.EventAgentToolCallStart,
+				Payload: bus.ToolCallStartPayload{
+					ToolCallID: tc.ID,
+					ToolName:   tc.Function.Name,
+					ToolArgs:   string(args),
+				},
 			})
 			var result string
 			for _, t := range a.tools {
@@ -176,11 +203,13 @@ func (a *Agent) Send(ctx context.Context, userMessage string, onEvent func(Event
 					break
 				}
 			}
-			onEvent(Event{
-				Type:       EventToolCallDone,
-				ToolCallID: tc.ID,
-				ToolName:   tc.Function.Name,
-				ToolResult: result,
+			a.bus.Publish(bus.Event{
+				Type: bus.EventAgentToolCallDone,
+				Payload: bus.ToolCallDonePayload{
+					ToolCallID:  tc.ID,
+					ToolName:    tc.Function.Name,
+					ToolResult:  result,
+				},
 			})
 			a.messages = append(a.messages, openai.ToolMessage(result, tc.ID))
 		}

@@ -1,15 +1,15 @@
-package ui
+package tui
 
 import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"valinor/internal/agent"
+	"valinor/internal/bus"
 )
 
-// agentEventMsg wraps an agent.Event for the Bubble Tea message loop.
-type agentEventMsg struct {
-	Event agent.Event
+// busEventMsg wraps a bus.Event for the Bubble Tea message loop.
+type busEventMsg struct {
+	Event bus.Event
 }
 
 // elapsedTickMsg is sent every second while waiting for the agent to update the elapsed time display.

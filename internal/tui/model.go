@@ -1,4 +1,4 @@
-package ui
+package tui
 
 import (
 	"encoding/json"
@@ -12,7 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"valinor/internal/agent"
+	"valinor/internal/bus"
 )
 
 // Key bindings
@@ -61,18 +61,25 @@ type toolCall struct {
 	Done   bool
 }
 
+// Usage holds token usage statistics for display.
+type Usage struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+}
+
 // Model is the top-level Bubble Tea model.
 type Model struct {
-	agent      *agent.Agent
-	modelName  string
-	viewport   viewport.Model
-	textarea   textarea.Model
-	spinner    spinner.Model
-	state      appState
-	messages   []chatMessage
-	eventCh    chan agent.Event
-	totalUsage        agent.Usage
-	lastUsage         agent.Usage
+	bus               *bus.Bus
+	sub               *bus.Subscription
+	modelName         string
+	viewport          viewport.Model
+	textarea          textarea.Model
+	spinner           spinner.Model
+	state             appState
+	messages          []chatMessage
+	totalUsage        Usage
+	lastUsage         Usage
 	width             int
 	height            int
 	ready             bool
@@ -80,7 +87,7 @@ type Model struct {
 }
 
 // New creates a new UI model.
-func New(ag *agent.Agent, modelName string) Model {
+func New(b *bus.Bus, modelName string) Model {
 	ta := textarea.New()
 	ta.Placeholder = "Send a message..."
 	ta.Focus()
@@ -92,13 +99,22 @@ func New(ag *agent.Agent, modelName string) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
+	sub := b.Subscribe(
+		bus.EventAgentContentDelta,
+		bus.EventAgentRefusal,
+		bus.EventAgentToolCallStart,
+		bus.EventAgentToolCallDone,
+		bus.EventAgentDone,
+		bus.EventAgentError,
+	)
+
 	return Model{
-		agent:     ag,
+		bus:       b,
+		sub:       sub,
 		modelName: modelName,
 		textarea:  ta,
 		spinner:   sp,
 		state:     stateReady,
-		eventCh:   make(chan agent.Event, 64),
 	}
 }
 
@@ -107,6 +123,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		m.spinner.Tick,
+		waitForBusEvent(m.sub),
 	)
 }
 
@@ -131,7 +148,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, tea.Quit
 				}
 				if input == "/new" || input == "/clear" {
-					m.agent.NewConversation()
+					m.bus.Publish(bus.Event{Type: bus.EventNewConversation})
 					m.messages = nil
 					m.rebuildViewportContent()
 					return m, tea.Batch(cmds...)
@@ -142,7 +159,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.state = stateWaiting
 				m.thinkingStartedAt = time.Now()
 				m.rebuildViewportContent()
-				return m, tea.Batch(startAgentCmd(m.agent, input, m.eventCh), elapsedTickCmd())
+				m.bus.Publish(bus.Event{
+					Type:    bus.EventUserMessage,
+					Payload: bus.UserMessagePayload{Content: input},
+				})
+				return m, tea.Batch(elapsedTickCmd())
 			}
 		}
 
@@ -175,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, elapsedTickCmd())
 		}
 
-	case agentEventMsg:
+	case busEventMsg:
 		ev := msg.Event
 		if len(m.messages) == 0 {
 			return m, nil
@@ -184,48 +205,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		last := &m.messages[lastIdx]
 
 		switch ev.Type {
-		case agent.EventContentDelta:
-			last.Content += ev.Content
+		case bus.EventAgentContentDelta:
+			p := ev.Payload.(bus.ContentDeltaPayload)
+			last.Content += p.Content
 			m.rebuildViewportContent()
-			return m, tea.Batch(waitForAgentEvent(m.eventCh), elapsedTickCmd())
-		case agent.EventRefusal:
-			last.Content += ev.Content
+			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
+		case bus.EventAgentRefusal:
+			p := ev.Payload.(bus.RefusalPayload)
+			last.Content += p.Content
 			m.rebuildViewportContent()
-			return m, tea.Batch(waitForAgentEvent(m.eventCh), elapsedTickCmd())
-		case agent.EventToolCallStart:
+			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
+		case bus.EventAgentToolCallStart:
+			p := ev.Payload.(bus.ToolCallStartPayload)
 			last.ToolCalls = append(last.ToolCalls, toolCall{
-				ID:   ev.ToolCallID,
-				Name: ev.ToolName,
-				Args: ev.ToolArgs,
+				ID:   p.ToolCallID,
+				Name: p.ToolName,
+				Args: p.ToolArgs,
 			})
 			m.rebuildViewportContent()
-			return m, tea.Batch(waitForAgentEvent(m.eventCh), elapsedTickCmd())
-		case agent.EventToolCallDone:
+			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
+		case bus.EventAgentToolCallDone:
+			p := ev.Payload.(bus.ToolCallDonePayload)
 			for i := range last.ToolCalls {
-				if last.ToolCalls[i].ID == ev.ToolCallID && !last.ToolCalls[i].Done {
-					last.ToolCalls[i].Result = ev.ToolResult
+				if last.ToolCalls[i].ID == p.ToolCallID && !last.ToolCalls[i].Done {
+					last.ToolCalls[i].Result = p.ToolResult
 					last.ToolCalls[i].Done = true
 					break
 				}
 			}
 			m.rebuildViewportContent()
-			return m, tea.Batch(waitForAgentEvent(m.eventCh), elapsedTickCmd())
-		case agent.EventDone:
+			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
+		case bus.EventAgentDone:
+			p := ev.Payload.(bus.AgentDonePayload)
 			last.Streaming = false
 			last.Rendered = renderMarkdown(last.Content, m.width-4)
-			m.lastUsage = ev.Usage
-			m.totalUsage.PromptTokens += ev.Usage.PromptTokens
-			m.totalUsage.CompletionTokens += ev.Usage.CompletionTokens
-			m.totalUsage.TotalTokens += ev.Usage.TotalTokens
+			m.lastUsage = Usage{
+				PromptTokens:     p.PromptTokens,
+				CompletionTokens: p.CompletionTokens,
+				TotalTokens:      p.TotalTokens,
+			}
+			m.totalUsage.PromptTokens += p.PromptTokens
+			m.totalUsage.CompletionTokens += p.CompletionTokens
+			m.totalUsage.TotalTokens += p.TotalTokens
 			m.state = stateReady
 			m.rebuildViewportContent()
-			return m, nil
-		case agent.EventError:
+			return m, waitForBusEvent(m.sub)
+		case bus.EventAgentError:
+			p := ev.Payload.(bus.AgentErrorPayload)
 			last.Streaming = false
-			last.Error = ev.Error.Error()
+			last.Error = p.Error.Error()
 			m.state = stateReady
 			m.rebuildViewportContent()
-			return m, nil
+			return m, waitForBusEvent(m.sub)
 		}
 		return m, nil
 
