@@ -29,5 +29,6 @@ func BuildTools(sb *Sandbox) []Tool {
 		{readFileName, readFileDef(), func(a json.RawMessage) (string, error) { return readFileExec(sb, a) }},
 		{writeFileName, writeFileDef(), func(a json.RawMessage) (string, error) { return writeFileExec(sb, a) }},
 		{listFilesName, listFilesDef(), func(a json.RawMessage) (string, error) { return listFilesExec(sb, a) }},
+		{grepName, grepDef(), func(a json.RawMessage) (string, error) { return grepExec(sb, a) }},
 	}
 }

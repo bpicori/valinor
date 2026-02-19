@@ -44,12 +44,12 @@ const (
 
 // chatMessage is a single message in the conversation display.
 type chatMessage struct {
-	Role          messageRole
-	Content       string     // Text content (may contain markdown for assistant)
-	Rendered      string     // Cached rendered content (markdown applied when finalized)
-	ToolCalls     []toolCall // Tool calls made during this assistant turn
-	Streaming     bool       // True while content is still being received
-	Error         string     // Error message if any
+	Role      messageRole
+	Content   string     // Text content (may contain markdown for assistant)
+	Rendered  string     // Cached rendered content (markdown applied when finalized)
+	ToolCalls []toolCall // Tool calls made during this assistant turn
+	Streaming bool       // True while content is still being received
+	Error     string     // Error message if any
 }
 
 // toolCall represents a single tool invocation.
@@ -290,9 +290,9 @@ func formatToolCall(tc toolCall) string {
 	var argsMap map[string]interface{}
 	_ = json.Unmarshal([]byte(tc.Args), &argsMap)
 
-	// Pick primary value for display (path, pattern, query, etc.)
+	// Pick primary value for display (path, pattern, query, command, etc.)
 	var primary string
-	for _, k := range []string{"path", "file", "filename", "pattern", "query", "pathname"} {
+	for _, k := range []string{"command", "path", "file", "filename", "pattern", "query", "pathname"} {
 		if v, ok := argsMap[k]; ok {
 			if s, ok := v.(string); ok && s != "" {
 				primary = s
