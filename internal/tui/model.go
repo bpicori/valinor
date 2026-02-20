@@ -122,12 +122,11 @@ func New(b *bus.Bus, modelName string) Model {
 	}
 }
 
-// Init initializes the model.
+// Init initializes the model
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.textinput.Focus(),
 		textinput.Blink,
-		m.spinner.Tick,
 		waitForBusEvent(m.sub),
 	)
 }
@@ -135,147 +134,230 @@ func (m Model) Init() tea.Cmd {
 // Update handles incoming messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
-	var cmd tea.Cmd
 
-	switch msg := msg.(type) {
+	switch typed := msg.(type) {
+	// case for keypresses
 	case tea.KeyMsg:
-		if key.Matches(msg, keymap.Quit) {
-			return m, tea.Quit
+		updatedModel, cmd, handled, shouldQuit := m.handleKeyMsg(typed)
+		if shouldQuit {
+			return updatedModel, tea.Quit
 		}
-		if m.state == stateReady {
-			if key.Matches(msg, keymap.Submit) {
-				input := strings.TrimSpace(m.textinput.Value())
-				if input == "" {
-					return m, tea.Batch(cmds...)
-				}
-				m.textinput.SetValue("")
-				if input == "/exit" {
-					return m, tea.Quit
-				}
-				if input == "/new" || input == "/clear" {
-					m.bus.Publish(bus.Event{Type: bus.EventNewConversation})
-					m.messages = nil
-					m.rebuildViewportContent()
-					return m, tea.Batch(cmds...)
-				}
-
-				m.messages = append(m.messages, chatMessage{Role: roleUser, Content: input})
-				m.messages = append(m.messages, chatMessage{Role: roleAssistant, Streaming: true})
-				m.state = stateWaiting
-				m.thinkingStartedAt = time.Now()
-				m.rebuildViewportContent()
-				m.bus.Publish(bus.Event{
-					Type:    bus.EventUserMessage,
-					Payload: bus.UserMessagePayload{Content: input},
-				})
-				return m, tea.Batch(elapsedTickCmd())
-			}
+		if handled { // if handled stop processing further messages
+			return updatedModel, cmd
 		}
-
+		m = updatedModel
+	// case for window size changes
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.contentWidth = msg.Width - sidebarWidth
-		if m.contentWidth < 20 {
-			m.contentWidth = 20
-		}
-		spinnerHeight := 1
-		inputHeight := 5
-		footerHeight := 2
-		viewportHeight := msg.Height - spinnerHeight - inputHeight - footerHeight
-		if viewportHeight < 1 {
-			viewportHeight = 1
-		}
-
-		if !m.ready {
-			m.viewport = viewport.New(m.contentWidth, viewportHeight)
-			m.viewport.MouseWheelEnabled = true
-			m.viewport.MouseWheelDelta = 3
-			m.ready = true
-		} else {
-			m.viewport.Width = m.contentWidth
-			m.viewport.Height = viewportHeight
-		}
-		m.textinput.Width = m.contentWidth - 4
-		m.rebuildViewportContent()
-
-	case elapsedTickMsg:
-		if m.state == stateWaiting {
-			cmds = append(cmds, elapsedTickCmd())
-		}
-
+		m.handleWindowSizeMsg(typed)
+	// case for bus events
 	case busEventMsg:
-		ev := msg.Event
-		if len(m.messages) == 0 {
-			return m, nil
-		}
-		lastIdx := len(m.messages) - 1
-		last := &m.messages[lastIdx]
-
-		switch ev.Type {
-		case bus.EventAgentContentDelta:
-			p := ev.Payload.(bus.ContentDeltaPayload)
-			last.Content += p.Content
-			m.rebuildViewportContent()
-			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
-		case bus.EventAgentRefusal:
-			p := ev.Payload.(bus.RefusalPayload)
-			last.Content += p.Content
-			m.rebuildViewportContent()
-			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
-		case bus.EventAgentToolCallStart:
-			p := ev.Payload.(bus.ToolCallStartPayload)
-			last.ToolCalls = append(last.ToolCalls, toolCall{
-				ID:   p.ToolCallID,
-				Name: p.ToolName,
-				Args: p.ToolArgs,
-			})
-			m.rebuildViewportContent()
-			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
-		case bus.EventAgentToolCallDone:
-			p := ev.Payload.(bus.ToolCallDonePayload)
-			for i := range last.ToolCalls {
-				if last.ToolCalls[i].ID == p.ToolCallID && !last.ToolCalls[i].Done {
-					last.ToolCalls[i].Result = p.ToolResult
-					last.ToolCalls[i].Done = true
-					break
-				}
-			}
-			m.rebuildViewportContent()
-			return m, tea.Batch(waitForBusEvent(m.sub), elapsedTickCmd())
-		case bus.EventAgentDone:
-			p := ev.Payload.(bus.AgentDonePayload)
-			last.Streaming = false
-			last.Rendered = renderMarkdown(last.Content, m.width-4)
-			m.lastUsage = Usage{
-				PromptTokens:     p.PromptTokens,
-				CompletionTokens: p.CompletionTokens,
-				TotalTokens:      p.TotalTokens,
-			}
-			m.totalUsage.PromptTokens += p.PromptTokens
-			m.totalUsage.CompletionTokens += p.CompletionTokens
-			m.totalUsage.TotalTokens += p.TotalTokens
-			m.state = stateReady
-			m.rebuildViewportContent()
-			return m, waitForBusEvent(m.sub)
-		case bus.EventAgentError:
-			p := ev.Payload.(bus.AgentErrorPayload)
-			last.Streaming = false
-			last.Error = p.Error.Error()
-			m.state = stateReady
-			m.rebuildViewportContent()
-			return m, waitForBusEvent(m.sub)
-		}
-		return m, nil
-
+		return m.handleBusEventMsg(typed)
+	// case for spinner tick
 	case spinner.TickMsg:
 		if m.state == stateWaiting {
-			m.spinner, cmd = m.spinner.Update(msg)
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(typed)
 			cmds = append(cmds, cmd)
 		}
 	}
 
-	// Forward to viewport and textinput
+	return m.updateChildComponents(msg, cmds)
+}
+
+// handleKeyMsg handles key events and returns model, cmd, handled, shouldQuit.
+func (m Model) handleKeyMsg(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
+	if key.Matches(msg, keymap.Quit) {
+		return m, nil, true, true
+	}
+	if m.state != stateReady {
+		return m, nil, false, false
+	}
+	if !key.Matches(msg, keymap.Submit) {
+		return m, nil, false, false
+	}
+
+	return m.handleSubmit()
+}
+
+// handleSubmit handles Enter/submit while the model is ready.
+func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
+	input := strings.TrimSpace(m.textinput.Value())
+	if input == "" {
+		return m, nil, true, false
+	}
+	m.textinput.SetValue("")
+	if input == "/exit" {
+		return m, nil, true, true
+	}
+	if input == "/new" || input == "/clear" {
+		m.bus.Publish(bus.Event{Type: bus.EventNewConversation})
+		m.messages = nil
+		m.rebuildViewportContent()
+		return m, nil, true, false
+	}
+
+	m.messages = append(m.messages, chatMessage{Role: roleUser, Content: input})
+	m.messages = append(m.messages, chatMessage{Role: roleAssistant, Streaming: true})
+	m.state = stateWaiting
+	m.thinkingStartedAt = time.Now()
+	m.rebuildViewportContent()
+	m.bus.Publish(bus.Event{
+		Type:    bus.EventUserMessage,
+		Payload: bus.UserMessagePayload{Content: input},
+	})
+	return m, tea.Batch(m.spinner.Tick), true, false
+}
+
+func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
+	m.width = msg.Width
+	m.height = msg.Height
+	m.contentWidth = msg.Width - sidebarWidth
+	if m.contentWidth < 20 {
+		m.contentWidth = 20
+	}
+
+	spinnerHeight := 1
+	inputHeight := 5
+	footerHeight := 2
+	viewportHeight := msg.Height - spinnerHeight - inputHeight - footerHeight
+	if viewportHeight < 1 {
+		viewportHeight = 1
+	}
+
+	if !m.ready {
+		m.viewport = viewport.New(m.contentWidth, viewportHeight)
+		m.viewport.MouseWheelEnabled = true
+		m.viewport.MouseWheelDelta = 3
+		m.ready = true
+	} else {
+		m.viewport.Width = m.contentWidth
+		m.viewport.Height = viewportHeight
+	}
+
+	m.textinput.Width = m.contentWidth - 4
+	m.rebuildViewportContent()
+}
+
+func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
+	last, ok := m.lastMessage()
+	if !ok {
+		return m, nil
+	}
+
+	switch msg.Event.Type {
+	case bus.EventAgentContentDelta:
+		payload, ok := msg.Event.Payload.(bus.ContentDeltaPayload)
+		if !ok {
+			return m, waitForBusEvent(m.sub)
+		}
+		return m, m.handleContentDelta(last, payload)
+	case bus.EventAgentRefusal:
+		payload, ok := msg.Event.Payload.(bus.RefusalPayload)
+		if !ok {
+			return m, waitForBusEvent(m.sub)
+		}
+		return m, m.handleRefusal(last, payload)
+	case bus.EventAgentToolCallStart:
+		payload, ok := msg.Event.Payload.(bus.ToolCallStartPayload)
+		if !ok {
+			return m, waitForBusEvent(m.sub)
+		}
+		return m, m.handleToolCallStart(last, payload)
+	case bus.EventAgentToolCallDone:
+		payload, ok := msg.Event.Payload.(bus.ToolCallDonePayload)
+		if !ok {
+			return m, waitForBusEvent(m.sub)
+		}
+		return m, m.handleToolCallDone(last, payload)
+	case bus.EventAgentDone:
+		payload, ok := msg.Event.Payload.(bus.AgentDonePayload)
+		if !ok {
+			return m, waitForBusEvent(m.sub)
+		}
+		return m, m.handleAgentDone(last, payload)
+	case bus.EventAgentError:
+		payload, ok := msg.Event.Payload.(bus.AgentErrorPayload)
+		if !ok {
+			return m, waitForBusEvent(m.sub)
+		}
+		return m, m.handleAgentError(last, payload)
+	default:
+		return m, nil
+	}
+}
+
+func (m *Model) lastMessage() (*chatMessage, bool) {
+	if len(m.messages) == 0 {
+		return nil, false
+	}
+	return &m.messages[len(m.messages)-1], true
+}
+
+func (m *Model) handleContentDelta(last *chatMessage, payload bus.ContentDeltaPayload) tea.Cmd {
+	last.Content += payload.Content
+	m.rebuildViewportContent()
+	return m.continueWaitingCmd()
+}
+
+func (m *Model) handleRefusal(last *chatMessage, payload bus.RefusalPayload) tea.Cmd {
+	last.Content += payload.Content
+	m.rebuildViewportContent()
+	return m.continueWaitingCmd()
+}
+
+func (m *Model) handleToolCallStart(last *chatMessage, payload bus.ToolCallStartPayload) tea.Cmd {
+	last.ToolCalls = append(last.ToolCalls, toolCall{
+		ID:   payload.ToolCallID,
+		Name: payload.ToolName,
+		Args: payload.ToolArgs,
+	})
+	m.rebuildViewportContent()
+	return m.continueWaitingCmd()
+}
+
+func (m *Model) handleToolCallDone(last *chatMessage, payload bus.ToolCallDonePayload) tea.Cmd {
+	for i := range last.ToolCalls {
+		if last.ToolCalls[i].ID == payload.ToolCallID && !last.ToolCalls[i].Done {
+			last.ToolCalls[i].Result = payload.ToolResult
+			last.ToolCalls[i].Done = true
+			break
+		}
+	}
+	m.rebuildViewportContent()
+	return m.continueWaitingCmd()
+}
+
+func (m *Model) handleAgentDone(last *chatMessage, payload bus.AgentDonePayload) tea.Cmd {
+	last.Streaming = false
+	last.Rendered = renderMarkdown(last.Content, m.width-4)
+	m.lastUsage = Usage{
+		PromptTokens:     payload.PromptTokens,
+		CompletionTokens: payload.CompletionTokens,
+		TotalTokens:      payload.TotalTokens,
+	}
+	m.totalUsage.PromptTokens += payload.PromptTokens
+	m.totalUsage.CompletionTokens += payload.CompletionTokens
+	m.totalUsage.TotalTokens += payload.TotalTokens
+	m.state = stateReady
+	m.rebuildViewportContent()
+	return waitForBusEvent(m.sub)
+}
+
+func (m *Model) handleAgentError(last *chatMessage, payload bus.AgentErrorPayload) tea.Cmd {
+	last.Streaming = false
+	last.Error = payload.Error.Error()
+	m.state = stateReady
+	m.rebuildViewportContent()
+	return waitForBusEvent(m.sub)
+}
+
+func (m *Model) continueWaitingCmd() tea.Cmd {
+	return waitForBusEvent(m.sub)
+}
+
+func (m Model) updateChildComponents(msg tea.Msg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	if m.ready {
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
@@ -296,24 +378,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func formatToolCall(tc toolCall) string {
 	var b strings.Builder
 	b.WriteString(toolCallStyle.Render(""))
-
-	// Extract displayable args from JSON
-	var argsMap map[string]interface{}
-	_ = json.Unmarshal([]byte(tc.Args), &argsMap)
-
-	// Pick primary value for display (path, pattern, query, command, etc.)
-	var primary string
-	for _, k := range []string{"command", "path", "file", "filename", "pattern", "query", "pathname"} {
-		if v, ok := argsMap[k]; ok {
-			if s, ok := v.(string); ok && s != "" {
-				primary = s
-				break
-			}
-		}
-	}
-	if primary == "" && tc.Args != "" && len(tc.Args) < 60 {
-		primary = tc.Args
-	}
+	primary := extractPrimaryToolArg(tc)
 
 	b.WriteString(toolCallStyle.Render("→ "))
 	b.WriteString(toolNameStyle.Render(tc.Name))
@@ -322,8 +387,7 @@ func formatToolCall(tc toolCall) string {
 		b.WriteString(pathStyle.Render(primary))
 	}
 	if tc.Done && tc.Result != "" {
-		// Append short result hint e.g. "(100 matches)"
-		if summary := summarizeToolResult(tc.Result); summary != "" {
+		if summary := formatToolResultSummary(tc.Result); summary != "" {
 			b.WriteString(toolCallStyle.Render(" " + summary))
 		}
 	}
@@ -331,7 +395,28 @@ func formatToolCall(tc toolCall) string {
 	return b.String()
 }
 
-func summarizeToolResult(result string) string {
+func extractPrimaryToolArg(tc toolCall) string {
+	var argsMap map[string]interface{}
+	_ = json.Unmarshal([]byte(tc.Args), &argsMap)
+
+	for _, key := range []string{"command", "path", "file", "filename", "pattern", "query", "pathname"} {
+		value, ok := argsMap[key]
+		if !ok {
+			continue
+		}
+		asString, ok := value.(string)
+		if ok && asString != "" {
+			return asString
+		}
+	}
+
+	if tc.Args != "" && len(tc.Args) < 60 {
+		return tc.Args
+	}
+	return ""
+}
+
+func formatToolResultSummary(result string) string {
 	if len(result) > 200 {
 		return "(" + strconv.Itoa(len(result)) + " chars)"
 	}
@@ -355,34 +440,46 @@ func (m *Model) rebuildViewportContent() {
 	for _, msg := range m.messages {
 		switch msg.Role {
 		case roleUser:
-			body := userPrefixStyle.Render("> ") + msg.Content
-			block := userMessageBlockStyle.Width(width - 4).Render(body)
-			b.WriteString(block)
+			b.WriteString(renderUserMessageBlock(msg, width))
 			b.WriteString("\n")
 		case roleAssistant:
-			var body strings.Builder
-			if msg.Error != "" {
-				body.WriteString(assistantStyle.Render(""))
-				body.WriteString(errorStyle.Render("Error: " + msg.Error))
-			} else {
-				for _, tc := range msg.ToolCalls {
-					body.WriteString(formatToolCall(tc))
-				}
-				if msg.Streaming {
-					body.WriteString(assistantStyle.Render(""))
-					body.WriteString(msg.Content)
-				} else if msg.Rendered != "" {
-					body.WriteString(assistantStyle.Render(""))
-					body.WriteString(msg.Rendered)
-				}
-			}
-			block := assistantMessageBlockStyle.Width(width - 4).Render(body.String())
-			b.WriteString(block)
+			b.WriteString(renderAssistantMessageBlock(msg, width))
 			b.WriteString("\n")
 		}
 	}
 	m.viewport.SetContent(b.String())
 	m.viewport.GotoBottom()
+}
+
+func renderUserMessageBlock(msg chatMessage, width int) string {
+	body := userPrefixStyle.Render("> ") + msg.Content
+	return userMessageBlockStyle.Width(width - 4).Render(body)
+}
+
+func renderAssistantMessageBlock(msg chatMessage, width int) string {
+	return assistantMessageBlockStyle.Width(width - 4).Render(renderAssistantBody(msg))
+}
+
+func renderAssistantBody(msg chatMessage) string {
+	var body strings.Builder
+	if msg.Error != "" {
+		body.WriteString(assistantStyle.Render(""))
+		body.WriteString(errorStyle.Render("Error: " + msg.Error))
+		return body.String()
+	}
+
+	for _, tc := range msg.ToolCalls {
+		body.WriteString(formatToolCall(tc))
+	}
+
+	body.WriteString(assistantStyle.Render(""))
+	if msg.Streaming {
+		body.WriteString(msg.Content)
+	} else if msg.Rendered != "" {
+		body.WriteString(msg.Rendered)
+	}
+
+	return body.String()
 }
 
 // formatTokens formats n with thousands separators for display.
