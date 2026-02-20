@@ -20,9 +20,9 @@ type toolCallContent struct {
 }
 
 type toolResultContent struct {
-	ToolCallID  string `json:"tool_call_id"`
-	ToolName    string `json:"tool_name"`
-	ToolResult  string `json:"tool_result"`
+	ToolCallID string `json:"tool_call_id"`
+	ToolName   string `json:"tool_name"`
+	ToolResult string `json:"tool_result"`
 }
 
 type assistantContentPayload struct {

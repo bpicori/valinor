@@ -9,8 +9,8 @@ const (
 	EventNewConversation                  // User requested /new or /clear.
 
 	// Agent streaming events (published by Agent).
-	EventAgentContentDelta // Streamed content chunk.
-	EventAgentRefusal      // Model refusal.
+	EventAgentContentDelta  // Streamed content chunk.
+	EventAgentRefusal       // Model refusal.
 	EventAgentToolCallStart // Tool call initiated.
 	EventAgentToolCallDone  // Tool call completed.
 	EventAgentDone          // Agent turn finished.

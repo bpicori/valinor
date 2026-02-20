@@ -16,8 +16,8 @@ const (
 
 // JSONLStore implements Store using JSONL files on disk.
 type JSONLStore struct {
-	dir         string
-	transcript  *os.File
+	dir        string
+	transcript *os.File
 }
 
 // NewJSONLStore opens or creates a session directory and returns a Store.

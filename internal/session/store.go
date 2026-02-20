@@ -8,11 +8,11 @@ import (
 
 // StoredEventType identifies the kind of persisted event.
 const (
-	StoredEventUserMessage     = "user_message"
+	StoredEventUserMessage      = "user_message"
 	StoredEventAssistantContent = "assistant_content"
-	StoredEventToolCall        = "tool_call"
-	StoredEventToolResult      = "tool_result"
-	StoredEventAgentDone       = "agent_done"
+	StoredEventToolCall         = "tool_call"
+	StoredEventToolResult       = "tool_result"
+	StoredEventAgentDone        = "agent_done"
 )
 
 // StoredEvent is a serializable representation of a conversation turn

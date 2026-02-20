@@ -18,8 +18,8 @@ type Session struct {
 	bus   *bus.Bus
 	sub   *bus.Subscription
 
-	mu                  sync.Mutex
-	accumulatedContent   string
+	mu                 sync.Mutex
+	accumulatedContent string
 }
 
 // NewSession creates a session that subscribes to all bus events for persistence.

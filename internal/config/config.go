@@ -20,12 +20,12 @@ const DefaultMaxAgentIterations = 20
 
 // Config holds OpenAI client configuration and paths.
 type Config struct {
-	APIKey               string `toml:"api_key"`
-	BaseURL              string `toml:"base_url"`
-	Model                string `toml:"model"`
-	SessionDir           string `toml:"session_dir"`
-	WorkspaceDir         string `toml:"workspace_dir"`
-	MaxAgentIterations   int    `toml:"max_agent_iterations"`
+	APIKey             string `toml:"api_key"`
+	BaseURL            string `toml:"base_url"`
+	Model              string `toml:"model"`
+	SessionDir         string `toml:"session_dir"`
+	WorkspaceDir       string `toml:"workspace_dir"`
+	MaxAgentIterations int    `toml:"max_agent_iterations"`
 }
 
 // LoadFromFile loads configuration from a TOML file.
