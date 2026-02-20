@@ -10,7 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -78,7 +78,7 @@ type Model struct {
 	sub               *bus.Subscription
 	modelName         string
 	viewport          viewport.Model
-	textarea          textarea.Model
+	textinput         textinput.Model
 	spinner           spinner.Model
 	state             appState
 	messages          []chatMessage
@@ -93,13 +93,12 @@ type Model struct {
 
 // New creates a new UI model.
 func New(b *bus.Bus, modelName string) Model {
-	ta := textarea.New()
-	ta.Placeholder = "Send a message..."
-	ta.Focus()
-	ta.CharLimit = 0
-	ta.SetHeight(1)
-	ta.ShowLineNumbers = false
-	ta.Prompt = "> "
+	ti := textinput.New()
+	ti.Placeholder = "Send a message..."
+	ti.Prompt = "> "
+	ti.CharLimit = 0
+	ti.SetSuggestions([]string{"/new", "/clear", "/exit"})
+	ti.ShowSuggestions = true
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
@@ -117,7 +116,7 @@ func New(b *bus.Bus, modelName string) Model {
 		bus:       b,
 		sub:       sub,
 		modelName: modelName,
-		textarea:  ta,
+		textinput: ti,
 		spinner:   sp,
 		state:     stateReady,
 	}
@@ -126,7 +125,8 @@ func New(b *bus.Bus, modelName string) Model {
 // Init initializes the model.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		textarea.Blink,
+		m.textinput.Focus(),
+		textinput.Blink,
 		m.spinner.Tick,
 		waitForBusEvent(m.sub),
 	)
@@ -144,11 +144,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.state == stateReady {
 			if key.Matches(msg, keymap.Submit) {
-				input := strings.TrimSpace(m.textarea.Value())
+				input := strings.TrimSpace(m.textinput.Value())
 				if input == "" {
 					return m, tea.Batch(cmds...)
 				}
-				m.textarea.SetValue("")
+				m.textinput.SetValue("")
 				if input == "/exit" {
 					return m, tea.Quit
 				}
@@ -196,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.Width = m.contentWidth
 			m.viewport.Height = viewportHeight
 		}
-		m.textarea.SetWidth(m.contentWidth - 4)
+		m.textinput.Width = m.contentWidth - 4
 		m.rebuildViewportContent()
 
 	case elapsedTickMsg:
@@ -275,13 +275,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Forward to viewport and textarea
+	// Forward to viewport and textinput
 	if m.ready {
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 	if m.state == stateReady {
-		m.textarea, cmd = m.textarea.Update(msg)
+		if !m.textinput.Focused() {
+			cmds = append(cmds, m.textinput.Focus())
+		}
+		m.textinput, cmd = m.textinput.Update(msg)
 		cmds = append(cmds, cmd)
 	}
 
@@ -410,7 +413,7 @@ func (m Model) View() string {
 		spinnerLine = spinnerStyle.Render(m.spinner.View()) + " Thinking... " + strconv.Itoa(elapsed) + "s\n"
 	}
 
-	inputBox := inputBorderStyle.Width(m.contentWidth - 2).Render(m.textarea.View())
+	inputBox := inputBorderStyle.Width(m.contentWidth - 2).Render(m.textinput.View())
 
 	mainContent := lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.NewStyle().PaddingTop(1).Render(m.viewport.View()),
@@ -419,18 +422,17 @@ func (m Model) View() string {
 	)
 	topRow := lipgloss.JoinHorizontal(lipgloss.Left, mainContent)
 
-	footerRow1Left := footerModelStyle.Render(" " + m.modelName)
-	footerRow1Right := statusBarStyle.Render("/new  /clear  /exit ")
-	pad := m.width - lipgloss.Width(footerRow1Left) - lipgloss.Width(footerRow1Right)
-	if pad < 0 {
-		pad = 0
-	}
-	footerRow1 := footerStyle.Width(m.width).Render(footerRow1Left + strings.Repeat(" ", pad) + footerRow1Right)
-
-	tokensText := tokensLabelStyle.Render("Tokens: ") +
+	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: " + m.modelName))
+	tokensText := tokensLabelStyle.Render("Context: ") +
 		tokensValueStyle.Render(formatTokens(m.totalUsage.TotalTokens))
-	tokensRow := tokensStyle.Width(m.width).Render(tokensText)
+	tokensRow := lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder(), true, false, false, false).
+			BorderForeground(lipgloss.Color("238")).
+			Foreground(lipgloss.Color("241")).
+			Padding(0, 1).
+			Width(m.width).
+			Render(tokensText)
 
-	footer := lipgloss.JoinVertical(lipgloss.Left, footerRow1, tokensRow)
+	footer := lipgloss.JoinVertical(lipgloss.Left, modelRow, tokensRow)
 	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
 }
