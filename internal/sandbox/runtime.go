@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,20 +13,10 @@ import (
 	"github.com/bpicori/red-keep/pkg/redkeep"
 )
 
-type redKeepPolicy struct {
-	AllowNet     bool
-	AllowDomains []string
-	DenyDomains  []string
-	AllowExec    bool
-	AllowPTY     bool
-	BinaryPath   string
-}
-
 // Runtime holds workspace and execution context for tool calls.
 type Runtime struct {
 	workspaceDir   string
 	executablePath string
-	redKeepPolicy  redKeepPolicy
 	mu             sync.Mutex
 }
 
@@ -35,39 +26,12 @@ const fsToolTimeout = 30 * time.Second
 func NewRuntime(dir string) (*Runtime, error) {
 	execPath, err := os.Executable()
 	if err != nil {
-		execPath = "valinor"
+		return nil, fmt.Errorf("resolve executable path: %w", err)
 	}
 	return &Runtime{
 		workspaceDir:   dir,
 		executablePath: execPath,
-		redKeepPolicy:  defaultRedKeepPolicy(),
 	}, nil
-}
-
-func defaultRedKeepPolicy() redKeepPolicy {
-	return redKeepPolicy{}
-}
-
-// WorkspaceDir returns the runtime workspace root.
-func (r *Runtime) WorkspaceDir() string {
-	return r.workspaceDir
-}
-
-// Close releases runtime resources. Currently no-op.
-func (r *Runtime) Close() error {
-	return nil
-}
-
-func (r *Runtime) run(ctx context.Context, req redkeep.RunRequest) (Result, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return runWithRedKeep(ctx, r.redKeepPolicy, withPolicyCapabilities(r.redKeepPolicy, req))
-}
-
-func (r *Runtime) runIO(ctx context.Context, req redkeep.RunRequest, stdin io.Reader, env []string) (Result, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return runWithRedKeepIO(ctx, r.redKeepPolicy, withPolicyCapabilities(r.redKeepPolicy, req), stdin, env)
 }
 
 // RunCommand executes a command in red-keep with workspace RW access.
@@ -179,6 +143,28 @@ func (r *Runtime) Grep(pattern string, path string, include string) (string, err
 		return "No matches found.", nil
 	}
 	return "Tool Error: " + commandFailureMessage(result, "grep failed"), nil
+}
+
+// WorkspaceDir returns the runtime workspace root.
+func (r *Runtime) WorkspaceDir() string {
+	return r.workspaceDir
+}
+
+// Close releases runtime resources. Currently no-op.
+func (r *Runtime) Close() error {
+	return nil
+}
+
+func (r *Runtime) run(ctx context.Context, req redkeep.RunRequest) (Result, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return runWithRedKeep(ctx, req)
+}
+
+func (r *Runtime) runIO(ctx context.Context, req redkeep.RunRequest, stdin io.Reader, env []string) (Result, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return runWithRedKeepIO(ctx, req, stdin, env)
 }
 
 func (r *Runtime) resolveWorkspacePath(path string) string {

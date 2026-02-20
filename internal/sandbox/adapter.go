@@ -16,21 +16,20 @@ type Result struct {
 	Stderr   string
 }
 
-func runWithRedKeep(ctx context.Context, policy redKeepPolicy, req redkeep.RunRequest) (Result, error) {
-	return runWithRedKeepIO(ctx, policy, req, nil, nil)
+func runWithRedKeep(ctx context.Context, req redkeep.RunRequest) (Result, error) {
+	return runWithRedKeepIO(ctx, req, nil, nil)
 }
 
-func runWithRedKeepIO(ctx context.Context, policy redKeepPolicy, req redkeep.RunRequest, stdin io.Reader, env []string) (Result, error) {
+func runWithRedKeepIO(ctx context.Context, req redkeep.RunRequest, stdin io.Reader, env []string) (Result, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	result, err := redkeep.Run(req, redkeep.RunIO{
-		Context:          ctx,
-		Stdin:            stdin,
-		Stdout:           &stdout,
-		Stderr:           &stderr,
-		Env:              env,
-		HelperBinaryPath: policy.BinaryPath,
+		Context: ctx,
+		Stdin:   stdin,
+		Stdout:  &stdout,
+		Stderr:  &stderr,
+		Env:     env,
 	})
 	if err != nil {
 		return Result{}, err
@@ -41,15 +40,6 @@ func runWithRedKeepIO(ctx context.Context, policy redKeepPolicy, req redkeep.Run
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
 	}, nil
-}
-
-func withPolicyCapabilities(policy redKeepPolicy, req redkeep.RunRequest) redkeep.RunRequest {
-	req.AllowNet = policy.AllowNet
-	req.AllowDomains = append([]string{}, policy.AllowDomains...)
-	req.DenyDomains = append([]string{}, policy.DenyDomains...)
-	req.AllowExec = policy.AllowExec
-	req.AllowPTY = policy.AllowPTY
-	return req
 }
 
 // FormatCommandResult returns the textual tool result for command execution.
