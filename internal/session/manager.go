@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"valinor/internal/agent"
+	"valinor/internal/llm"
 	"valinor/internal/bus"
 
 	"github.com/google/uuid"
@@ -60,7 +60,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	ag, err := agent.New(cfg.Client, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := llm.New(cfg.Client, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create agent: %w", err)
@@ -94,14 +94,14 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("load events: %w", err)
 	}
 
-	msgs, err := ReconstructMessages(events, agent.SystemPrompt())
+	msgs, err := ReconstructMessages(events, llm.SystemPrompt())
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("reconstruct messages: %w", err)
 	}
 
 	workspaceDir := m.workspaceDir
-	ag, err := agent.New(cfg.Client, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := llm.New(cfg.Client, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create agent: %w", err)

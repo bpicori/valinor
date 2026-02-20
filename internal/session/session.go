@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"valinor/internal/agent"
+	"valinor/internal/llm"
 	"valinor/internal/bus"
 )
 
@@ -14,7 +14,7 @@ import (
 type Session struct {
 	meta  Metadata
 	store Store
-	agent *agent.Agent
+	agent *llm.Agent
 	bus   *bus.Bus
 	sub   *bus.Subscription
 
@@ -23,7 +23,7 @@ type Session struct {
 }
 
 // NewSession creates a session that subscribes to all bus events for persistence.
-func NewSession(meta Metadata, store Store, ag *agent.Agent, b *bus.Bus) *Session {
+func NewSession(meta Metadata, store Store, ag *llm.Agent, b *bus.Bus) *Session {
 	return &Session{
 		meta:  meta,
 		store: store,
