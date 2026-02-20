@@ -6,14 +6,18 @@ import (
 	"strings"
 	"time"
 
+	"valinor/internal/bus"
+
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"valinor/internal/bus"
 )
+
+// Layout constants
+const sidebarWidth = 26
 
 // Key bindings
 var (
@@ -82,6 +86,7 @@ type Model struct {
 	lastUsage         Usage
 	width             int
 	height            int
+	contentWidth      int // width minus sidebar for viewport/chat
 	ready             bool
 	thinkingStartedAt time.Time
 }
@@ -170,25 +175,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		headerHeight := 1
+		m.contentWidth = msg.Width - sidebarWidth
+		if m.contentWidth < 20 {
+			m.contentWidth = 20
+		}
 		spinnerHeight := 1
 		inputHeight := 5
-		statusHeight := 1
-		viewportHeight := msg.Height - headerHeight - spinnerHeight - inputHeight - statusHeight
+		footerHeight := 2
+		viewportHeight := msg.Height - spinnerHeight - inputHeight - footerHeight
 		if viewportHeight < 1 {
 			viewportHeight = 1
 		}
 
 		if !m.ready {
-			m.viewport = viewport.New(msg.Width, viewportHeight)
+			m.viewport = viewport.New(m.contentWidth, viewportHeight)
 			m.viewport.MouseWheelEnabled = true
 			m.viewport.MouseWheelDelta = 3
 			m.ready = true
 		} else {
-			m.viewport.Width = msg.Width
+			m.viewport.Width = m.contentWidth
 			m.viewport.Height = viewportHeight
 		}
-		m.textarea.SetWidth(msg.Width - 4)
+		m.textarea.SetWidth(m.contentWidth - 4)
 		m.rebuildViewportContent()
 
 	case elapsedTickMsg:
@@ -336,41 +344,58 @@ func (m *Model) rebuildViewportContent() {
 	if !m.ready {
 		return
 	}
-	var b strings.Builder
-	width := m.width
+	width := m.contentWidth
 	if width < 10 {
 		width = 80
 	}
+	var b strings.Builder
 	for _, msg := range m.messages {
 		switch msg.Role {
 		case roleUser:
-			b.WriteString(userPrefixStyle.Render("> "))
-			b.WriteString(msg.Content)
-			b.WriteString("\n\n")
+			body := userPrefixStyle.Render("> ") + msg.Content
+			block := userMessageBlockStyle.Width(width - 4).Render(body)
+			b.WriteString(block)
+			b.WriteString("\n")
 		case roleAssistant:
+			var body strings.Builder
 			if msg.Error != "" {
-				b.WriteString(assistantStyle.Render(""))
-				b.WriteString(errorStyle.Render("Error: " + msg.Error))
-				b.WriteString("\n\n")
-				continue
+				body.WriteString(assistantStyle.Render(""))
+				body.WriteString(errorStyle.Render("Error: " + msg.Error))
+			} else {
+				for _, tc := range msg.ToolCalls {
+					body.WriteString(formatToolCall(tc))
+				}
+				if msg.Streaming {
+					body.WriteString(assistantStyle.Render(""))
+					body.WriteString(msg.Content)
+				} else if msg.Rendered != "" {
+					body.WriteString(assistantStyle.Render(""))
+					body.WriteString(msg.Rendered)
+				}
 			}
-			// Tool calls in compact format (→ Read path, * Glob pattern)
-			for _, tc := range msg.ToolCalls {
-				b.WriteString(formatToolCall(tc))
-			}
-			if msg.Streaming {
-				b.WriteString(assistantStyle.Render(""))
-				b.WriteString(msg.Content)
-				b.WriteString("\n\n")
-			} else if msg.Rendered != "" {
-				b.WriteString(assistantStyle.Render(""))
-				b.WriteString(msg.Rendered)
-				b.WriteString("\n\n")
-			}
+			block := assistantMessageBlockStyle.Width(width - 4).Render(body.String())
+			b.WriteString(block)
+			b.WriteString("\n")
 		}
 	}
 	m.viewport.SetContent(b.String())
 	m.viewport.GotoBottom()
+}
+
+// formatTokens formats n with thousands separators for display.
+func formatTokens(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteString(",")
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
 }
 
 // View renders the UI.
@@ -379,30 +404,33 @@ func (m Model) View() string {
 		return "\n  Initializing..."
 	}
 
-	headerText := "λ Build with: " + m.modelName
-	if m.totalUsage.TotalTokens > 0 {
-		headerText += " · " + strconv.FormatInt(m.totalUsage.TotalTokens, 10) + " tokens"
-	}
-	if m.lastUsage.TotalTokens > 0 {
-		headerText += " · last: " + strconv.FormatInt(m.lastUsage.TotalTokens, 10)
-	}
-	header := headerStyle.Width(m.width).Render(headerText)
-
 	spinnerLine := ""
 	if m.state == stateWaiting {
 		elapsed := int(time.Since(m.thinkingStartedAt).Seconds())
 		spinnerLine = spinnerStyle.Render(m.spinner.View()) + " Thinking... " + strconv.Itoa(elapsed) + "s\n"
 	}
 
-	inputBox := inputBorderStyle.Render(m.textarea.View())
-	statusBar := statusBarStyle.Render("/new  /clear  /exit  Enter=send")
+	inputBox := inputBorderStyle.Width(m.contentWidth - 2).Render(m.textarea.View())
 
-	// Layout: header, conversation viewport, then input sticky at bottom
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		m.viewport.View(),
+	mainContent := lipgloss.JoinVertical(lipgloss.Left,
+		lipgloss.NewStyle().PaddingTop(1).Render(m.viewport.View()),
 		spinnerLine,
 		inputBox,
-		statusBar,
 	)
+	topRow := lipgloss.JoinHorizontal(lipgloss.Left, mainContent)
+
+	footerRow1Left := footerModelStyle.Render(" " + m.modelName)
+	footerRow1Right := statusBarStyle.Render("/new  /clear  /exit ")
+	pad := m.width - lipgloss.Width(footerRow1Left) - lipgloss.Width(footerRow1Right)
+	if pad < 0 {
+		pad = 0
+	}
+	footerRow1 := footerStyle.Width(m.width).Render(footerRow1Left + strings.Repeat(" ", pad) + footerRow1Right)
+
+	tokensText := tokensLabelStyle.Render("Tokens: ") +
+		tokensValueStyle.Render(formatTokens(m.totalUsage.TotalTokens))
+	tokensRow := tokensStyle.Width(m.width).Render(tokensText)
+
+	footer := lipgloss.JoinVertical(lipgloss.Left, footerRow1, tokensRow)
+	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
 }
