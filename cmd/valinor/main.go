@@ -47,6 +47,8 @@ func main() {
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
+	uiSub := tui.StartBusBridge(ctx, p, b)
+	defer b.Unsubscribe(uiSub)
 
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)

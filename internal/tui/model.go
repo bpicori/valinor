@@ -75,7 +75,6 @@ type Usage struct {
 // Model is the top-level Bubble Tea model.
 type Model struct {
 	bus               *bus.Bus
-	sub               *bus.Subscription
 	modelName         string
 	viewport          viewport.Model
 	textinput         textinput.Model
@@ -103,18 +102,8 @@ func New(b *bus.Bus, modelName string) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	sub := b.Subscribe(
-		bus.EventAgentContentDelta,
-		bus.EventAgentRefusal,
-		bus.EventAgentToolCallStart,
-		bus.EventAgentToolCallDone,
-		bus.EventAgentDone,
-		bus.EventAgentError,
-	)
-
 	return Model{
 		bus:       b,
-		sub:       sub,
 		modelName: modelName,
 		textinput: ti,
 		spinner:   sp,
@@ -127,7 +116,6 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		m.textinput.Focus(),
 		textinput.Blink,
-		waitForBusEvent(m.sub),
 	)
 }
 
@@ -248,37 +236,37 @@ func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
 	case bus.EventAgentContentDelta:
 		payload, ok := msg.Event.Payload.(bus.ContentDeltaPayload)
 		if !ok {
-			return m, waitForBusEvent(m.sub)
+			return m, nil
 		}
 		return m, m.handleContentDelta(last, payload)
 	case bus.EventAgentRefusal:
 		payload, ok := msg.Event.Payload.(bus.RefusalPayload)
 		if !ok {
-			return m, waitForBusEvent(m.sub)
+			return m, nil
 		}
 		return m, m.handleRefusal(last, payload)
 	case bus.EventAgentToolCallStart:
 		payload, ok := msg.Event.Payload.(bus.ToolCallStartPayload)
 		if !ok {
-			return m, waitForBusEvent(m.sub)
+			return m, nil
 		}
 		return m, m.handleToolCallStart(last, payload)
 	case bus.EventAgentToolCallDone:
 		payload, ok := msg.Event.Payload.(bus.ToolCallDonePayload)
 		if !ok {
-			return m, waitForBusEvent(m.sub)
+			return m, nil
 		}
 		return m, m.handleToolCallDone(last, payload)
 	case bus.EventAgentDone:
 		payload, ok := msg.Event.Payload.(bus.AgentDonePayload)
 		if !ok {
-			return m, waitForBusEvent(m.sub)
+			return m, nil
 		}
 		return m, m.handleAgentDone(last, payload)
 	case bus.EventAgentError:
 		payload, ok := msg.Event.Payload.(bus.AgentErrorPayload)
 		if !ok {
-			return m, waitForBusEvent(m.sub)
+			return m, nil
 		}
 		return m, m.handleAgentError(last, payload)
 	default:
@@ -296,13 +284,13 @@ func (m *Model) lastMessage() (*chatMessage, bool) {
 func (m *Model) handleContentDelta(last *chatMessage, payload bus.ContentDeltaPayload) tea.Cmd {
 	last.Content += payload.Content
 	m.rebuildViewportContent()
-	return m.continueWaitingCmd()
+	return nil
 }
 
 func (m *Model) handleRefusal(last *chatMessage, payload bus.RefusalPayload) tea.Cmd {
 	last.Content += payload.Content
 	m.rebuildViewportContent()
-	return m.continueWaitingCmd()
+	return nil
 }
 
 func (m *Model) handleToolCallStart(last *chatMessage, payload bus.ToolCallStartPayload) tea.Cmd {
@@ -312,7 +300,7 @@ func (m *Model) handleToolCallStart(last *chatMessage, payload bus.ToolCallStart
 		Args: payload.ToolArgs,
 	})
 	m.rebuildViewportContent()
-	return m.continueWaitingCmd()
+	return nil
 }
 
 func (m *Model) handleToolCallDone(last *chatMessage, payload bus.ToolCallDonePayload) tea.Cmd {
@@ -324,7 +312,7 @@ func (m *Model) handleToolCallDone(last *chatMessage, payload bus.ToolCallDonePa
 		}
 	}
 	m.rebuildViewportContent()
-	return m.continueWaitingCmd()
+	return nil
 }
 
 func (m *Model) handleAgentDone(last *chatMessage, payload bus.AgentDonePayload) tea.Cmd {
@@ -340,7 +328,7 @@ func (m *Model) handleAgentDone(last *chatMessage, payload bus.AgentDonePayload)
 	m.totalUsage.TotalTokens += payload.TotalTokens
 	m.state = stateReady
 	m.rebuildViewportContent()
-	return waitForBusEvent(m.sub)
+	return nil
 }
 
 func (m *Model) handleAgentError(last *chatMessage, payload bus.AgentErrorPayload) tea.Cmd {
@@ -348,11 +336,7 @@ func (m *Model) handleAgentError(last *chatMessage, payload bus.AgentErrorPayloa
 	last.Error = payload.Error.Error()
 	m.state = stateReady
 	m.rebuildViewportContent()
-	return waitForBusEvent(m.sub)
-}
-
-func (m *Model) continueWaitingCmd() tea.Cmd {
-	return waitForBusEvent(m.sub)
+	return nil
 }
 
 func (m Model) updateChildComponents(msg tea.Msg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {

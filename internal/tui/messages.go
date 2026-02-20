@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"valinor/internal/bus"
 )
@@ -10,14 +12,31 @@ type busEventMsg struct {
 	Event bus.Event
 }
 
-// waitForBusEvent waits for the next event from the subscription and
-// forwards it into the Bubble Tea loop.
-func waitForBusEvent(sub *bus.Subscription) tea.Cmd {
-	return func() tea.Msg {
-		ev, ok := <-sub.Ch()
-		if !ok {
-			return nil
+// StartBusBridge subscribes to agent events and forwards them into Bubble Tea.
+// Caller owns unsubscribing from the returned subscription.
+func StartBusBridge(ctx context.Context, p *tea.Program, b *bus.Bus) *bus.Subscription {
+	sub := b.Subscribe(
+		bus.EventAgentContentDelta,
+		bus.EventAgentRefusal,
+		bus.EventAgentToolCallStart,
+		bus.EventAgentToolCallDone,
+		bus.EventAgentDone,
+		bus.EventAgentError,
+	)
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-sub.Ch():
+				if !ok {
+					return
+				}
+				p.Send(busEventMsg{Event: ev})
+			}
 		}
-		return busEventMsg{Event: ev}
-	}
+	}()
+
+	return sub
 }
