@@ -43,6 +43,7 @@ func BuildTools(rt *sandbox.Runtime) []Tool {
 	return []Tool{
 		{readFileName, readFileDef(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }},
 		{writeFileName, writeFileDef(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }},
+		{editFileName, editFileDef(), func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }},
 		{listFilesName, listFilesDef(), func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }},
 		{grepName, grepDef(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }},
 		{runCommandName, runCommandDef(), func(a json.RawMessage) (string, error) { return runCommandExec(rt, a) }},
