@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
-	"strconv"
 	"strings"
 	"time"
 
@@ -13,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // Layout constants
@@ -355,165 +352,4 @@ func (m Model) updateChildComponents(msg tea.Msg, cmds []tea.Cmd) (tea.Model, te
 	}
 
 	return m, tea.Batch(cmds...)
-}
-
-// formatToolCall renders a tool call in compact reference style:
-// → Read cmd/valinor/main.go  or  * Glob "*" (100 matches)
-func formatToolCall(tc toolCall) string {
-	var b strings.Builder
-	b.WriteString(toolCallStyle.Render(""))
-	primary := extractPrimaryToolArg(tc)
-
-	b.WriteString(toolCallStyle.Render("→ "))
-	b.WriteString(toolNameStyle.Render(tc.Name))
-	if primary != "" {
-		b.WriteString(toolCallStyle.Render(" "))
-		b.WriteString(pathStyle.Render(primary))
-	}
-	if tc.Done && tc.Result != "" {
-		if summary := formatToolResultSummary(tc.Result); summary != "" {
-			b.WriteString(toolCallStyle.Render(" " + summary))
-		}
-	}
-	b.WriteString("\n")
-	return b.String()
-}
-
-func extractPrimaryToolArg(tc toolCall) string {
-	var argsMap map[string]interface{}
-	_ = json.Unmarshal([]byte(tc.Args), &argsMap)
-
-	for _, key := range []string{"command", "path", "file", "filename", "pattern", "query", "pathname"} {
-		value, ok := argsMap[key]
-		if !ok {
-			continue
-		}
-		asString, ok := value.(string)
-		if ok && asString != "" {
-			return asString
-		}
-	}
-
-	if tc.Args != "" && len(tc.Args) < 60 {
-		return tc.Args
-	}
-	return ""
-}
-
-func formatToolResultSummary(result string) string {
-	if len(result) > 200 {
-		return "(" + strconv.Itoa(len(result)) + " chars)"
-	}
-	if strings.Contains(result, "\n") {
-		lines := strings.Split(result, "\n")
-		return "(" + strconv.Itoa(len(lines)) + " lines)"
-	}
-	return ""
-}
-
-// rebuildViewportContent rebuilds the viewport content from messages.
-func (m *Model) rebuildViewportContent() {
-	if !m.ready {
-		return
-	}
-	width := m.contentWidth
-	if width < 10 {
-		width = 80
-	}
-	var b strings.Builder
-	for _, msg := range m.messages {
-		switch msg.Role {
-		case roleUser:
-			b.WriteString(renderUserMessageBlock(msg, width))
-			b.WriteString("\n")
-		case roleAssistant:
-			b.WriteString(renderAssistantMessageBlock(msg, width))
-			b.WriteString("\n")
-		}
-	}
-	m.viewport.SetContent(b.String())
-	m.viewport.GotoBottom()
-}
-
-func renderUserMessageBlock(msg chatMessage, width int) string {
-	body := userPrefixStyle.Render("> ") + msg.Content
-	return userMessageBlockStyle.Width(width - 4).Render(body)
-}
-
-func renderAssistantMessageBlock(msg chatMessage, width int) string {
-	return assistantMessageBlockStyle.Width(width - 4).Render(renderAssistantBody(msg))
-}
-
-func renderAssistantBody(msg chatMessage) string {
-	var body strings.Builder
-	if msg.Error != "" {
-		body.WriteString(assistantStyle.Render(""))
-		body.WriteString(errorStyle.Render("Error: " + msg.Error))
-		return body.String()
-	}
-
-	for _, tc := range msg.ToolCalls {
-		body.WriteString(formatToolCall(tc))
-	}
-
-	body.WriteString(assistantStyle.Render(""))
-	if msg.Streaming {
-		body.WriteString(msg.Content)
-	} else if msg.Rendered != "" {
-		body.WriteString(msg.Rendered)
-	}
-
-	return body.String()
-}
-
-// formatTokens formats n with thousands separators for display.
-func formatTokens(n int64) string {
-	s := strconv.FormatInt(n, 10)
-	if len(s) <= 3 {
-		return s
-	}
-	var b strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			b.WriteString(",")
-		}
-		b.WriteRune(c)
-	}
-	return b.String()
-}
-
-// View renders the UI.
-func (m Model) View() string {
-	if !m.ready {
-		return "\n  Initializing..."
-	}
-
-	spinnerLine := ""
-	if m.state == stateWaiting {
-		elapsed := int(time.Since(m.thinkingStartedAt).Seconds())
-		spinnerLine = spinnerStyle.Render(m.spinner.View()) + " Thinking... " + strconv.Itoa(elapsed) + "s\n"
-	}
-
-	inputBox := inputBorderStyle.Width(m.contentWidth - 2).Render(m.textinput.View())
-
-	mainContent := lipgloss.JoinVertical(lipgloss.Left,
-		lipgloss.NewStyle().PaddingTop(1).Render(m.viewport.View()),
-		spinnerLine,
-		inputBox,
-	)
-	topRow := lipgloss.JoinHorizontal(lipgloss.Left, mainContent)
-
-	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: " + m.modelName))
-	tokensText := tokensLabelStyle.Render("Context: ") +
-		tokensValueStyle.Render(formatTokens(m.totalUsage.TotalTokens))
-	tokensRow := lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), true, false, false, false).
-			BorderForeground(lipgloss.Color("238")).
-			Foreground(lipgloss.Color("241")).
-			Padding(0, 1).
-			Width(m.width).
-			Render(tokensText)
-
-	footer := lipgloss.JoinVertical(lipgloss.Left, modelRow, tokensRow)
-	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
 }
