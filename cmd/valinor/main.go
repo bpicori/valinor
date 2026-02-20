@@ -23,9 +23,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve session dir: %v", err)
 	}
+	workspaceDir, err := cfg.ResolveWorkspaceDir()
+	if err != nil {
+		log.Fatalf("resolve workspace dir: %v", err)
+	}
 
 	b := bus.New()
-	sm := session.NewManager(sessionsDir)
+	sm := session.NewManager(sessionsDir, workspaceDir)
 
 	sess, err := sm.Create(context.Background(), session.CreateConfig{
 		Model:              cfg.Model,

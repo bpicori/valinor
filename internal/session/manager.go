@@ -7,39 +7,38 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/openai/openai-go/v3"
 	"valinor/internal/agent"
 	"valinor/internal/bus"
-)
 
-// workspaceSubdir is the subdirectory name for the agent workspace within each session.
-const workspaceSubdir = "workspace"
+	"github.com/google/uuid"
+	"github.com/openai/openai-go/v3"
+)
 
 // CreateConfig holds parameters for creating a new session.
 type CreateConfig struct {
-	Model               string
-	Client              openai.Client
-	Bus                 *bus.Bus
-	MaxAgentIterations  int
+	Model              string
+	Client             openai.Client
+	Bus                *bus.Bus
+	MaxAgentIterations int
 }
 
 // Manager manages session lifecycle.
 type Manager struct {
-	baseDir string
+	sessionDir   string
+	workspaceDir string
 }
 
-// NewManager creates a SessionManager that stores sessions under baseDir.
-func NewManager(baseDir string) *Manager {
-	return &Manager{baseDir: baseDir}
+// NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
+func NewManager(sessionDir, workspaceDir string) *Manager {
+	return &Manager{sessionDir: sessionDir, workspaceDir: workspaceDir}
 }
 
 // Create creates a new session with a fresh agent and empty transcript.
-// The workspace is created at session_dir/<uuid>/workspace/.
+// Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
 func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error) {
 	id := uuid.New().String()
-	dir := filepath.Join(m.baseDir, id)
-	workspaceDir := filepath.Join(dir, workspaceSubdir)
+	dir := filepath.Join(m.sessionDir, id)
+	workspaceDir := m.workspaceDir
 
 	now := time.Now()
 	meta := Metadata{
@@ -73,7 +72,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 
 // Resume loads an existing session from storage and restores the agent's message history.
 func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Session, error) {
-	dir := filepath.Join(m.baseDir, id)
+	dir := filepath.Join(m.sessionDir, id)
 	store, err := NewJSONLStore(dir)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
@@ -101,7 +100,7 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("reconstruct messages: %w", err)
 	}
 
-	workspaceDir := filepath.Join(dir, workspaceSubdir)
+	workspaceDir := m.workspaceDir
 	ag, err := agent.New(cfg.Client, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
@@ -118,7 +117,7 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 
 // List returns metadata for all sessions, sorted by UpdatedAt descending.
 func (m *Manager) List() ([]Metadata, error) {
-	entries, err := os.ReadDir(m.baseDir)
+	entries, err := os.ReadDir(m.sessionDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -131,7 +130,7 @@ func (m *Manager) List() ([]Metadata, error) {
 		if !e.IsDir() {
 			continue
 		}
-		dir := filepath.Join(m.baseDir, e.Name())
+		dir := filepath.Join(m.sessionDir, e.Name())
 		store, err := NewJSONLStore(dir)
 		if err != nil {
 			continue
@@ -157,6 +156,6 @@ func (m *Manager) List() ([]Metadata, error) {
 
 // Delete removes a session directory and all its data.
 func (m *Manager) Delete(id string) error {
-	dir := filepath.Join(m.baseDir, id)
+	dir := filepath.Join(m.sessionDir, id)
 	return os.RemoveAll(dir)
 }

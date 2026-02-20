@@ -13,7 +13,6 @@ import (
 const DefaultBaseURL = "https://api.openai.com/v1"
 
 // DefaultSessionDir is the default sessions directory under home.
-// Each session is stored at session_dir/<uuid>/ with workspace at session_dir/<uuid>/workspace/.
 const DefaultSessionDir = "~/.valinor/sessions"
 
 // DefaultMaxAgentIterations is the default cap on agent tool-call iterations per user message.
@@ -25,12 +24,14 @@ type Config struct {
 	BaseURL              string `toml:"base_url"`
 	Model                string `toml:"model"`
 	SessionDir           string `toml:"session_dir"`
+	WorkspaceDir         string `toml:"workspace_dir"`
 	MaxAgentIterations   int    `toml:"max_agent_iterations"`
 }
 
 // LoadFromFile loads configuration from a TOML file.
 // If base_url is empty, DefaultBaseURL is used.
 // If session_dir is empty, DefaultSessionDir is used.
+// If workspace_dir is empty, it defaults to a "workspace" sibling of session_dir.
 func LoadFromFile(path string) (Config, error) {
 	var cfg Config
 	_, err := toml.DecodeFile(path, &cfg)
@@ -56,6 +57,30 @@ func (c Config) ResolveSessionDir() (string, error) {
 	dir := c.SessionDir
 	if dir == "" {
 		dir = DefaultSessionDir
+	}
+	if len(dir) > 1 && dir[:2] == "~/" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir = filepath.Join(home, dir[2:])
+	} else if len(dir) == 1 && dir == "~" {
+		return os.UserHomeDir()
+	}
+	return filepath.Abs(dir)
+}
+
+// ResolveWorkspaceDir returns the absolute path for the global tool workspace.
+// If the path starts with ~, it is expanded to the user's home directory.
+// Otherwise the path is resolved relative to the current working directory.
+func (c Config) ResolveWorkspaceDir() (string, error) {
+	dir := c.WorkspaceDir
+	if dir == "" {
+		sessionDir, err := c.ResolveSessionDir()
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(filepath.Dir(sessionDir), "workspace"), nil
 	}
 	if len(dir) > 1 && dir[:2] == "~/" {
 		home, err := os.UserHomeDir()
