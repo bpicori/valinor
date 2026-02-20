@@ -9,6 +9,7 @@ import (
 
 	"github.com/openai/openai-go/v3"
 	"valinor/internal/bus"
+	"valinor/internal/sandbox"
 	"valinor/internal/tools"
 )
 
@@ -23,14 +24,13 @@ func SystemPrompt() string {
 // Agent manages conversation state and API calls. It subscribes to the bus for
 // user intent events and publishes streaming events back.
 type Agent struct {
-	client           openai.Client
-	model            string
-	messages         []openai.ChatCompletionMessageParamUnion
-	tools            []tools.Tool
-	sandbox          *tools.Sandbox
-	bus              *bus.Bus
-	sub              *bus.Subscription
-	maxIterations    int
+	client        openai.Client
+	model         string
+	messages      []openai.ChatCompletionMessageParamUnion
+	tools         []tools.Tool
+	bus           *bus.Bus
+	sub           *bus.Subscription
+	maxIterations int
 }
 
 // New creates an agent with the given client, model, workspace root path, bus, and max iterations.
@@ -40,7 +40,7 @@ func New(client openai.Client, model string, rootPath string, b *bus.Bus, maxIte
 	if err := os.MkdirAll(rootPath, 0755); err != nil {
 		return nil, err
 	}
-	sb, err := tools.NewSandbox(rootPath)
+	rt, err := sandbox.NewRuntime(rootPath)
 	if err != nil {
 		return nil, err
 	}
@@ -51,8 +51,7 @@ func New(client openai.Client, model string, rootPath string, b *bus.Bus, maxIte
 		client:        client,
 		model:         model,
 		messages:      []openai.ChatCompletionMessageParamUnion{openai.SystemMessage(systemPrompt)},
-		tools:         tools.BuildTools(sb),
-		sandbox:       sb,
+		tools:         tools.BuildTools(rt),
 		bus:           b,
 		sub:           b.Subscribe(bus.EventUserMessage, bus.EventNewConversation),
 		maxIterations: maxIterations,
@@ -80,14 +79,9 @@ func (a *Agent) Run(ctx context.Context) {
 	}
 }
 
-// Close releases the sandbox root. Call when the agent is no longer needed.
+// Close releases agent resources. Call when the agent is no longer needed.
 func (a *Agent) Close() error {
-	if a.sandbox != nil {
-		err := a.sandbox.Close()
-		a.sandbox = nil
-		a.tools = nil
-		return err
-	}
+	a.tools = nil
 	return nil
 }
 
@@ -105,7 +99,7 @@ func (a *Agent) runTurn(ctx context.Context, userMessage string) error {
 	params := openai.ChatCompletionNewParams{
 		Model:           a.model,
 		Messages:        a.messages,
-		ReasoningEffort:  openai.ReasoningEffortMedium,
+		ReasoningEffort: openai.ReasoningEffortMedium,
 		StreamOptions: openai.ChatCompletionStreamOptionsParam{
 			IncludeUsage: openai.Bool(true),
 		},
@@ -229,9 +223,9 @@ func (a *Agent) runTurn(ctx context.Context, userMessage string) error {
 			a.bus.Publish(bus.Event{
 				Type: bus.EventAgentToolCallDone,
 				Payload: bus.ToolCallDonePayload{
-					ToolCallID:  tc.ID,
-					ToolName:    tc.Function.Name,
-					ToolResult:  result,
+					ToolCallID: tc.ID,
+					ToolName:   tc.Function.Name,
+					ToolResult: result,
 				},
 			})
 			a.messages = append(a.messages, openai.ToolMessage(result, tc.ID))

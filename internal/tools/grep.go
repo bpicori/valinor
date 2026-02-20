@@ -1,19 +1,15 @@
 package tools
 
 import (
-	"bufio"
 	"encoding/json"
-	"io/fs"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
+	"valinor/internal/sandbox"
 )
-
-const maxGrepMatches = 100
 
 const grepName = "grep"
 
@@ -43,13 +39,7 @@ func grepDef() openai.ChatCompletionToolUnionParam {
 	})
 }
 
-type grepMatch struct {
-	file string
-	line int
-	text string
-}
-
-func grepExec(sb *Sandbox, args json.RawMessage) (string, error) {
+func grepExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {
 	var p struct {
 		Pattern string `json:"pattern"`
 		Path    string `json:"path"`
@@ -63,7 +53,7 @@ func grepExec(sb *Sandbox, args json.RawMessage) (string, error) {
 		return "Tool Error: pattern is required", nil
 	}
 
-	re, err := regexp.Compile(p.Pattern)
+	_, err := regexp.Compile(p.Pattern)
 	if err != nil {
 		return "Tool Error: invalid regex: " + err.Error(), nil
 	}
@@ -78,70 +68,5 @@ func grepExec(sb *Sandbox, args json.RawMessage) (string, error) {
 	if filepath.IsAbs(path) {
 		return "Tool Error: path must be relative to workspace (absolute paths not allowed)", nil
 	}
-
-	var matches []grepMatch
-	err = fs.WalkDir(sb.root.FS(), path, func(filePath string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		// Filter by include pattern
-		if p.Include != "" {
-			matched, _ := filepath.Match(p.Include, d.Name())
-			if !matched {
-				return nil
-			}
-		}
-
-		f, err := sb.root.Open(filePath)
-		if err != nil {
-			return nil
-		}
-		defer f.Close()
-
-		scanner := bufio.NewScanner(f)
-		lineNum := 0
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-			if re.MatchString(line) {
-				matches = append(matches, grepMatch{
-					file: filePath,
-					line: lineNum,
-					text: line,
-				})
-				if len(matches) >= maxGrepMatches {
-					return fs.SkipAll
-				}
-			}
-		}
-		return nil
-	})
-
-	if err != nil {
-		return "Tool Error: " + err.Error(), nil
-	}
-
-	if len(matches) == 0 {
-		return "No matches found.", nil
-	}
-
-	var b strings.Builder
-	for _, m := range matches {
-		b.WriteString(m.file)
-		b.WriteString(":")
-		b.WriteString(strconv.Itoa(m.line))
-		b.WriteString(": ")
-		b.WriteString(m.text)
-		b.WriteString("\n")
-	}
-
-	if len(matches) >= maxGrepMatches {
-		b.WriteString("\n(Results limited to 100 matches)\n")
-	}
-
-	return b.String(), nil
+	return rt.Grep(p.Pattern, path, p.Include)
 }
