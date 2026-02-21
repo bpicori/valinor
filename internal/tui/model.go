@@ -213,6 +213,8 @@ func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
 		m.viewport = viewport.New(m.contentWidth, viewportHeight)
 		m.viewport.MouseWheelEnabled = true
 		m.viewport.MouseWheelDelta = 3
+		m.viewport.KeyMap.Up.SetKeys("up")
+		m.viewport.KeyMap.Down.SetKeys("down")
 		m.ready = true
 	} else {
 		m.viewport.Width = m.contentWidth
