@@ -38,7 +38,7 @@ type Config struct {
 
 // ProviderConfig holds configuration for a specific LLM provider.
 type ProviderConfig struct {
-	Type    string `toml:"type"`     // "openai", "anthropic", "openai-compatible"
+	Type    string `toml:"type"`     // "openai", "anthropic", "gemini", "openai-compatible"
 	APIKey  string `toml:"api_key"`  // API key for the provider
 	BaseURL string `toml:"base_url"` // Base URL (for openai-compatible providers)
 	Model   string `toml:"model"`    // Model name to use
@@ -69,8 +69,8 @@ func LoadFromFile(path string) (Config, error) {
 		if provider.Type == "" {
 			return Config{}, fmt.Errorf("provider '%s' missing type field", name)
 		}
-		if provider.Type != "openai" && provider.Type != "anthropic" && provider.Type != "openai-compatible" {
-			return Config{}, fmt.Errorf("provider '%s' has invalid type '%s' (must be: openai, anthropic, or openai-compatible)", name, provider.Type)
+		if provider.Type != "openai" && provider.Type != "anthropic" && provider.Type != "gemini" && provider.Type != "openai-compatible" {
+			return Config{}, fmt.Errorf("provider '%s' has invalid type '%s' (must be: openai, anthropic, gemini, or openai-compatible)", name, provider.Type)
 		}
 		if provider.APIKey == "" {
 			return Config{}, fmt.Errorf("provider '%s' missing api_key field", name)

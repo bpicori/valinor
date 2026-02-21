@@ -7,6 +7,7 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/llm"
 	"valinor/internal/llm/providers/anthropic"
+	"valinor/internal/llm/providers/gemini"
 	"valinor/internal/llm/providers/openai"
 )
 
@@ -17,6 +18,8 @@ func CreateProvider(cfg config.ProviderConfig, bus *bus.Bus) (llm.Provider, erro
 		return openai.New(cfg.APIKey, "", bus)
 	case "anthropic":
 		return anthropic.New(cfg.APIKey, bus)
+	case "gemini":
+		return gemini.New(cfg.APIKey, bus)
 	case "openai-compatible":
 		return openai.New(cfg.APIKey, cfg.BaseURL, bus)
 	default:
