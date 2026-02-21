@@ -2,3 +2,6 @@
 api_key = ""
 base_url = ""
 model = ""
+web_enabled = true
+web_host = "127.0.0.1"
+web_port = 7777

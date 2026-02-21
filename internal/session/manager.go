@@ -205,6 +205,30 @@ func (m *Manager) List() ([]Metadata, error) {
 	return list, nil
 }
 
+// LoadEvents returns persisted transcript events for a given session ID.
+func (m *Manager) LoadEvents(ctx context.Context, id string) ([]StoredEvent, error) {
+	dir := filepath.Join(m.sessionDir, id)
+	store, err := NewJSONLStore(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open store: %w", err)
+	}
+	defer store.Close()
+
+	meta, err := store.LoadMetadata(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load metadata: %w", err)
+	}
+	if meta == nil {
+		return nil, fmt.Errorf("session %s not found", id)
+	}
+
+	events, err := store.LoadEvents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load events: %w", err)
+	}
+	return events, nil
+}
+
 // Delete removes a session directory and all its data.
 func (m *Manager) Delete(id string) error {
 	applog.Info("session delete start", applog.M("session_id", id))

@@ -177,16 +177,11 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 	}
 	if input == "/new" || input == "/clear" {
 		m.bus.Publish(bus.Event{Type: bus.EventNewConversation})
-		m.messages = nil
-		m.rebuildViewportContent()
 		return m, nil, true, false
 	}
 
-	m.messages = append(m.messages, chatMessage{Role: roleUser, Content: input})
-	m.messages = append(m.messages, chatMessage{Role: roleAssistant, Streaming: true})
 	m.state = stateWaiting
 	m.thinkingStartedAt = time.Now()
-	m.rebuildViewportContent()
 	m.bus.Publish(bus.Event{
 		Type:    bus.EventUserMessage,
 		Payload: bus.UserMessagePayload{Content: input},
@@ -227,6 +222,17 @@ func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
 }
 
 func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
+	switch msg.Event.Type {
+	case bus.EventUserMessage:
+		payload, ok := msg.Event.Payload.(bus.UserMessagePayload)
+		if !ok {
+			return m, nil
+		}
+		return m, m.handleUserMessage(payload)
+	case bus.EventNewConversation:
+		return m, m.handleNewConversation()
+	}
+
 	last, ok := m.lastMessage()
 	if !ok {
 		return m, nil
@@ -272,6 +278,22 @@ func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m *Model) handleUserMessage(payload bus.UserMessagePayload) tea.Cmd {
+	m.messages = append(m.messages, chatMessage{Role: roleUser, Content: payload.Content})
+	m.messages = append(m.messages, chatMessage{Role: roleAssistant, Streaming: true})
+	m.state = stateWaiting
+	m.thinkingStartedAt = time.Now()
+	m.rebuildViewportContent()
+	return m.spinner.Tick
+}
+
+func (m *Model) handleNewConversation() tea.Cmd {
+	m.messages = nil
+	m.state = stateReady
+	m.rebuildViewportContent()
+	return nil
 }
 
 func (m *Model) lastMessage() (*chatMessage, bool) {

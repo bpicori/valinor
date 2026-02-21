@@ -18,6 +18,8 @@ type busEventMsg struct {
 func StartBusBridge(ctx context.Context, p *tea.Program, b *bus.Bus) *bus.Subscription {
 	applog.Debug("tui bridge start", nil)
 	sub := b.Subscribe(
+		bus.EventUserMessage,
+		bus.EventNewConversation,
 		bus.EventAgentContentDelta,
 		bus.EventAgentRefusal,
 		bus.EventAgentToolCallStart,

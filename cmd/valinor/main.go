@@ -9,6 +9,7 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/session"
 	"valinor/internal/tui"
+	"valinor/internal/web"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -94,6 +95,14 @@ func run() error {
 	defer sess.Close()
 
 	go sess.Run(ctx)
+
+	if cfg.WebEnabled {
+		webServer := web.NewServer(cfg.WebHost, cfg.WebPort, b, sm, sess.Meta().ID)
+		if err := webServer.Start(ctx); err != nil {
+			applog.Error("start web server failed", applog.M("error", err))
+			return err
+		}
+	}
 
 	model := tui.New(b, cfg.Model)
 	p := tea.NewProgram(model,

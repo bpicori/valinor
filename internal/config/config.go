@@ -18,6 +18,13 @@ const DefaultValinorDir = "~/.valinor"
 // DefaultMaxAgentIterations is the default cap on agent tool-call iterations per user message.
 const DefaultMaxAgentIterations = 20
 
+// Default web server configuration.
+const (
+	DefaultWebEnabled = true
+	DefaultWebHost    = "127.0.0.1"
+	DefaultWebPort    = 7777
+)
+
 // Config holds OpenAI client configuration and paths.
 type Config struct {
 	APIKey             string `toml:"api_key"`
@@ -27,12 +34,15 @@ type Config struct {
 	SessionDir         string `toml:"session_dir"`
 	WorkspaceDir       string `toml:"workspace_dir"`
 	MaxAgentIterations int    `toml:"max_agent_iterations"`
+	WebEnabled         bool   `toml:"web_enabled"`
+	WebHost            string `toml:"web_host"`
+	WebPort            int    `toml:"web_port"`
 }
 
 // LoadFromFile loads configuration from a TOML file.
 func LoadFromFile(path string) (Config, error) {
 	var cfg Config
-	_, err := toml.DecodeFile(path, &cfg)
+	md, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
 		applog.Error("config load failed", applog.M("path", path, "error", err))
 		return Config{}, err
@@ -45,6 +55,15 @@ func LoadFromFile(path string) (Config, error) {
 	}
 	if cfg.MaxAgentIterations <= 0 {
 		cfg.MaxAgentIterations = DefaultMaxAgentIterations
+	}
+	if cfg.WebHost == "" {
+		cfg.WebHost = DefaultWebHost
+	}
+	if cfg.WebPort <= 0 {
+		cfg.WebPort = DefaultWebPort
+	}
+	if !md.IsDefined("web_enabled") {
+		cfg.WebEnabled = DefaultWebEnabled
 	}
 	return cfg, nil
 }
