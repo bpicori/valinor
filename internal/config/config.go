@@ -5,15 +5,13 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 )
 
 // DefaultBaseURL is the default OpenAI API base URL.
 const DefaultBaseURL = "https://api.openai.com/v1"
 
-// DefaultSessionDir is the default sessions directory under home.
-const DefaultSessionDir = "~/.valinor/sessions"
+// DefaultValinorDir is the default base directory under home.
+const DefaultValinorDir = "~/.valinor"
 
 // DefaultMaxAgentIterations is the default cap on agent tool-call iterations per user message.
 const DefaultMaxAgentIterations = 20
@@ -23,15 +21,13 @@ type Config struct {
 	APIKey             string `toml:"api_key"`
 	BaseURL            string `toml:"base_url"`
 	Model              string `toml:"model"`
+	ValinorDir         string `toml:"valinor_dir"`
 	SessionDir         string `toml:"session_dir"`
 	WorkspaceDir       string `toml:"workspace_dir"`
 	MaxAgentIterations int    `toml:"max_agent_iterations"`
 }
 
 // LoadFromFile loads configuration from a TOML file.
-// If base_url is empty, DefaultBaseURL is used.
-// If session_dir is empty, DefaultSessionDir is used.
-// If workspace_dir is empty, it defaults to a "workspace" sibling of session_dir.
 func LoadFromFile(path string) (Config, error) {
 	var cfg Config
 	_, err := toml.DecodeFile(path, &cfg)
@@ -41,8 +37,8 @@ func LoadFromFile(path string) (Config, error) {
 	if cfg.BaseURL == "" {
 		cfg.BaseURL = DefaultBaseURL
 	}
-	if cfg.SessionDir == "" {
-		cfg.SessionDir = DefaultSessionDir
+	if cfg.ValinorDir == "" {
+		cfg.ValinorDir = DefaultValinorDir
 	}
 	if cfg.MaxAgentIterations <= 0 {
 		cfg.MaxAgentIterations = DefaultMaxAgentIterations
@@ -50,58 +46,60 @@ func LoadFromFile(path string) (Config, error) {
 	return cfg, nil
 }
 
-// ResolveSessionDir returns the absolute path for the sessions directory.
-// If the path starts with ~, it is expanded to the user's home directory.
-// Otherwise the path is resolved relative to the current working directory.
+// ResolveValinorDir returns the absolute base directory for Valinor data.
+func (c Config) ResolveValinorDir() (string, error) {
+	dir := c.ValinorDir
+	if dir == "" {
+		dir = DefaultValinorDir
+	}
+	return resolvePathWithTilde(dir)
+}
+
+// ResolveSessionDir returns the absolute path for the sessions directory
 func (c Config) ResolveSessionDir() (string, error) {
-	dir := c.SessionDir
-	if dir == "" {
-		dir = DefaultSessionDir
+	if c.SessionDir != "" {
+		return resolvePathWithTilde(c.SessionDir)
 	}
-	if len(dir) > 1 && dir[:2] == "~/" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		dir = filepath.Join(home, dir[2:])
-	} else if len(dir) == 1 && dir == "~" {
-		return os.UserHomeDir()
+	baseDir, err := c.ResolveValinorDir()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Abs(dir)
+	return filepath.Join(baseDir, "sessions"), nil
 }
 
-// ResolveWorkspaceDir returns the absolute path for the global tool workspace.
-// If the path starts with ~, it is expanded to the user's home directory.
-// Otherwise the path is resolved relative to the current working directory.
+// ResolveWorkspaceDir returns the absolute path for the global tool workspace
 func (c Config) ResolveWorkspaceDir() (string, error) {
-	dir := c.WorkspaceDir
-	if dir == "" {
-		sessionDir, err := c.ResolveSessionDir()
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(filepath.Dir(sessionDir), "workspace"), nil
+	if c.WorkspaceDir != "" {
+		return resolvePathWithTilde(c.WorkspaceDir)
 	}
-	if len(dir) > 1 && dir[:2] == "~/" {
+	baseDir, err := c.ResolveValinorDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(baseDir, "workspace"), nil
+}
+
+// ResolveLogsDir returns the absolute path for application logs.
+func (c Config) ResolveLogsDir() (string, error) {
+	baseDir, err := c.ResolveValinorDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(baseDir, "logs"), nil
+}
+
+// resolvePathWithTilde returns an absolute path.
+// If the path starts with ~, it is expanded to the user's home directory.
+// Otherwise relative paths are resolved from the current working directory.
+func resolvePathWithTilde(path string) (string, error) {
+	if len(path) > 1 && path[:2] == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return "", err
 		}
-		dir = filepath.Join(home, dir[2:])
-	} else if len(dir) == 1 && dir == "~" {
+		path = filepath.Join(home, path[2:])
+	} else if path == "~" {
 		return os.UserHomeDir()
 	}
-	return filepath.Abs(dir)
-}
-
-// NewClient creates an OpenAI client configured with this config's API key and base URL.
-func (c Config) NewClient() openai.Client {
-	opts := []option.RequestOption{}
-	if c.APIKey != "" {
-		opts = append(opts, option.WithAPIKey(c.APIKey))
-	}
-	if c.BaseURL != "" {
-		opts = append(opts, option.WithBaseURL(c.BaseURL))
-	}
-	return openai.NewClient(opts...)
+	return filepath.Abs(path)
 }

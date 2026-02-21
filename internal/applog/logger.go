@@ -12,10 +12,8 @@ const (
 )
 
 // Init configures the standard logger to write to stderr and a file.
-// Logs are written to <session-dir-parent>/logs/valinor.log.
-func Init(sessionDir string) (logPath string, closeFn func() error, err error) {
-	baseDir := filepath.Dir(sessionDir)
-	targetDir := filepath.Join(baseDir, logDirName)
+func Init(valinorDir string) (logPath string, closeFn func() error, err error) {
+	targetDir := filepath.Join(valinorDir, logDirName)
 	if err := os.MkdirAll(targetDir, 0o700); err != nil {
 		return "", nil, err
 	}

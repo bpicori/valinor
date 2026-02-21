@@ -3,41 +3,86 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
-	"valinor/internal/llm"
 	"valinor/internal/bus"
+	agentcontext "valinor/internal/context"
+	"valinor/internal/llm"
 )
 
 // Session owns the agent and persists conversation events to the store.
 type Session struct {
-	meta  Metadata
-	store Store
-	agent *llm.Agent
-	bus   *bus.Bus
-	sub   *bus.Subscription
+	meta       Metadata
+	store      Store
+	agent      *llm.LLM
+	builder    *agentcontext.Builder
+	messages   []agentcontext.Message
+	bus        *bus.Bus
+	subPersist *bus.Subscription
+	subControl *bus.Subscription
 
 	mu                 sync.Mutex
 	accumulatedContent string
 }
 
 // NewSession creates a session that subscribes to all bus events for persistence.
-func NewSession(meta Metadata, store Store, ag *llm.Agent, b *bus.Bus) *Session {
+func NewSession(meta Metadata, store Store, ag *llm.LLM, builder *agentcontext.Builder, initialMessages []agentcontext.Message, b *bus.Bus) *Session {
 	return &Session{
-		meta:  meta,
-		store: store,
-		agent: ag,
-		bus:   b,
-		sub:   b.Subscribe(), // no types = all events
+		meta:       meta,
+		store:      store,
+		agent:      ag,
+		builder:    builder,
+		messages:   append([]agentcontext.Message{}, initialMessages...),
+		bus:        b,
+		subPersist: b.Subscribe(), // no types = all events
+		subControl: b.Subscribe(bus.EventUserMessage, bus.EventNewConversation),
 	}
 }
 
-// Run starts the agent and the persistence loop. Call in a goroutine.
+// Run starts the control and persistence loops. Call in a goroutine.
 // Returns when ctx is cancelled.
 func (s *Session) Run(ctx context.Context) {
-	go s.agent.Run(ctx)
-	s.runPersistence(ctx)
+	go s.runPersistence(ctx)
+	s.runControl(ctx)
+}
+
+// runControl dispatches input events to the agent.
+func (s *Session) runControl(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-s.subControl.Ch():
+			if !ok {
+				return
+			}
+			switch ev.Type {
+			case bus.EventUserMessage:
+				p := ev.Payload.(bus.UserMessagePayload)
+				if err := s.appendUserMessage(ctx, p.Content); err != nil {
+					continue
+				}
+				s.messages = append(s.messages, agentcontext.Message{
+					Role:    agentcontext.RoleUser,
+					Content: p.Content,
+				})
+				runCtx := s.builder.BuildRunContext(s.messages)
+				result, err := s.agent.Run(ctx, llm.RunRequest{Context: runCtx})
+				if err == nil {
+					s.messages = result.Messages
+				}
+			case bus.EventNewConversation:
+				s.messages = []agentcontext.Message{
+					{
+						Role:    agentcontext.RoleSystem,
+						Content: s.builder.BasePrompt(),
+					},
+				}
+			}
+		}
+	}
 }
 
 // runPersistence subscribes to all bus events and persists them.
@@ -46,7 +91,7 @@ func (s *Session) runPersistence(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case ev, ok := <-s.sub.Ch():
+		case ev, ok := <-s.subPersist.Ch():
 			if !ok {
 				return
 			}
@@ -60,17 +105,29 @@ func (s *Session) persistEvent(ctx context.Context, ev bus.Event) {
 	now := time.Now()
 
 	switch ev.Type {
-	case bus.EventUserMessage:
-		p := ev.Payload.(bus.UserMessagePayload)
-		content, _ := json.Marshal(userMessageContent{Content: p.Content})
-		evt := StoredEvent{Timestamp: now, Type: StoredEventUserMessage, Content: content}
-		_ = s.store.AppendEvent(ctx, evt)
+	case bus.EventAgentContentDelta:
+		// UI streaming event; persistence uses EventAgentPartial.
 		return
 
-	case bus.EventAgentContentDelta:
+	case bus.EventAgentPartial:
+		p := ev.Payload.(bus.PartialPayload)
+		content, _ := json.Marshal(assistantContentPayload{Content: p.Content})
+		_ = s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAssistantPartial, Content: content})
 		s.mu.Lock()
-		s.accumulatedContent += ev.Payload.(bus.ContentDeltaPayload).Content
+		s.accumulatedContent += p.Content
 		s.mu.Unlock()
+		return
+
+	case bus.EventAgentThinking:
+		p := ev.Payload.(bus.ThinkingPayload)
+		content, _ := json.Marshal(p)
+		_ = s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAgentThinking, Content: content})
+		return
+
+	case bus.EventAgentStepTokens:
+		p := ev.Payload.(bus.StepTokenUsagePayload)
+		content, _ := json.Marshal(p)
+		_ = s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAgentStepTokens, Content: content})
 		return
 
 	case bus.EventAgentToolCallStart:
@@ -116,16 +173,29 @@ func (s *Session) persistEvent(ctx context.Context, ev bus.Event) {
 	}
 }
 
+func (s *Session) appendUserMessage(ctx context.Context, userMessage string) error {
+	content, err := json.Marshal(userMessageContent{Content: userMessage})
+	if err != nil {
+		return fmt.Errorf("marshal user message: %w", err)
+	}
+	return s.store.AppendEvent(ctx, StoredEvent{
+		Timestamp: time.Now(),
+		Type:      StoredEventUserMessage,
+		Content:   content,
+	})
+}
+
 // Close releases resources. Call when the session is no longer needed.
 func (s *Session) Close() error {
-	if s.sub != nil {
-		s.bus.Unsubscribe(s.sub)
-		s.sub = nil
+	if s.subPersist != nil {
+		s.bus.Unsubscribe(s.subPersist)
+		s.subPersist = nil
 	}
-	if s.agent != nil {
-		_ = s.agent.Close()
-		s.agent = nil
+	if s.subControl != nil {
+		s.bus.Unsubscribe(s.subControl)
+		s.subControl = nil
 	}
+	s.agent = nil
 	if s.store != nil {
 		err := s.store.Close()
 		s.store = nil

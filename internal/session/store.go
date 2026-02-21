@@ -9,7 +9,10 @@ import (
 // StoredEventType identifies the kind of persisted event.
 const (
 	StoredEventUserMessage      = "user_message"
+	StoredEventAssistantPartial = "assistant_partial"
 	StoredEventAssistantContent = "assistant_content"
+	StoredEventAgentThinking    = "agent_thinking"
+	StoredEventAgentStepTokens  = "agent_step_tokens"
 	StoredEventToolCall         = "tool_call"
 	StoredEventToolResult       = "tool_result"
 	StoredEventAgentDone        = "agent_done"

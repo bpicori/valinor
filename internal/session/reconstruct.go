@@ -4,8 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared/constant"
+	agentcontext "valinor/internal/context"
 )
 
 // content structs for unmarshaling StoredEvent.Content by type
@@ -29,18 +28,21 @@ type assistantContentPayload struct {
 	Content string `json:"content"`
 }
 
-// ReconstructMessages converts stored events back to OpenAI message params
+// ReconstructMessages converts stored events back to provider-agnostic context messages
 // for session resume. The systemPrompt is prepended as the first message.
-func ReconstructMessages(events []StoredEvent, systemPrompt string) ([]openai.ChatCompletionMessageParamUnion, error) {
+func ReconstructMessages(events []StoredEvent, systemPrompt string) ([]agentcontext.Message, error) {
 	if systemPrompt == "" {
 		return nil, fmt.Errorf("system prompt is required")
 	}
 
-	msgs := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage(systemPrompt),
+	msgs := []agentcontext.Message{
+		{
+			Role:    agentcontext.RoleSystem,
+			Content: systemPrompt,
+		},
 	}
 
-	var pendingToolCalls []openai.ChatCompletionMessageToolCallUnionParam
+	var pendingToolCalls []agentcontext.ToolCall
 
 	for _, evt := range events {
 		switch evt.Type {
@@ -49,22 +51,20 @@ func ReconstructMessages(events []StoredEvent, systemPrompt string) ([]openai.Ch
 			if err := json.Unmarshal(evt.Content, &c); err != nil {
 				return nil, fmt.Errorf("unmarshal user_message: %w", err)
 			}
-			msgs = append(msgs, openai.UserMessage(c.Content))
+			msgs = append(msgs, agentcontext.Message{
+				Role:    agentcontext.RoleUser,
+				Content: c.Content,
+			})
 
 		case StoredEventToolCall:
 			var c toolCallContent
 			if err := json.Unmarshal(evt.Content, &c); err != nil {
 				return nil, fmt.Errorf("unmarshal tool_call: %w", err)
 			}
-			pendingToolCalls = append(pendingToolCalls, openai.ChatCompletionMessageToolCallUnionParam{
-				OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
-					ID:   c.ToolCallID,
-					Type: constant.Function("function"),
-					Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      c.ToolName,
-						Arguments: c.ToolArgs,
-					},
-				},
+			pendingToolCalls = append(pendingToolCalls, agentcontext.ToolCall{
+				ID:        c.ToolCallID,
+				Name:      c.ToolName,
+				Arguments: c.ToolArgs,
 			})
 
 		case StoredEventToolResult:
@@ -73,23 +73,23 @@ func ReconstructMessages(events []StoredEvent, systemPrompt string) ([]openai.Ch
 				return nil, fmt.Errorf("unmarshal tool_result: %w", err)
 			}
 			if len(pendingToolCalls) > 0 {
-				msgs = append(msgs, openai.ChatCompletionMessageParamUnion{
-					OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-						Role:      constant.Assistant("assistant"),
-						ToolCalls: pendingToolCalls,
-					},
+				msgs = append(msgs, agentcontext.Message{
+					Role:      agentcontext.RoleAssistantToolCalls,
+					ToolCalls: pendingToolCalls,
 				})
 				pendingToolCalls = nil
 			}
-			msgs = append(msgs, openai.ToolMessage(c.ToolResult, c.ToolCallID))
+			msgs = append(msgs, agentcontext.Message{
+				Role:       agentcontext.RoleTool,
+				ToolCallID: c.ToolCallID,
+				Content:    c.ToolResult,
+			})
 
 		case StoredEventAssistantContent:
 			if len(pendingToolCalls) > 0 {
-				msgs = append(msgs, openai.ChatCompletionMessageParamUnion{
-					OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-						Role:      constant.Assistant("assistant"),
-						ToolCalls: pendingToolCalls,
-					},
+				msgs = append(msgs, agentcontext.Message{
+					Role:      agentcontext.RoleAssistantToolCalls,
+					ToolCalls: pendingToolCalls,
 				})
 				pendingToolCalls = nil
 			}
@@ -97,19 +97,26 @@ func ReconstructMessages(events []StoredEvent, systemPrompt string) ([]openai.Ch
 			if err := json.Unmarshal(evt.Content, &c); err != nil {
 				return nil, fmt.Errorf("unmarshal assistant_content: %w", err)
 			}
-			msgs = append(msgs, openai.AssistantMessage(c.Content))
+			msgs = append(msgs, agentcontext.Message{
+				Role:    agentcontext.RoleAssistant,
+				Content: c.Content,
+			})
 
+		case StoredEventAssistantPartial:
+			// Telemetry-only for timeline persistence, skip reconstruction.
+		case StoredEventAgentThinking:
+			// Telemetry-only for timeline persistence, skip reconstruction.
+		case StoredEventAgentStepTokens:
+			// Telemetry-only for timeline persistence, skip reconstruction.
 		case StoredEventAgentDone:
 			// Metadata only, skip
 		}
 	}
 
 	if len(pendingToolCalls) > 0 {
-		msgs = append(msgs, openai.ChatCompletionMessageParamUnion{
-			OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-				Role:      constant.Assistant("assistant"),
-				ToolCalls: pendingToolCalls,
-			},
+		msgs = append(msgs, agentcontext.Message{
+			Role:      agentcontext.RoleAssistantToolCalls,
+			ToolCalls: pendingToolCalls,
 		})
 	}
 

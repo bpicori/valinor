@@ -16,11 +16,18 @@ import (
 )
 
 func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	cfg, err := config.LoadFromFile("config.toml")
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Fatalf("[ERROR] load config: %v", err)
 	}
 
+	valinorDir, err := cfg.ResolveValinorDir()
+	if err != nil {
+		log.Fatalf("resolve valinor dir: %v", err)
+	}
 	sessionsDir, err := cfg.ResolveSessionDir()
 	if err != nil {
 		log.Fatalf("resolve session dir: %v", err)
@@ -30,7 +37,7 @@ func main() {
 		log.Fatalf("resolve workspace dir: %v", err)
 	}
 
-	logPath, closeLogger, err := applog.Init(workspaceDir)
+	logPath, closeLogger, err := applog.Init(valinorDir)
 	if err != nil {
 		log.Fatalf("init logger: %v", err)
 	}
@@ -43,23 +50,40 @@ func main() {
 
 	b := bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir)
-
-	sess, err := sm.Create(context.Background(), session.CreateConfig{
+	createCfg := session.CreateConfig{
 		Model:              cfg.Model,
-		Client:             cfg.NewClient(),
+		APIKey:             cfg.APIKey,
+		BaseURL:            cfg.BaseURL,
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
-	})
+	}
+
+	var sess *session.Session
+	sessions, err := sm.List()
 	if err != nil {
-		log.Fatalf("create session: %v", err)
+		log.Fatalf("[ERROR] list sessions: %v", err)
+	}
+	if len(sessions) > 0 {
+		latestSession := sessions[0]
+		sess, err = sm.Resume(context.Background(), latestSession.ID, createCfg)
+		if err != nil {
+			log.Printf("[ERROR] resume latest session failed (%s): %v", latestSession.ID, err)
+		} else {
+			log.Printf("[INFO] resumed session: %s", latestSession.ID)
+		}
+	}
+	if sess == nil {
+		sess, err = sm.Create(context.Background(), createCfg)
+		if err != nil {
+			log.Fatalf("[ERROR] create session: %v", err)
+		}
+		log.Printf("[INFO] created new session: %s", sess.Meta().ID)
 	}
 	defer sess.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	go sess.Run(ctx)
 
-	model := tui.New(b, cfg.Model)
+	model := tui.New(b, sess.Meta().Model)
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),

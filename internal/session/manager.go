@@ -7,17 +7,18 @@ import (
 	"path/filepath"
 	"time"
 
-	"valinor/internal/llm"
 	"valinor/internal/bus"
+	agentcontext "valinor/internal/context"
+	"valinor/internal/llm"
 
 	"github.com/google/uuid"
-	"github.com/openai/openai-go/v3"
 )
 
 // CreateConfig holds parameters for creating a new session.
 type CreateConfig struct {
 	Model              string
-	Client             openai.Client
+	APIKey             string
+	BaseURL            string
 	Bus                *bus.Bus
 	MaxAgentIterations int
 }
@@ -27,6 +28,12 @@ type Manager struct {
 	sessionDir   string
 	workspaceDir string
 }
+
+// Message history lifecycle:
+// - During a live session, session appends user input to message history.
+// - Context builder compacts/builds that history before each LLM run.
+// - Session events are persisted as JSONL transcript records.
+// - On resume, transcript events are reconstructed into message history.
 
 // NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
 func NewManager(sessionDir, workspaceDir string) *Manager {
@@ -60,13 +67,27 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	ag, err := llm.New(cfg.Client, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
+	ctxBuilder := agentcontext.NewBuilder(agentcontext.SystemPrompt())
+	snapshot, err := ctxBuilder.Build(workspaceDir)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("build context: %w", err)
+	}
+
+	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
-	sess := NewSession(meta, store, ag, cfg.Bus)
+	runBuilder := agentcontext.NewBuilder(snapshot.SystemPrompt)
+	initialMessages := []agentcontext.Message{
+		{
+			Role:    agentcontext.RoleSystem,
+			Content: snapshot.SystemPrompt,
+		},
+	}
+	sess := NewSession(meta, store, ag, runBuilder, initialMessages, cfg.Bus)
 	return sess, nil
 }
 
@@ -94,24 +115,35 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("load events: %w", err)
 	}
 
-	msgs, err := ReconstructMessages(events, llm.SystemPrompt())
+	workspaceDir := m.workspaceDir
+	if meta.WorkspaceDir != "" {
+		workspaceDir = meta.WorkspaceDir
+	}
+
+	ctxBuilder := agentcontext.NewBuilder(agentcontext.SystemPrompt())
+	snapshot, err := ctxBuilder.Build(workspaceDir)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("build context: %w", err)
+	}
+
+	msgs, err := ReconstructMessages(events, snapshot.SystemPrompt)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("reconstruct messages: %w", err)
 	}
 
-	workspaceDir := m.workspaceDir
-	ag, err := llm.New(cfg.Client, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
-	ag.RestoreMessages(msgs)
 
 	meta.UpdatedAt = time.Now()
 	_ = store.SaveMetadata(ctx, *meta)
 
-	sess := NewSession(*meta, store, ag, cfg.Bus)
+	runBuilder := agentcontext.NewBuilder(snapshot.SystemPrompt)
+	sess := NewSession(*meta, store, ag, runBuilder, msgs, cfg.Bus)
 	return sess, nil
 }
 
