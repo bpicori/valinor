@@ -5,9 +5,16 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"valinor/internal/applog"
+)
+
+var (
+	frontMatterRE = regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---`)
+	nameRE        = regexp.MustCompile(`(?m)^name:\s*(.+)$`)
+	descriptionRE = regexp.MustCompile(`(?m)^description:\s*(.+)$`)
 )
 
 const skillsDir = "skills"
@@ -42,7 +49,10 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 			return nil, fmt.Errorf("read skill file %q: %w", name, err)
 		}
 
-		skillName, description := parseSkillMetadata(name, string(data))
+		skillName, description, ok := parseSkillMetadata(name, string(data))
+		if !ok {
+			continue
+		}
 		out = append(out, Skill{
 			Name:        skillName,
 			Description: description,
@@ -52,11 +62,11 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 	return out, nil
 }
 
-func parseSkillMetadata(fileName, contents string) (string, string) {
+func parseSkillMetadata(fileName, contents string) (name, description string, ok bool) {
 	defaultName := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	trimmed := strings.TrimSpace(contents)
 	if trimmed == "" {
-		return defaultName, "No description provided."
+		return "", "", false
 	}
 
 	frontName, frontDesc := parseFrontMatterMetadata(trimmed)
@@ -65,13 +75,13 @@ func parseSkillMetadata(fileName, contents string) (string, string) {
 			frontName = defaultName
 		}
 		if frontDesc == "" {
-			frontDesc = "No description provided."
+			return "", "", false
 		}
-		return frontName, frontDesc
+		return frontName, frontDesc, true
 	}
 
-	name := defaultName
-	description := "No description provided."
+	name = defaultName
+	description = ""
 	scanner := bufio.NewScanner(strings.NewReader(trimmed))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -90,44 +100,32 @@ func parseSkillMetadata(fileName, contents string) (string, string) {
 			desc := strings.TrimSpace(line[len("description:"):])
 			if desc != "" {
 				description = desc
-				break
+				return name, description, true
 			}
 			continue
 		}
 		description = line
-		break
+		return name, description, true
 	}
-	return name, description
+	return "", "", false
 }
 
 func parseFrontMatterMetadata(contents string) (string, string) {
-	lines := strings.Split(contents, "\n")
-	if len(lines) < 3 {
+	fm := frontMatterRE.FindStringSubmatch(contents)
+	if len(fm) < 2 {
 		return "", ""
 	}
-	if strings.TrimSpace(lines[0]) != "---" {
-		return "", ""
-	}
+	block := fm[1]
 
 	name := ""
-	description := ""
-	for i := 1; i < len(lines); i++ {
-		line := strings.TrimSpace(lines[i])
-		if line == "---" {
-			break
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.ToLower(strings.TrimSpace(parts[0]))
-		value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
-		switch key {
-		case "name":
-			name = value
-		case "description":
-			description = value
-		}
+	if m := nameRE.FindStringSubmatch(block); len(m) >= 2 {
+		name = strings.Trim(strings.TrimSpace(m[1]), "\"'")
 	}
+
+	description := ""
+	if m := descriptionRE.FindStringSubmatch(block); len(m) >= 2 {
+		description = strings.Trim(strings.TrimSpace(m[1]), "\"'")
+	}
+
 	return name, description
 }
