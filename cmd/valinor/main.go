@@ -6,11 +6,13 @@ import (
 	"log"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"valinor/internal/applog"
 	"valinor/internal/bus"
 	"valinor/internal/config"
 	"valinor/internal/session"
 	"valinor/internal/tui"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -27,6 +29,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("resolve workspace dir: %v", err)
 	}
+
+	logPath, closeLogger, err := applog.Init(workspaceDir)
+	if err != nil {
+		log.Fatalf("init logger: %v", err)
+	}
+	defer func() {
+		if err := closeLogger(); err != nil {
+			fmt.Fprintf(os.Stderr, "close logger: %v\n", err)
+		}
+	}()
+	log.Printf("logging to file: %s", logPath)
 
 	b := bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir)

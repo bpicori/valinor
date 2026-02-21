@@ -1,1 +1,0 @@
-- [ ] Introduce a sandboxed terminal execution tool for running shell commands safely
