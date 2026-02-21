@@ -65,28 +65,30 @@ func (r *Runtime) ReadFile(path string) (string, error) {
 
 // WriteFile writes content to a file relative to workspace.
 func (r *Runtime) WriteFile(path string, content string) (string, error) {
-	fullPath := r.resolveWorkspacePath(path)
-	parentDir := filepath.Dir(fullPath)
+	relPath := filepath.FromSlash(path)
+	parentDir := filepath.Dir(relPath)
 
 	ctx, cancel := context.WithTimeout(context.Background(), fsToolTimeout)
 	defer cancel()
 
-	mkdirResult, err := r.run(ctx, redkeep.RunRequest{
-		RWPaths: []string{r.workspaceDir},
-		WorkDir: r.workspaceDir,
-		Command: []string{"mkdir", "-p", parentDir},
-	})
-	if err != nil {
-		return "Tool Error: " + err.Error(), nil
-	}
-	if mkdirResult.ExitCode != 0 {
-		return "Tool Error: " + commandFailureMessage(mkdirResult, "create parent directory failed"), nil
+	if parentDir != "." {
+		mkdirResult, err := r.run(ctx, redkeep.RunRequest{
+			RWPaths: []string{r.workspaceDir},
+			WorkDir: r.workspaceDir,
+			Command: []string{"mkdir", "-p", parentDir},
+		})
+		if err != nil {
+			return "Tool Error: " + err.Error(), nil
+		}
+		if mkdirResult.ExitCode != 0 {
+			return "Tool Error: " + commandFailureMessage(mkdirResult, "create parent directory failed"), nil
+		}
 	}
 
 	writeResult, err := r.runIO(ctx, redkeep.RunRequest{
 		RWPaths: []string{r.workspaceDir},
 		WorkDir: r.workspaceDir,
-		Command: []string{"tee", fullPath},
+		Command: []string{"tee", relPath},
 	}, strings.NewReader(content), nil)
 	if err != nil {
 		return "Tool Error: " + err.Error(), nil

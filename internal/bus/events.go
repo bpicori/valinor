@@ -10,6 +10,9 @@ const (
 
 	// Agent streaming events (published by Agent).
 	EventAgentContentDelta  // Streamed content chunk.
+	EventAgentPartial       // Persistable partial assistant chunk.
+	EventAgentThinking      // Reasoning/thinking step.
+	EventAgentStepTokens    // Per-step token usage.
 	EventAgentRefusal       // Model refusal.
 	EventAgentToolCallStart // Tool call initiated.
 	EventAgentToolCallDone  // Tool call completed.
@@ -35,6 +38,17 @@ type ContentDeltaPayload struct {
 	Content string
 }
 
+// PartialPayload carries a persistable assistant partial chunk.
+type PartialPayload struct {
+	Content string
+}
+
+// ThinkingPayload carries a reasoning/thinking update.
+type ThinkingPayload struct {
+	Step    int
+	Content string
+}
+
 // RefusalPayload carries a model refusal message.
 type RefusalPayload struct {
 	Content string
@@ -56,6 +70,14 @@ type ToolCallDonePayload struct {
 
 // AgentDonePayload carries token usage for a completed agent turn.
 type AgentDonePayload struct {
+	PromptTokens     int64
+	CompletionTokens int64
+	TotalTokens      int64
+}
+
+// StepTokenUsagePayload carries per-step token usage.
+type StepTokenUsagePayload struct {
+	Step             int
 	PromptTokens     int64
 	CompletionTokens int64
 	TotalTokens      int64
