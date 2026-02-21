@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -8,9 +9,6 @@ import (
 
 	"valinor/internal/applog"
 )
-
-// DefaultBaseURL is the default OpenAI API base URL.
-const DefaultBaseURL = "https://api.openai.com/v1"
 
 // DefaultValinorDir is the default base directory under home.
 const DefaultValinorDir = "~/.valinor"
@@ -25,18 +23,25 @@ const (
 	DefaultWebPort    = 7777
 )
 
-// Config holds OpenAI client configuration and paths.
+// Config holds provider configurations and application paths.
 type Config struct {
-	APIKey             string `toml:"api_key"`
-	BaseURL            string `toml:"base_url"`
-	Model              string `toml:"model"`
-	ValinorDir         string `toml:"valinor_dir"`
-	SessionDir         string `toml:"session_dir"`
-	WorkspaceDir       string `toml:"workspace_dir"`
-	MaxAgentIterations int    `toml:"max_agent_iterations"`
-	WebEnabled         bool   `toml:"web_enabled"`
-	WebHost            string `toml:"web_host"`
-	WebPort            int    `toml:"web_port"`
+	DefaultProvider    string                    `toml:"default_provider"`
+	Providers          map[string]ProviderConfig `toml:"providers"`
+	ValinorDir         string                    `toml:"valinor_dir"`
+	SessionDir         string                    `toml:"session_dir"`
+	WorkspaceDir       string                    `toml:"workspace_dir"`
+	MaxAgentIterations int                       `toml:"max_agent_iterations"`
+	WebEnabled         bool                      `toml:"web_enabled"`
+	WebHost            string                    `toml:"web_host"`
+	WebPort            int                       `toml:"web_port"`
+}
+
+// ProviderConfig holds configuration for a specific LLM provider.
+type ProviderConfig struct {
+	Type    string `toml:"type"`     // "openai", "anthropic", "openai-compatible"
+	APIKey  string `toml:"api_key"`  // API key for the provider
+	BaseURL string `toml:"base_url"` // Base URL (for openai-compatible providers)
+	Model   string `toml:"model"`    // Model name to use
 }
 
 // LoadFromFile loads configuration from a TOML file.
@@ -47,9 +52,38 @@ func LoadFromFile(path string) (Config, error) {
 		applog.Error("config load failed", applog.M("path", path, "error", err))
 		return Config{}, err
 	}
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = DefaultBaseURL
+
+	// Validate default provider
+	if cfg.DefaultProvider == "" {
+		return Config{}, fmt.Errorf("default_provider is required")
 	}
+	if cfg.Providers == nil || len(cfg.Providers) == 0 {
+		return Config{}, fmt.Errorf("at least one provider must be configured")
+	}
+	if _, ok := cfg.Providers[cfg.DefaultProvider]; !ok {
+		return Config{}, fmt.Errorf("default_provider '%s' not found in providers", cfg.DefaultProvider)
+	}
+
+	// Validate each provider
+	for name, provider := range cfg.Providers {
+		if provider.Type == "" {
+			return Config{}, fmt.Errorf("provider '%s' missing type field", name)
+		}
+		if provider.Type != "openai" && provider.Type != "anthropic" && provider.Type != "openai-compatible" {
+			return Config{}, fmt.Errorf("provider '%s' has invalid type '%s' (must be: openai, anthropic, or openai-compatible)", name, provider.Type)
+		}
+		if provider.APIKey == "" {
+			return Config{}, fmt.Errorf("provider '%s' missing api_key field", name)
+		}
+		if provider.Model == "" {
+			return Config{}, fmt.Errorf("provider '%s' missing model field", name)
+		}
+		if provider.Type == "openai-compatible" && provider.BaseURL == "" {
+			return Config{}, fmt.Errorf("provider '%s' of type 'openai-compatible' requires base_url field", name)
+		}
+	}
+
+	// Apply defaults
 	if cfg.ValinorDir == "" {
 		cfg.ValinorDir = DefaultValinorDir
 	}

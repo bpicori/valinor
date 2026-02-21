@@ -6,9 +6,8 @@ import (
 	"strings"
 
 	"valinor/internal/applog"
+	"valinor/internal/llm"
 	"valinor/internal/sandbox"
-
-	"github.com/openai/openai-go/v3"
 )
 
 // normalizePath converts path separators for LLM-provided paths that may mix
@@ -32,22 +31,23 @@ func validateRelativePath(path string) (string, string) {
 	return cleaned, ""
 }
 
-// Tool holds a tool's definition and execution function.
-type Tool struct {
-	Name string
-	Def  openai.ChatCompletionToolUnionParam
-	Exec func(json.RawMessage) (string, error)
-}
-
-// AvailableTool describes a tool exposed to the model.
-type AvailableTool struct {
-	Name        string
-	Description string
+// buildToolDef creates a provider-agnostic tool definition from a JSON Schema.
+func buildToolDef(name, description string, parameters map[string]any) llm.ToolDefinition {
+	paramsJSON, err := json.Marshal(parameters)
+	if err != nil {
+		applog.Error("tool definition marshal error", applog.M("tool", name, "error", err))
+		paramsJSON = json.RawMessage("{}")
+	}
+	return llm.ToolDefinition{
+		Name:        name,
+		Description: description,
+		Parameters:  paramsJSON,
+	}
 }
 
 // AvailableTools returns the deterministic list of tool metadata.
-func AvailableTools() []AvailableTool {
-	defs := []openai.ChatCompletionToolUnionParam{
+func AvailableTools() []llm.AvailableTool {
+	defs := []llm.ToolDefinition{
 		readFileDef(),
 		writeFileDef(),
 		editFileDef(),
@@ -55,27 +55,19 @@ func AvailableTools() []AvailableTool {
 		grepDef(),
 		runCommandDef(),
 	}
-	out := make([]AvailableTool, 0, len(defs))
+	out := make([]llm.AvailableTool, 0, len(defs))
 	for _, def := range defs {
-		fn := def.GetFunction()
-		if fn == nil {
-			continue
-		}
-		description := ""
-		if fn.Description.Valid() {
-			description = fn.Description.Or("")
-		}
-		out = append(out, AvailableTool{
-			Name:        fn.Name,
-			Description: description,
+		out = append(out, llm.AvailableTool{
+			Name:        def.Name,
+			Description: def.Description,
 		})
 	}
 	return out
 }
 
 // BuildTools returns tool definitions for the given runtime.
-func BuildTools(rt *sandbox.Runtime) []Tool {
-	return []Tool{
+func BuildTools(rt *sandbox.Runtime) []llm.Tool {
+	return []llm.Tool{
 		{readFileName, readFileDef(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }},
 		{writeFileName, writeFileDef(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }},
 		{editFileName, editFileDef(), func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }},

@@ -3,18 +3,17 @@ package tools
 import (
 	"encoding/json"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared"
+	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
 const writeFileName = "write_file"
 
-func writeFileDef() openai.ChatCompletionToolUnionParam {
-	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        writeFileName,
-		Description: openai.String("Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files."),
-		Parameters: shared.FunctionParameters{
+func writeFileDef() llm.ToolDefinition {
+	return buildToolDef(
+		writeFileName,
+		"Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files.",
+		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]string{
@@ -29,7 +28,7 @@ func writeFileDef() openai.ChatCompletionToolUnionParam {
 			"required":             []string{"path", "content"},
 			"additionalProperties": false,
 		},
-	})
+	)
 }
 
 func writeFileExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

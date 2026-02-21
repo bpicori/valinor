@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"valinor/internal/applog"
-	agenttools "valinor/internal/tools"
 )
 
 //go:embed system_prompt.md
@@ -43,10 +42,9 @@ func (b *Builder) Build(workspaceDir string) (Snapshot, error) {
 		applog.Error("context build skills failed", applog.M("workspace_dir", workspaceDir, "error", err))
 		return Snapshot{}, fmt.Errorf("load skills: %w", err)
 	}
-	availableTools := agenttools.AvailableTools()
 
-	prompt := b.composeSystemPrompt(identity, skills, availableTools)
-	applog.Info("context build success", applog.M("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills), "tool_count", len(availableTools)))
+	prompt := b.composeSystemPrompt(identity, skills)
+	applog.Info("context build success", applog.M("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills)))
 	return Snapshot{
 		SystemPrompt: prompt,
 		Identity:     identity,
@@ -54,7 +52,7 @@ func (b *Builder) Build(workspaceDir string) (Snapshot, error) {
 	}, nil
 }
 
-func (b *Builder) composeSystemPrompt(identity string, skills []Skill, tools []agenttools.AvailableTool) string {
+func (b *Builder) composeSystemPrompt(identity string, skills []Skill) string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(b.basePrompt))
 
@@ -81,18 +79,6 @@ func (b *Builder) composeSystemPrompt(identity string, skills []Skill, tools []a
 		}
 	}
 
-	sb.WriteString("\n## AvailableTools\n")
-	if len(tools) == 0 {
-		sb.WriteString("- none\n")
-	} else {
-		for _, tool := range tools {
-			sb.WriteString("- ")
-			sb.WriteString(tool.Name)
-			sb.WriteString(": ")
-			sb.WriteString(tool.Description)
-			sb.WriteString("\n")
-		}
-	}
 	return strings.TrimSpace(sb.String())
 }
 

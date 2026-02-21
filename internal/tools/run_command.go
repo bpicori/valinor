@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared"
+	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
@@ -18,13 +17,11 @@ const (
 	maxCommandTimeoutMs = 300000
 )
 
-func runCommandDef() openai.ChatCompletionToolUnionParam {
-	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name: runCommandName,
-		Description: openai.String(
-			"Run a shell command.",
-		),
-		Parameters: shared.FunctionParameters{
+func runCommandDef() llm.ToolDefinition {
+	return buildToolDef(
+		runCommandName,
+		"Run a shell command.",
+		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"command": map[string]string{
@@ -50,7 +47,7 @@ func runCommandDef() openai.ChatCompletionToolUnionParam {
 			"required":             []string{"command"},
 			"additionalProperties": false,
 		},
-	})
+	)
 }
 
 func runCommandExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

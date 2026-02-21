@@ -3,18 +3,17 @@ package tools
 import (
 	"encoding/json"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared"
+	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
 const listFilesName = "list_directory"
 
-func listFilesDef() openai.ChatCompletionToolUnionParam {
-	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        listFilesName,
-		Description: openai.String("List files and directories at the given path. Path is relative to the workspace root. Use \".\" for the root. Directories are marked with a trailing slash."),
-		Parameters: shared.FunctionParameters{
+func listFilesDef() llm.ToolDefinition {
+	return buildToolDef(
+		listFilesName,
+		"List files and directories at the given path. Path is relative to the workspace root. Use \".\" for the root. Directories are marked with a trailing slash.",
+		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]string{
@@ -25,7 +24,7 @@ func listFilesDef() openai.ChatCompletionToolUnionParam {
 			"required":             []string{},
 			"additionalProperties": false,
 		},
-	})
+	)
 }
 
 func listFilesExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

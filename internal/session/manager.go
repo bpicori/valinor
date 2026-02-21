@@ -9,17 +9,19 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/llm"
+	"valinor/internal/llm/factory"
+	"valinor/internal/sandbox"
+	"valinor/internal/tools"
 
 	"github.com/google/uuid"
 )
 
 // CreateConfig holds parameters for creating a new session.
 type CreateConfig struct {
-	Model              string
-	APIKey             string
-	BaseURL            string
+	ProviderConfig     config.ProviderConfig
 	Bus                *bus.Bus
 	MaxAgentIterations int
 }
@@ -77,10 +79,26 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
+	// Create provider
+	provider, err := createProvider(cfg.ProviderConfig, cfg.Bus)
 	if err != nil {
 		_ = store.Close()
-		applog.Error("session create agent error", applog.M("session_id", id, "model", cfg.Model, "error", err))
+		applog.Error("session create provider error", applog.M("session_id", id, "error", err))
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+
+	// Create tools
+	tools, err := createTools(workspaceDir)
+	if err != nil {
+		_ = store.Close()
+		applog.Error("session create tools error", applog.M("session_id", id, "error", err))
+		return nil, fmt.Errorf("create tools: %w", err)
+	}
+
+	ag, err := llm.New(provider, cfg.ProviderConfig.Model, tools, cfg.Bus, cfg.MaxAgentIterations)
+	if err != nil {
+		_ = store.Close()
+		applog.Error("session create agent error", applog.M("session_id", id, "model", cfg.ProviderConfig.Model, "error", err))
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
@@ -92,7 +110,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		},
 	}
 	sess := NewSession(meta, store, ag, runBuilder, initialMessages, cfg.Bus)
-	applog.Info("session create success", applog.M("session_id", id, "model", cfg.Model, "workspace_dir", workspaceDir))
+	applog.Info("session create success", applog.M("session_id", id, "model", cfg.ProviderConfig.Model, "workspace_dir", workspaceDir))
 	return sess, nil
 }
 
@@ -145,10 +163,26 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("reconstruct messages: %w", err)
 	}
 
-	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
+	// Create provider
+	provider, err := createProvider(cfg.ProviderConfig, cfg.Bus)
 	if err != nil {
 		_ = store.Close()
-		applog.Error("session resume agent error", applog.M("session_id", id, "model", cfg.Model, "error", err))
+		applog.Error("session resume provider error", applog.M("session_id", id, "error", err))
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+
+	// Create tools
+	tools, err := createTools(workspaceDir)
+	if err != nil {
+		_ = store.Close()
+		applog.Error("session resume tools error", applog.M("session_id", id, "error", err))
+		return nil, fmt.Errorf("create tools: %w", err)
+	}
+
+	ag, err := llm.New(provider, cfg.ProviderConfig.Model, tools, cfg.Bus, cfg.MaxAgentIterations)
+	if err != nil {
+		_ = store.Close()
+		applog.Error("session resume agent error", applog.M("session_id", id, "model", cfg.ProviderConfig.Model, "error", err))
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
@@ -239,4 +273,18 @@ func (m *Manager) Delete(id string) error {
 	}
 	applog.Info("session delete success", applog.M("session_id", id))
 	return nil
+}
+
+// createProvider is a helper that delegates to the factory.
+func createProvider(cfg config.ProviderConfig, b *bus.Bus) (llm.Provider, error) {
+	return factory.CreateProvider(cfg, b)
+}
+
+// createTools is a helper that creates tools for the given workspace.
+func createTools(workspaceDir string) ([]llm.Tool, error) {
+	rt, err := sandbox.NewRuntime(workspaceDir)
+	if err != nil {
+		return nil, fmt.Errorf("create runtime: %w", err)
+	}
+	return tools.BuildTools(rt), nil
 }

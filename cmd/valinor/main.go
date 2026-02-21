@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"valinor/internal/applog"
@@ -59,12 +60,17 @@ func run() error {
 	}()
 	applog.Info("logging to file", applog.M("log_path", logPath))
 
+	// Get provider config for default provider
+	providerCfg, ok := cfg.Providers[cfg.DefaultProvider]
+	if !ok {
+		applog.Error("default provider not found", applog.M("provider", cfg.DefaultProvider))
+		return fmt.Errorf("default provider '%s' not found in config", cfg.DefaultProvider)
+	}
+
 	b := bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir)
 	createCfg := session.CreateConfig{
-		Model:              cfg.Model,
-		APIKey:             cfg.APIKey,
-		BaseURL:            cfg.BaseURL,
+		ProviderConfig:     providerCfg,
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}
@@ -104,7 +110,7 @@ func run() error {
 		}
 	}
 
-	model := tui.New(b, cfg.Model)
+	model := tui.New(b, providerCfg.Model)
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),

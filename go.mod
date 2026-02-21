@@ -6,6 +6,7 @@ require github.com/openai/openai-go/v3 v3.22.0
 
 require (
 	github.com/BurntSushi/toml v1.6.0
+	github.com/anthropics/anthropic-sdk-go v1.26.0
 	github.com/bpicori/red-keep v0.1.10
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -52,6 +53,7 @@ require (
 	github.com/yuin/goldmark v1.7.8 // indirect
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	golang.org/x/net v0.43.0 // indirect
+	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.34.0 // indirect
 	golang.org/x/text v0.28.0 // indirect

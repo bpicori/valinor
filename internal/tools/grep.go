@@ -6,19 +6,18 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared"
 	"valinor/internal/applog"
+	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
 const grepName = "grep"
 
-func grepDef() openai.ChatCompletionToolUnionParam {
-	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        grepName,
-		Description: openai.String("Search for a regex pattern in files. Returns matching lines with file paths and line numbers."),
-		Parameters: shared.FunctionParameters{
+func grepDef() llm.ToolDefinition {
+	return buildToolDef(
+		grepName,
+		"Search for a regex pattern in files. Returns matching lines with file paths and line numbers.",
+		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"pattern": map[string]string{
@@ -37,7 +36,7 @@ func grepDef() openai.ChatCompletionToolUnionParam {
 			"required":             []string{"pattern"},
 			"additionalProperties": false,
 		},
-	})
+	)
 }
 
 func grepExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

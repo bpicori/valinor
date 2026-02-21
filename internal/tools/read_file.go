@@ -3,18 +3,17 @@ package tools
 import (
 	"encoding/json"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared"
+	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
 const readFileName = "read_file"
 
-func readFileDef() openai.ChatCompletionToolUnionParam {
-	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        readFileName,
-		Description: openai.String("Read the contents of a file. Path is relative to the workspace root."),
-		Parameters: shared.FunctionParameters{
+func readFileDef() llm.ToolDefinition {
+	return buildToolDef(
+		readFileName,
+		"Read the contents of a file. Path is relative to the workspace root.",
+		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]string{
@@ -25,7 +24,7 @@ func readFileDef() openai.ChatCompletionToolUnionParam {
 			"required":             []string{"path"},
 			"additionalProperties": false,
 		},
-	})
+	)
 }
 
 func readFileExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

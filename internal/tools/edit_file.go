@@ -5,20 +5,17 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/shared"
+	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
 const editFileName = "edit_file"
 
-func editFileDef() openai.ChatCompletionToolUnionParam {
-	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name: editFileName,
-		Description: openai.String(
-			"Apply multiple targeted text edits to a file. Path is relative to the workspace root. Edits are applied in order.",
-		),
-		Parameters: shared.FunctionParameters{
+func editFileDef() llm.ToolDefinition {
+	return buildToolDef(
+		editFileName,
+		"Apply multiple targeted text edits to a file. Path is relative to the workspace root. Edits are applied in order.",
+		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"path": map[string]string{
@@ -52,7 +49,7 @@ func editFileDef() openai.ChatCompletionToolUnionParam {
 			"required":             []string{"path", "edits"},
 			"additionalProperties": false,
 		},
-	})
+	)
 }
 
 func editFileExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {
