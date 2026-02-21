@@ -10,7 +10,7 @@ const (
 
 	// Agent streaming events (published by Agent).
 	EventAgentContentDelta  // Streamed content chunk.
-	EventAgentPartial       // Persistable partial assistant chunk.
+	EventAgentContentFull   // Full assistant content for this streamed response.
 	EventAgentThinking      // Reasoning/thinking step.
 	EventAgentStepTokens    // Per-step token usage.
 	EventAgentRefusal       // Model refusal.
@@ -38,8 +38,8 @@ type ContentDeltaPayload struct {
 	Content string
 }
 
-// PartialPayload carries a persistable assistant partial chunk.
-type PartialPayload struct {
+// ContentFullPayload carries full assistant content for one response.
+type ContentFullPayload struct {
 	Content string
 }
 

@@ -102,8 +102,6 @@ func ReconstructMessages(events []StoredEvent, systemPrompt string) ([]agentcont
 				Content: c.Content,
 			})
 
-		case StoredEventAssistantPartial:
-			// Telemetry-only for timeline persistence, skip reconstruction.
 		case StoredEventAgentThinking:
 			// Telemetry-only for timeline persistence, skip reconstruction.
 		case StoredEventAgentStepTokens:

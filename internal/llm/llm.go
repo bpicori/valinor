@@ -126,10 +126,6 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 					Type:    bus.EventAgentContentDelta,
 					Payload: bus.ContentDeltaPayload{Content: delta.Content},
 				})
-				l.bus.Publish(bus.Event{
-					Type:    bus.EventAgentPartial,
-					Payload: bus.PartialPayload{Content: delta.Content},
-				})
 			}
 			if delta.Refusal != "" {
 				l.bus.Publish(bus.Event{
@@ -146,6 +142,12 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Payload: bus.AgentErrorPayload{Error: err},
 			})
 			return RunResult{}, err
+		}
+		if assistantContent != "" {
+			l.bus.Publish(bus.Event{
+				Type:    bus.EventAgentContentFull,
+				Payload: bus.ContentFullPayload{Content: assistantContent},
+			})
 		}
 
 		if len(acc.Choices) == 0 {

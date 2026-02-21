@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 
 	"valinor/internal/bus"
@@ -22,9 +21,6 @@ type Session struct {
 	bus        *bus.Bus
 	subPersist *bus.Subscription
 	subControl *bus.Subscription
-
-	mu                 sync.Mutex
-	accumulatedContent string
 }
 
 // NewSession creates a session that subscribes to all bus events for persistence.
@@ -106,16 +102,13 @@ func (s *Session) persistEvent(ctx context.Context, ev bus.Event) {
 
 	switch ev.Type {
 	case bus.EventAgentContentDelta:
-		// UI streaming event; persistence uses EventAgentPartial.
+		// UI streaming event; persistence uses EventAgentContentFull.
 		return
 
-	case bus.EventAgentPartial:
-		p := ev.Payload.(bus.PartialPayload)
+	case bus.EventAgentContentFull:
+		p := ev.Payload.(bus.ContentFullPayload)
 		content, _ := json.Marshal(assistantContentPayload{Content: p.Content})
-		_ = s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAssistantPartial, Content: content})
-		s.mu.Lock()
-		s.accumulatedContent += p.Content
-		s.mu.Unlock()
+		_ = s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAssistantContent, Content: content})
 		return
 
 	case bus.EventAgentThinking:
@@ -153,14 +146,6 @@ func (s *Session) persistEvent(ctx context.Context, ev bus.Event) {
 		return
 
 	case bus.EventAgentDone:
-		s.mu.Lock()
-		content := s.accumulatedContent
-		s.accumulatedContent = ""
-		s.mu.Unlock()
-		if content != "" {
-			ac, _ := json.Marshal(assistantContentPayload{Content: content})
-			_ = s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAssistantContent, Content: ac})
-		}
 		p := ev.Payload.(bus.AgentDonePayload)
 		doneContent, _ := json.Marshal(map[string]int64{
 			"prompt_tokens":     p.PromptTokens,
