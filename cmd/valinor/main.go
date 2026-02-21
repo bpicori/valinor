@@ -95,7 +95,7 @@ func run() error {
 
 	go sess.Run(ctx)
 
-	model := tui.New(b, sess.Meta().Model)
+	model := tui.New(b, cfg.Model)
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),

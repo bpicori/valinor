@@ -39,6 +39,40 @@ type Tool struct {
 	Exec func(json.RawMessage) (string, error)
 }
 
+// AvailableTool describes a tool exposed to the model.
+type AvailableTool struct {
+	Name        string
+	Description string
+}
+
+// AvailableTools returns the deterministic list of tool metadata.
+func AvailableTools() []AvailableTool {
+	defs := []openai.ChatCompletionToolUnionParam{
+		readFileDef(),
+		writeFileDef(),
+		editFileDef(),
+		listFilesDef(),
+		grepDef(),
+		runCommandDef(),
+	}
+	out := make([]AvailableTool, 0, len(defs))
+	for _, def := range defs {
+		fn := def.GetFunction()
+		if fn == nil {
+			continue
+		}
+		description := ""
+		if fn.Description.Valid() {
+			description = fn.Description.Or("")
+		}
+		out = append(out, AvailableTool{
+			Name:        fn.Name,
+			Description: description,
+		})
+	}
+	return out
+}
+
 // BuildTools returns tool definitions for the given runtime.
 func BuildTools(rt *sandbox.Runtime) []Tool {
 	return []Tool{

@@ -8,6 +8,5 @@ type Metadata struct {
 	Title        string    `json:"title"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
-	Model        string    `json:"model"`
 	WorkspaceDir string    `json:"workspace_dir"`
 }

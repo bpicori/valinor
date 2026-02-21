@@ -22,7 +22,7 @@ func runCommandDef() openai.ChatCompletionToolUnionParam {
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
 		Name: runCommandName,
 		Description: openai.String(
-			"Run a shell command in a sandbox limited to the workspace.",
+			"Run a shell command.",
 		),
 		Parameters: shared.FunctionParameters{
 			"type": "object",

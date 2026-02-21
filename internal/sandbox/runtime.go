@@ -40,9 +40,10 @@ func NewRuntime(dir string) (*Runtime, error) {
 // RunCommand executes a command in red-keep with workspace RW access.
 func (r *Runtime) RunCommand(ctx context.Context, workDir string, command string, args []string) (Result, error) {
 	return r.run(ctx, redkeep.RunRequest{
-		RWPaths: []string{r.workspaceDir},
-		WorkDir: workDir,
-		Command: append([]string{command}, args...),
+		RWPaths:  []string{r.workspaceDir},
+		WorkDir:  workDir,
+		AllowNet: true,
+		Command:  append([]string{command}, args...),
 	})
 }
 

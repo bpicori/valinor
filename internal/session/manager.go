@@ -54,7 +54,6 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		Title:        "Session " + id[:8],
 		CreatedAt:    now,
 		UpdatedAt:    now,
-		Model:        cfg.Model,
 		WorkspaceDir: workspaceDir,
 	}
 
@@ -146,10 +145,10 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("reconstruct messages: %w", err)
 	}
 
-	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
-		applog.Error("session resume agent error", applog.M("session_id", id, "model", meta.Model, "error", err))
+		applog.Error("session resume agent error", applog.M("session_id", id, "model", cfg.Model, "error", err))
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 

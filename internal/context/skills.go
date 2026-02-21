@@ -53,6 +53,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		if !ok {
 			continue
 		}
+		applog.Debug("context load skills file parsed", applog.M("file", name, "skill_name", skillName, "description", description))
 		out = append(out, Skill{
 			Name:        skillName,
 			Description: description,
