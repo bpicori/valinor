@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"valinor/internal/applog"
 )
 
 const (
@@ -24,12 +26,14 @@ type JSONLStore struct {
 // The directory must already exist. Call Close when done.
 func NewJSONLStore(dir string) (*JSONLStore, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
+		applog.Error("store create dir error", applog.M("dir", dir, "error", err))
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 
 	transcriptPath := filepath.Join(dir, TranscriptFile)
 	f, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		applog.Error("store create transcript error", applog.M("dir", dir, "error", err))
 		return nil, fmt.Errorf("open transcript: %w", err)
 	}
 
@@ -49,12 +53,14 @@ func (s *JSONLStore) AppendEvent(ctx context.Context, evt StoredEvent) error {
 
 	data, err := json.Marshal(evt)
 	if err != nil {
+		applog.Error("store append marshal error", applog.M("dir", s.dir, "event_type", evt.Type, "error", err))
 		return fmt.Errorf("marshal event: %w", err)
 	}
 	data = append(data, '\n')
 
 	_, err = s.transcript.Write(data)
 	if err != nil {
+		applog.Error("store append write error", applog.M("dir", s.dir, "event_type", evt.Type, "error", err))
 		return fmt.Errorf("write transcript: %w", err)
 	}
 	return nil
@@ -74,6 +80,7 @@ func (s *JSONLStore) LoadEvents(ctx context.Context) ([]StoredEvent, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+		applog.Error("store load open error", applog.M("dir", s.dir, "error", err))
 		return nil, fmt.Errorf("open transcript: %w", err)
 	}
 	defer f.Close()
@@ -93,11 +100,13 @@ func (s *JSONLStore) LoadEvents(ctx context.Context) ([]StoredEvent, error) {
 		}
 		var evt StoredEvent
 		if err := json.Unmarshal(line, &evt); err != nil {
+			applog.Error("store load unmarshal error", applog.M("dir", s.dir, "error", err))
 			return nil, fmt.Errorf("unmarshal event: %w", err)
 		}
 		events = append(events, evt)
 	}
 	if err := scanner.Err(); err != nil {
+		applog.Error("store load scanner error", applog.M("dir", s.dir, "error", err))
 		return nil, fmt.Errorf("read transcript: %w", err)
 	}
 	return events, nil
@@ -113,17 +122,20 @@ func (s *JSONLStore) SaveMetadata(ctx context.Context, meta Metadata) error {
 
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
+		applog.Error("store save metadata marshal error", applog.M("dir", s.dir, "session_id", meta.ID, "error", err))
 		return fmt.Errorf("marshal metadata: %w", err)
 	}
 
 	tmpPath := filepath.Join(s.dir, MetadataFile+".tmp")
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		applog.Error("store save metadata write error", applog.M("dir", s.dir, "session_id", meta.ID, "error", err))
 		return fmt.Errorf("write metadata: %w", err)
 	}
 
 	metaPath := filepath.Join(s.dir, MetadataFile)
 	if err := os.Rename(tmpPath, metaPath); err != nil {
 		_ = os.Remove(tmpPath)
+		applog.Error("store save metadata rename error", applog.M("dir", s.dir, "session_id", meta.ID, "error", err))
 		return fmt.Errorf("rename metadata: %w", err)
 	}
 	return nil
@@ -143,11 +155,13 @@ func (s *JSONLStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+		applog.Error("store load metadata read error", applog.M("dir", s.dir, "error", err))
 		return nil, fmt.Errorf("read metadata: %w", err)
 	}
 
 	var meta Metadata
 	if err := json.Unmarshal(data, &meta); err != nil {
+		applog.Error("store load metadata unmarshal error", applog.M("dir", s.dir, "error", err))
 		return nil, fmt.Errorf("unmarshal metadata: %w", err)
 	}
 	return &meta, nil
@@ -156,9 +170,14 @@ func (s *JSONLStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 // Close releases resources.
 func (s *JSONLStore) Close() error {
 	if s.transcript != nil {
+		dir := s.dir
 		err := s.transcript.Close()
 		s.transcript = nil
-		return err
+		if err != nil {
+			applog.Error("store close error", applog.M("dir", dir, "error", err))
+			return err
+		}
+		applog.Debug("store close success", applog.M("dir", dir))
 	}
 	return nil
 }

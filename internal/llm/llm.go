@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 
+	"valinor/internal/applog"
 	"valinor/internal/bus"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/sandbox"
@@ -92,7 +92,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		iterations++
 
-		log.Printf("running llm iteration %d", iterations)
+		applog.Debug("llm iteration start", applog.M("iteration", iterations))
 
 		stream := l.client.Chat.Completions.NewStreaming(ctx, params)
 		acc := openai.ChatCompletionAccumulator{}
@@ -136,7 +136,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 
 		if err := stream.Err(); err != nil {
-			log.Printf("stream error: %v", err)
+			applog.Error("llm stream error", applog.M("error", err))
 			l.bus.Publish(bus.Event{
 				Type:    bus.EventAgentError,
 				Payload: bus.AgentErrorPayload{Error: err},
@@ -151,7 +151,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 
 		if len(acc.Choices) == 0 {
-			log.Printf("llm iteration %d done", iterations)
+			applog.Debug("llm iteration done", applog.M("iteration", iterations))
 			l.bus.Publish(bus.Event{
 				Type: bus.EventAgentDone,
 				Payload: bus.AgentDonePayload{
@@ -177,6 +177,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 					TotalTokens:      usage.TotalTokens,
 				},
 			})
+			applog.Debug("llm iteration done", applog.M("iteration", iterations))
 			return RunResult{Messages: messages}, nil
 		}
 
@@ -198,13 +199,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			if tc.Function.Arguments != "" {
 				args = json.RawMessage(tc.Function.Arguments)
 			}
-			log.Printf(
-				"tool_call_start step=%d tool_call_id=%s tool=%s args=%s",
-				iterations,
-				tc.ID,
-				tc.Function.Name,
-				string(args),
-			)
+			applog.Debug("llm tool call start", applog.M("step", iterations, "tool_call_id", tc.ID, "tool", tc.Function.Name, "args", string(args)))
 			l.bus.Publish(bus.Event{
 				Type: bus.EventAgentThinking,
 				Payload: bus.ThinkingPayload{
@@ -224,14 +219,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			if !ok {
 				result = "error: tool not found"
 			}
-			log.Printf(
-				"tool_call_done step=%d tool_call_id=%s tool=%s found=%t result=%s",
-				iterations,
-				tc.ID,
-				tc.Function.Name,
-				ok,
-				result,
-			)
+			applog.Debug("llm tool call done", applog.M("step", iterations, "tool_call_id", tc.ID, "tool", tc.Function.Name, "found", ok, "result", result))
 			l.bus.Publish(bus.Event{
 				Type: bus.EventAgentToolCallDone,
 				Payload: bus.ToolCallDonePayload{

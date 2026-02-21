@@ -8,6 +8,7 @@ import (
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
+	"valinor/internal/applog"
 	"valinor/internal/sandbox"
 )
 
@@ -55,6 +56,7 @@ func grepExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {
 
 	_, err := regexp.Compile(p.Pattern)
 	if err != nil {
+		applog.Warning("tool grep invalid regex", applog.M("pattern", p.Pattern, "error", err))
 		return "Tool Error: invalid regex: " + err.Error(), nil
 	}
 

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"valinor/internal/applog"
 	"valinor/internal/bus"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/llm"
@@ -59,11 +60,13 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 
 	store, err := NewJSONLStore(dir)
 	if err != nil {
+		applog.Error("session create store error", applog.M("session_id", id, "error", err))
 		return nil, fmt.Errorf("create store: %w", err)
 	}
 
 	if err := store.SaveMetadata(ctx, meta); err != nil {
 		_ = store.Close()
+		applog.Error("session create metadata save error", applog.M("session_id", id, "error", err))
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
@@ -71,12 +74,14 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 	snapshot, err := ctxBuilder.Build(workspaceDir)
 	if err != nil {
 		_ = store.Close()
+		applog.Error("session create context build error", applog.M("session_id", id, "workspace_dir", workspaceDir, "error", err))
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
 	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, cfg.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
+		applog.Error("session create agent error", applog.M("session_id", id, "model", cfg.Model, "error", err))
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
@@ -88,30 +93,36 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		},
 	}
 	sess := NewSession(meta, store, ag, runBuilder, initialMessages, cfg.Bus)
+	applog.Info("session create success", applog.M("session_id", id, "model", cfg.Model, "workspace_dir", workspaceDir))
 	return sess, nil
 }
 
 // Resume loads an existing session from storage and restores the agent's message history.
 func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Session, error) {
 	dir := filepath.Join(m.sessionDir, id)
+	applog.Debug("session resume start", applog.M("session_id", id))
 	store, err := NewJSONLStore(dir)
 	if err != nil {
+		applog.Error("session resume store open error", applog.M("session_id", id, "error", err))
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
 	meta, err := store.LoadMetadata(ctx)
 	if err != nil {
 		_ = store.Close()
+		applog.Error("session resume metadata load error", applog.M("session_id", id, "error", err))
 		return nil, fmt.Errorf("load metadata: %w", err)
 	}
 	if meta == nil {
 		_ = store.Close()
+		applog.Warning("session resume not found", applog.M("session_id", id))
 		return nil, fmt.Errorf("session %s not found", id)
 	}
 
 	events, err := store.LoadEvents(ctx)
 	if err != nil {
 		_ = store.Close()
+		applog.Error("session resume events load error", applog.M("session_id", id, "error", err))
 		return nil, fmt.Errorf("load events: %w", err)
 	}
 
@@ -124,18 +135,21 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 	snapshot, err := ctxBuilder.Build(workspaceDir)
 	if err != nil {
 		_ = store.Close()
+		applog.Error("session resume context build error", applog.M("session_id", id, "workspace_dir", workspaceDir, "error", err))
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
 	msgs, err := ReconstructMessages(events, snapshot.SystemPrompt)
 	if err != nil {
 		_ = store.Close()
+		applog.Error("session resume reconstruct error", applog.M("session_id", id, "event_count", len(events), "error", err))
 		return nil, fmt.Errorf("reconstruct messages: %w", err)
 	}
 
 	ag, err := llm.New(cfg.APIKey, cfg.BaseURL, meta.Model, workspaceDir, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
+		applog.Error("session resume agent error", applog.M("session_id", id, "model", meta.Model, "error", err))
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
@@ -144,16 +158,19 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 
 	runBuilder := agentcontext.NewBuilder(snapshot.SystemPrompt)
 	sess := NewSession(*meta, store, ag, runBuilder, msgs, cfg.Bus)
+	applog.Info("session resume success", applog.M("session_id", id, "message_count", len(msgs), "event_count", len(events)))
 	return sess, nil
 }
 
 // List returns metadata for all sessions, sorted by UpdatedAt descending.
 func (m *Manager) List() ([]Metadata, error) {
+	applog.Debug("session list start", nil)
 	entries, err := os.ReadDir(m.sessionDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+		applog.Error("session list readdir error", applog.M("session_dir", m.sessionDir, "error", err))
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 
@@ -165,11 +182,13 @@ func (m *Manager) List() ([]Metadata, error) {
 		dir := filepath.Join(m.sessionDir, e.Name())
 		store, err := NewJSONLStore(dir)
 		if err != nil {
+			applog.Debug("session list skip invalid", applog.M("entry_name", e.Name(), "error", err))
 			continue
 		}
 		meta, err := store.LoadMetadata(context.Background())
 		_ = store.Close()
 		if err != nil || meta == nil {
+			applog.Debug("session list skip invalid", applog.M("entry_name", e.Name(), "error", err))
 			continue
 		}
 		list = append(list, *meta)
@@ -183,11 +202,18 @@ func (m *Manager) List() ([]Metadata, error) {
 			}
 		}
 	}
+	applog.Debug("session list success", applog.M("count", len(list)))
 	return list, nil
 }
 
 // Delete removes a session directory and all its data.
 func (m *Manager) Delete(id string) error {
+	applog.Info("session delete start", applog.M("session_id", id))
 	dir := filepath.Join(m.sessionDir, id)
-	return os.RemoveAll(dir)
+	if err := os.RemoveAll(dir); err != nil {
+		applog.Error("session delete error", applog.M("session_id", id, "error", err))
+		return err
+	}
+	applog.Info("session delete success", applog.M("session_id", id))
+	return nil
 }

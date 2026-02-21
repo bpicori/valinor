@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"valinor/internal/applog"
 )
 
 const skillsDir = "skills"
@@ -19,6 +21,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+		applog.Error("context load skills dir read failed", applog.M("dir", dir, "error", err))
 		return nil, fmt.Errorf("read skills dir: %w", err)
 	}
 
@@ -35,6 +38,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		absPath := filepath.Join(dir, name)
 		data, err := os.ReadFile(absPath)
 		if err != nil {
+			applog.Error("context load skills file read failed", applog.M("file", name, "error", err))
 			return nil, fmt.Errorf("read skill file %q: %w", name, err)
 		}
 

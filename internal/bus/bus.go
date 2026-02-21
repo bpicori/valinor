@@ -1,6 +1,10 @@
 package bus
 
-import "sync"
+import (
+	"sync"
+
+	"valinor/internal/applog"
+)
 
 // Subscription receives events from the bus.
 type Subscription struct {
@@ -73,6 +77,7 @@ func (b *Bus) Publish(ev Event) {
 		select {
 		case sub.ch <- ev:
 		default:
+			applog.Warning("bus event dropped", applog.M("event_type", ev.Type, "reason", "channel full"))
 		}
 	}
 }

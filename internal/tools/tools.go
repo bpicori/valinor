@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"valinor/internal/applog"
 	"valinor/internal/sandbox"
 
 	"github.com/openai/openai-go/v3"
@@ -25,11 +26,11 @@ func validateRelativePath(path string) (string, string) {
 		cleaned = "."
 	}
 	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/..") {
+		applog.Warning("tool path validation failed", applog.M("path", path, "reason", "absolute or .. not allowed"))
 		return "", "Tool Error: path must be relative to workspace (absolute paths and \"..\" not allowed)"
 	}
 	return cleaned, ""
 }
-
 
 // Tool holds a tool's definition and execution function.
 type Tool struct {

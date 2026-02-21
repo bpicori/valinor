@@ -5,8 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/bpicori/red-keep/pkg/redkeep"
+
+	"valinor/internal/applog"
 )
 
 // Result contains command execution outputs from red-keep.
@@ -32,6 +35,8 @@ func runWithRedKeepIO(ctx context.Context, req redkeep.RunRequest, stdin io.Read
 		Env:     env,
 	})
 	if err != nil {
+		cmd := strings.Join(req.Command, " ")
+		applog.Error("sandbox redkeep failed", applog.M("command", cmd, "work_dir", req.WorkDir, "error", err))
 		return Result{}, err
 	}
 

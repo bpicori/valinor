@@ -4,6 +4,7 @@ import (
 	"strings"
 	"time"
 
+	"valinor/internal/applog"
 	"valinor/internal/bus"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -331,6 +332,7 @@ func (m *Model) handleAgentDone(last *chatMessage, payload bus.AgentDonePayload)
 }
 
 func (m *Model) handleAgentError(last *chatMessage, payload bus.AgentErrorPayload) tea.Cmd {
+	applog.Error("tui agent error", applog.M("error", payload.Error))
 	last.Streaming = false
 	last.Error = payload.Error.Error()
 	m.state = stateReady

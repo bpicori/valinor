@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 
 	"github.com/BurntSushi/toml"
+
+	"valinor/internal/applog"
 )
 
 // DefaultBaseURL is the default OpenAI API base URL.
@@ -32,6 +34,7 @@ func LoadFromFile(path string) (Config, error) {
 	var cfg Config
 	_, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
+		applog.Error("config load failed", applog.M("path", path, "error", err))
 		return Config{}, err
 	}
 	if cfg.BaseURL == "" {
@@ -95,11 +98,22 @@ func resolvePathWithTilde(path string) (string, error) {
 	if len(path) > 1 && path[:2] == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
+			applog.Error("config path expand error", applog.M("input", path, "error", err))
 			return "", err
 		}
 		path = filepath.Join(home, path[2:])
 	} else if path == "~" {
-		return os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			applog.Error("config path expand error", applog.M("input", path, "error", err))
+			return "", err
+		}
+		return home, nil
 	}
-	return filepath.Abs(path)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		applog.Error("config path expand error", applog.M("input", path, "error", err))
+		return "", err
+	}
+	return abs, nil
 }

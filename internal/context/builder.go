@@ -4,6 +4,8 @@ import (
 	_ "embed"
 	"fmt"
 	"strings"
+
+	"valinor/internal/applog"
 )
 
 //go:embed system_prompt.md
@@ -29,16 +31,20 @@ func NewBuilder(basePrompt string) *Builder {
 
 // Build assembles the immutable context snapshot for a workspace.
 func (b *Builder) Build(workspaceDir string) (Snapshot, error) {
+	applog.Debug("context build start", applog.M("workspace_dir", workspaceDir))
 	identity, err := LoadIdentity(workspaceDir)
 	if err != nil {
+		applog.Error("context build identity failed", applog.M("workspace_dir", workspaceDir, "error", err))
 		return Snapshot{}, fmt.Errorf("load identity: %w", err)
 	}
 	skills, err := LoadSkills(workspaceDir)
 	if err != nil {
+		applog.Error("context build skills failed", applog.M("workspace_dir", workspaceDir, "error", err))
 		return Snapshot{}, fmt.Errorf("load skills: %w", err)
 	}
 
 	prompt := b.composeSystemPrompt(identity, skills)
+	applog.Info("context build success", applog.M("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills)))
 	return Snapshot{
 		SystemPrompt: prompt,
 		Identity:     identity,

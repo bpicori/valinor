@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"os"
 
 	"valinor/internal/applog"
@@ -16,37 +14,49 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		applog.Error("tui exit error", applog.M("error", err))
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	cfg, err := config.LoadFromFile("config.toml")
 	if err != nil {
-		log.Fatalf("[ERROR] load config: %v", err)
+		applog.Error("load config failed", applog.M("error", err))
+		return err
 	}
 
 	valinorDir, err := cfg.ResolveValinorDir()
 	if err != nil {
-		log.Fatalf("resolve valinor dir: %v", err)
+		applog.Error("resolve valinor dir failed", applog.M("error", err))
+		return err
 	}
 	sessionsDir, err := cfg.ResolveSessionDir()
 	if err != nil {
-		log.Fatalf("resolve session dir: %v", err)
+		applog.Error("resolve session dir failed", applog.M("error", err))
+		return err
 	}
 	workspaceDir, err := cfg.ResolveWorkspaceDir()
 	if err != nil {
-		log.Fatalf("resolve workspace dir: %v", err)
+		applog.Error("resolve workspace dir failed", applog.M("error", err))
+		return err
 	}
 
 	logPath, closeLogger, err := applog.Init(valinorDir)
 	if err != nil {
-		log.Fatalf("init logger: %v", err)
+		applog.Error("init logger failed", applog.M("error", err))
+		return err
 	}
 	defer func() {
 		if err := closeLogger(); err != nil {
-			fmt.Fprintf(os.Stderr, "close logger: %v\n", err)
+			applog.Error("close logger failed", applog.M("error", err))
 		}
 	}()
-	log.Printf("logging to file: %s", logPath)
+	applog.Info("logging to file", applog.M("log_path", logPath))
 
 	b := bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir)
@@ -61,23 +71,25 @@ func main() {
 	var sess *session.Session
 	sessions, err := sm.List()
 	if err != nil {
-		log.Fatalf("[ERROR] list sessions: %v", err)
+		applog.Error("list sessions failed", applog.M("error", err))
+		return err
 	}
 	if len(sessions) > 0 {
 		latestSession := sessions[0]
 		sess, err = sm.Resume(context.Background(), latestSession.ID, createCfg)
 		if err != nil {
-			log.Printf("[ERROR] resume latest session failed (%s): %v", latestSession.ID, err)
+			applog.Error("resume latest session failed", applog.M("session_id", latestSession.ID, "error", err))
 		} else {
-			log.Printf("[INFO] resumed session: %s", latestSession.ID)
+			applog.Info("resumed session", applog.M("session_id", latestSession.ID))
 		}
 	}
 	if sess == nil {
 		sess, err = sm.Create(context.Background(), createCfg)
 		if err != nil {
-			log.Fatalf("[ERROR] create session: %v", err)
+			applog.Error("create session failed", applog.M("error", err))
+			return err
 		}
-		log.Printf("[INFO] created new session: %s", sess.Meta().ID)
+		applog.Info("created new session", applog.M("session_id", sess.Meta().ID))
 	}
 	defer sess.Close()
 
@@ -92,7 +104,7 @@ func main() {
 	defer b.Unsubscribe(uiSub)
 
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+		return err
 	}
+	return nil
 }

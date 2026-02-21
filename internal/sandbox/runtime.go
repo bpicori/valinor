@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/bpicori/red-keep/pkg/redkeep"
+
+	"valinor/internal/applog"
 )
 
 // Runtime holds workspace and execution context for tool calls.
@@ -26,6 +28,7 @@ const fsToolTimeout = 30 * time.Second
 func NewRuntime(dir string) (*Runtime, error) {
 	execPath, err := os.Executable()
 	if err != nil {
+		applog.Error("sandbox runtime exec path failed", applog.M("error", err))
 		return nil, fmt.Errorf("resolve executable path: %w", err)
 	}
 	return &Runtime{

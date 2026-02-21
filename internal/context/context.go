@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"valinor/internal/applog"
 )
 
 const IdentityFile = "IDENTITY.md"
@@ -55,7 +57,6 @@ type RunContext struct {
 	Messages []Message
 }
 
-
 // LoadIdentity reads IDENTITY.md from workspace root.
 // Missing files are treated as empty identity.
 func LoadIdentity(workspaceDir string) (string, error) {
@@ -65,6 +66,7 @@ func LoadIdentity(workspaceDir string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
+		applog.Error("context load identity read failed", applog.M("path", path, "error", err))
 		return "", fmt.Errorf("read identity file: %w", err)
 	}
 	return strings.TrimSpace(string(data)), nil
