@@ -21,13 +21,18 @@ import (
 //go:embed static/*
 var staticFS embed.FS
 
+// CreateSessionFunc creates a new session with the given provider and model, switches to it, and returns its ID.
+// Used when the user wants to change provider (requires new session).
+type CreateSessionFunc func(provider, model string) (sessionID string, err error)
+
 // Server serves HTTP endpoints and websocket updates for the active session.
 type Server struct {
-	addr            string
-	config          config.Config
-	bus             *bus.Bus
-	sessionManager  *session.Manager
-	activeSessionID string
+	addr              string
+	config            config.Config
+	bus               *bus.Bus
+	sessionManager    *session.Manager
+	activeSessionID   *string
+	onCreateSession   CreateSessionFunc
 
 	httpServer *http.Server
 	hub        *wsHub
@@ -35,7 +40,9 @@ type Server struct {
 }
 
 // NewServer creates a new web server instance.
-func NewServer(host string, port int, cfg config.Config, b *bus.Bus, sm *session.Manager, activeSessionID string) *Server {
+// activeSessionID is a pointer so it can be updated when switching sessions.
+// onCreateSession is called when creating a new session (e.g. provider change); may be nil if not supported.
+func NewServer(host string, port int, cfg config.Config, b *bus.Bus, sm *session.Manager, activeSessionID *string, onCreateSession CreateSessionFunc) *Server {
 	addr := host + ":" + strconv.Itoa(port)
 	return &Server{
 		addr:            addr,
@@ -43,6 +50,7 @@ func NewServer(host string, port int, cfg config.Config, b *bus.Bus, sm *session
 		bus:             b,
 		sessionManager:  sm,
 		activeSessionID: activeSessionID,
+		onCreateSession: onCreateSession,
 		hub:             newWSHub(),
 	}
 }
@@ -100,14 +108,25 @@ func (s *Server) handleActiveSession(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": s.activeSessionID})
+	id := ""
+	if s.activeSessionID != nil {
+		id = *s.activeSessionID
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
 func (s *Server) handleSessionsRoot(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListSessions(w, r)
+	case http.MethodPost:
+		s.handleCreateSession(w, r)
+	default:
 		writeMethodNotAllowed(w)
-		return
 	}
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	list, err := s.sessionManager.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list sessions failed")
@@ -116,6 +135,41 @@ func (s *Server) handleSessionsRoot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"sessions": toSessionDTOs(list),
 	})
+}
+
+func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	if s.onCreateSession == nil {
+		writeError(w, http.StatusNotImplemented, "session creation not available")
+		return
+	}
+	var req struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	provider := strings.TrimSpace(req.Provider)
+	model := strings.TrimSpace(req.Model)
+	if provider == "" {
+		provider = s.config.DefaultProvider
+	}
+	if model == "" {
+		if pc, ok := s.config.Providers[provider]; ok {
+			model = pc.DefaultModel
+		}
+	}
+	if _, ok := s.config.Providers[provider]; !ok {
+		writeError(w, http.StatusBadRequest, "provider not found")
+		return
+	}
+	sessionID, err := s.onCreateSession(provider, model)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": sessionID})
 }
 
 func (s *Server) handleSessionRoutes(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +188,7 @@ func (s *Server) handleSessionRoutes(w http.ResponseWriter, r *http.Request) {
 	case action == "messages" && r.Method == http.MethodPost:
 		s.handlePostMessage(w, r, sessionID)
 	case action == "new" && r.Method == http.MethodPost:
-		s.handleNewConversation(w, sessionID)
+		s.handleNewConversation(w, r, sessionID)
 	case action == "model" && r.Method == http.MethodGet:
 		s.handleGetSessionModel(w, r, sessionID)
 	case action == "model" && r.Method == http.MethodPatch:
@@ -158,12 +212,12 @@ func (s *Server) handleSessionMessages(w http.ResponseWriter, r *http.Request, s
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id": sessionID,
 		"messages":   messages,
-		"active":     sessionID == s.activeSessionID,
+		"active":     s.activeSessionID != nil && sessionID == *s.activeSessionID,
 	})
 }
 
 func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if sessionID != s.activeSessionID {
+	if s.activeSessionID == nil || sessionID != *s.activeSessionID {
 		writeError(w, http.StatusConflict, "selected session is not active")
 		return
 	}
@@ -184,8 +238,8 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request, sessi
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 
-func (s *Server) handleNewConversation(w http.ResponseWriter, sessionID string) {
-	if sessionID != s.activeSessionID {
+func (s *Server) handleNewConversation(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if s.activeSessionID == nil || sessionID != *s.activeSessionID {
 		writeError(w, http.StatusConflict, "selected session is not active")
 		return
 	}
@@ -265,7 +319,7 @@ func (s *Server) handleGetSessionModel(w http.ResponseWriter, r *http.Request, s
 }
 
 func (s *Server) handlePatchSessionModel(w http.ResponseWriter, r *http.Request, sessionID string) {
-	if sessionID != s.activeSessionID {
+	if s.activeSessionID == nil || sessionID != *s.activeSessionID {
 		writeError(w, http.StatusConflict, "selected session is not active")
 		return
 	}
@@ -282,6 +336,15 @@ func (s *Server) handlePatchSessionModel(w http.ResponseWriter, r *http.Request,
 	}
 	if _, ok := s.config.Providers[provider]; !ok {
 		writeError(w, http.StatusBadRequest, "provider not found")
+		return
+	}
+	meta, err := s.sessionManager.GetMetadata(r.Context(), sessionID)
+	if err != nil || meta == nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if meta.Provider != provider {
+		writeError(w, http.StatusBadRequest, "changing provider requires creating a new session")
 		return
 	}
 	s.bus.Publish(bus.Event{

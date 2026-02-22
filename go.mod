@@ -74,5 +74,3 @@ require (
 	google.golang.org/protobuf v1.34.2 // indirect
 	kernel.org/pub/linux/libs/security/libcap/psx v1.2.77 // indirect
 )
-
-replace github.com/bpicori/red-keep => ../red-keep

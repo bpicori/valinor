@@ -188,14 +188,42 @@ async function loadModelsForProvider(provider) {
 
 async function changeSessionModel(provider, model) {
   if (!state.selectedSessionId || !state.isSelectedSessionActive) return;
-  await requestJSON(`/api/sessions/${state.selectedSessionId}/model`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ provider, model }),
-  });
-  state.currentProvider = provider;
-  state.currentModel = model;
+  if (provider !== state.currentProvider) {
+    await createSession(provider, model);
+    return;
+  }
+  try {
+    await requestJSON(`/api/sessions/${state.selectedSessionId}/model`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, model }),
+    });
+    state.currentProvider = provider;
+    state.currentModel = model;
+  } catch (err) {
+    statusEl.textContent = err.message;
+    renderModelSelector();
+    return;
+  }
   renderModelSelector();
+}
+
+async function createSession(provider, model) {
+  try {
+    const data = await requestJSON("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider, model }),
+    });
+    const newSessionId = data?.id;
+    if (newSessionId) {
+      await loadSessions();
+      await selectSession(newSessionId);
+    }
+  } catch (err) {
+    statusEl.textContent = err.message;
+    renderModelSelector();
+  }
 }
 
 async function selectSession(sessionId) {

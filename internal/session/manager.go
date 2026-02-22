@@ -24,6 +24,9 @@ type CreateConfig struct {
 	Config             config.Config
 	Bus                *bus.Bus
 	MaxAgentIterations int
+	// Provider and Model override config defaults when set.
+	Provider string
+	Model    string
 }
 
 // Manager manages session lifecycle.
@@ -46,12 +49,18 @@ func NewManager(sessionDir, workspaceDir string) *Manager {
 // Create creates a new session with a fresh agent and empty transcript.
 // Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
 func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error) {
-	providerName := cfg.Config.DefaultProvider
+	providerName := cfg.Provider
+	if providerName == "" {
+		providerName = cfg.Config.DefaultProvider
+	}
 	providerCfg, ok := cfg.Config.Providers[providerName]
 	if !ok {
-		return nil, fmt.Errorf("default provider '%s' not found", providerName)
+		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
 	}
-	model := providerCfg.DefaultModel
+	model := cfg.Model
+	if model == "" {
+		model = providerCfg.DefaultModel
+	}
 
 	id := uuid.New().String()
 	dir := filepath.Join(m.sessionDir, id)

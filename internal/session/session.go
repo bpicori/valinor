@@ -11,7 +11,6 @@ import (
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/llm"
-	"valinor/internal/llm/factory"
 )
 
 // Session owns the agent and persists conversation events to the store.
@@ -97,39 +96,26 @@ func (s *Session) runControl(ctx context.Context) {
 	}
 }
 
-// switchProviderModel updates the session's provider and/or model, persists metadata, and rebuilds the agent if needed.
+// switchProviderModel updates the session's model within the same provider.
 func (s *Session) switchProviderModel(ctx context.Context, providerName, model string) error {
 	if providerName == "" || model == "" {
 		return fmt.Errorf("provider and model are required")
 	}
-	providerCfg, ok := s.config.Providers[providerName]
-	if !ok {
+	if _, ok := s.config.Providers[providerName]; !ok {
 		return fmt.Errorf("provider '%s' not found in config", providerName)
 	}
-
-	if s.meta.Provider == providerName {
-		// Same provider: only update model
-		s.agent.SetModel(model)
-	} else {
-		// Different provider: rebuild agent
-		provider, err := factory.CreateProvider(providerCfg, s.bus)
-		if err != nil {
-			return fmt.Errorf("create provider: %w", err)
-		}
-		ag, err := llm.New(provider, model, s.agent.Tools(), s.bus, s.agent.MaxIterations())
-		if err != nil {
-			return fmt.Errorf("create agent: %w", err)
-		}
-		s.agent = ag
+	if s.meta.Provider != providerName {
+		return fmt.Errorf("changing provider requires creating a new session")
 	}
 
-	s.meta.Provider = providerName
+	// Same provider: only update model
+	s.agent.SetModel(model)
 	s.meta.Model = model
 	s.meta.UpdatedAt = time.Now()
 	if err := s.store.SaveMetadata(ctx, s.meta); err != nil {
 		return fmt.Errorf("save metadata: %w", err)
 	}
-	applog.Info("session provider/model switched", applog.M("session_id", s.meta.ID, "provider", providerName, "model", model))
+	applog.Info("session model switched", applog.M("session_id", s.meta.ID, "model", model))
 	return nil
 }
 

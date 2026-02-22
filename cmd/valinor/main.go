@@ -90,12 +90,16 @@ func run() error {
 		}
 		applog.Info("created new session", applog.M("session_id", sess.Meta().ID))
 	}
-	defer sess.Close()
 
-	go sess.Run(ctx)
+	activeSessionID := sess.Meta().ID
+	runtime := session.NewRuntime(ctx, sm, createCfg, sess, b, func(id string) {
+		activeSessionID = id
+	})
+	runtime.Start()
+	defer runtime.Close()
 
 	if cfg.WebEnabled {
-		webServer := web.NewServer(cfg.WebHost, cfg.WebPort, cfg, b, sm, sess.Meta().ID)
+		webServer := web.NewServer(cfg.WebHost, cfg.WebPort, cfg, b, sm, &activeSessionID, runtime.HandleCreateSessionRequest)
 		if err := webServer.Start(ctx); err != nil {
 			applog.Error("start web server failed", applog.M("error", err))
 			return err

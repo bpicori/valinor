@@ -5,9 +5,10 @@ type EventType int
 
 const (
 	// User intent events (published by UI).
-	EventUserMessage     EventType = iota // User sent a chat message.
-	EventNewConversation                  // User requested /new or /clear.
-	EventChangeProviderModel              // User changed provider and/or model for the session.
+	EventUserMessage       EventType = iota // User sent a chat message.
+	EventNewConversation                   // User requested /new or /clear.
+	EventChangeProviderModel               // User changed model for the session (same provider only).
+	EventCreateNewSession                  // User requested new session with different provider.
 
 	// Agent streaming events (published by Agent).
 	EventAgentContentDelta  // Streamed content chunk.
@@ -36,6 +37,12 @@ type UserMessagePayload struct {
 
 // ChangeProviderModelPayload carries provider and model for session switch.
 type ChangeProviderModelPayload struct {
+	Provider string
+	Model    string
+}
+
+// CreateNewSessionPayload carries provider and model for creating a new session.
+type CreateNewSessionPayload struct {
 	Provider string
 	Model    string
 }

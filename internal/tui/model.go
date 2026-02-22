@@ -230,10 +230,17 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 	// Check if user selected an item (Enter on a selected item)
 	if msg.String() == "enter" {
 		if i, ok := m.modelPicker.SelectedItem().(providerModelItem); ok {
-			m.bus.Publish(bus.Event{
-				Type:    bus.EventChangeProviderModel,
-				Payload: bus.ChangeProviderModelPayload{Provider: i.Provider, Model: i.Model},
-			})
+			if i.Provider != m.providerName {
+				m.bus.Publish(bus.Event{
+					Type:    bus.EventCreateNewSession,
+					Payload: bus.CreateNewSessionPayload{Provider: i.Provider, Model: i.Model},
+				})
+			} else {
+				m.bus.Publish(bus.Event{
+					Type:    bus.EventChangeProviderModel,
+					Payload: bus.ChangeProviderModelPayload{Provider: i.Provider, Model: i.Model},
+				})
+			}
 			m.providerName = i.Provider
 			m.modelName = i.Model
 			m.state = stateReady
@@ -242,6 +249,7 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 	}
 	return m, cmd, true, false
 }
+
 
 // openModelPicker switches to the model picker state.
 func (m Model) openModelPicker() Model {
@@ -289,14 +297,23 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	if provider == "" {
 		return m.openModelPicker(), nil, true, false
 	}
-	if _, ok := m.config.Providers[provider]; !ok {
+	pc, ok := m.config.Providers[provider]
+	if !ok {
 		applog.Warning("tui unknown provider", applog.M("provider", provider))
 		return m, nil, true, false
 	}
-	pc := m.config.Providers[provider]
 	model := pc.DefaultModel
 	if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
 		model = strings.TrimSpace(parts[1])
+	}
+	if provider != m.providerName {
+		m.bus.Publish(bus.Event{
+			Type:    bus.EventCreateNewSession,
+			Payload: bus.CreateNewSessionPayload{Provider: provider, Model: model},
+		})
+		m.providerName = provider
+		m.modelName = model
+		return m, nil, true, false
 	}
 	m.bus.Publish(bus.Event{
 		Type:    bus.EventChangeProviderModel,
