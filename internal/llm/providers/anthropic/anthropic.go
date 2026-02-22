@@ -39,6 +39,26 @@ func (p *Provider) Name() string {
 	return "anthropic"
 }
 
+// ListModels returns models available from the Anthropic API.
+func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	iter := p.client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
+	var out []llm.ModelInfo
+	for iter.Next() {
+		m := iter.Current()
+		if m.ID == "" {
+			continue
+		}
+		out = append(out, llm.ModelInfo{
+			ID:          m.ID,
+			DisplayName: m.DisplayName,
+		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Stream implements the Provider interface for Anthropic.
 func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.StreamResult, error) {
 	// Extract system messages (Anthropic requires these separately)

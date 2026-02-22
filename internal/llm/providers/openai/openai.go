@@ -38,6 +38,26 @@ func (p *Provider) Name() string {
 	return "openai"
 }
 
+// ListModels returns models available from the OpenAI API.
+func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	iter := p.client.Models.ListAutoPaging(ctx)
+	var out []llm.ModelInfo
+	for iter.Next() {
+		m := iter.Current()
+		if m.ID == "" {
+			continue
+		}
+		out = append(out, llm.ModelInfo{
+			ID:          m.ID,
+			DisplayName: m.ID,
+		})
+	}
+	if err := iter.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Stream implements the Provider interface for OpenAI.
 func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.StreamResult, error) {
 	oaiParams := openai.ChatCompletionNewParams{

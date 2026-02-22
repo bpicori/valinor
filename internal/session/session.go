@@ -8,8 +8,10 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/llm"
+	"valinor/internal/llm/factory"
 )
 
 // Session owns the agent and persists conversation events to the store.
@@ -20,12 +22,13 @@ type Session struct {
 	builder    *agentcontext.Builder
 	messages   []agentcontext.Message
 	bus        *bus.Bus
+	config     config.Config
 	subPersist *bus.Subscription
 	subControl *bus.Subscription
 }
 
 // NewSession creates a session that subscribes to all bus events for persistence.
-func NewSession(meta Metadata, store Store, ag *llm.LLM, builder *agentcontext.Builder, initialMessages []agentcontext.Message, b *bus.Bus) *Session {
+func NewSession(meta Metadata, store Store, ag *llm.LLM, builder *agentcontext.Builder, initialMessages []agentcontext.Message, b *bus.Bus, cfg config.Config) *Session {
 	return &Session{
 		meta:       meta,
 		store:      store,
@@ -33,8 +36,9 @@ func NewSession(meta Metadata, store Store, ag *llm.LLM, builder *agentcontext.B
 		builder:    builder,
 		messages:   append([]agentcontext.Message{}, initialMessages...),
 		bus:        b,
+		config:     cfg,
 		subPersist: b.Subscribe(), // no types = all events
-		subControl: b.Subscribe(bus.EventUserMessage, bus.EventNewConversation),
+		subControl: b.Subscribe(bus.EventUserMessage, bus.EventNewConversation, bus.EventChangeProviderModel),
 	}
 }
 
@@ -83,9 +87,50 @@ func (s *Session) runControl(ctx context.Context) {
 						Content: s.builder.BasePrompt(),
 					},
 				}
+			case bus.EventChangeProviderModel:
+				p := ev.Payload.(bus.ChangeProviderModelPayload)
+				if err := s.switchProviderModel(ctx, p.Provider, p.Model); err != nil {
+					applog.Error("session switch provider/model error", applog.M("session_id", s.meta.ID, "provider", p.Provider, "model", p.Model, "error", err))
+				}
 			}
 		}
 	}
+}
+
+// switchProviderModel updates the session's provider and/or model, persists metadata, and rebuilds the agent if needed.
+func (s *Session) switchProviderModel(ctx context.Context, providerName, model string) error {
+	if providerName == "" || model == "" {
+		return fmt.Errorf("provider and model are required")
+	}
+	providerCfg, ok := s.config.Providers[providerName]
+	if !ok {
+		return fmt.Errorf("provider '%s' not found in config", providerName)
+	}
+
+	if s.meta.Provider == providerName {
+		// Same provider: only update model
+		s.agent.SetModel(model)
+	} else {
+		// Different provider: rebuild agent
+		provider, err := factory.CreateProvider(providerCfg, s.bus)
+		if err != nil {
+			return fmt.Errorf("create provider: %w", err)
+		}
+		ag, err := llm.New(provider, model, s.agent.Tools(), s.bus, s.agent.MaxIterations())
+		if err != nil {
+			return fmt.Errorf("create agent: %w", err)
+		}
+		s.agent = ag
+	}
+
+	s.meta.Provider = providerName
+	s.meta.Model = model
+	s.meta.UpdatedAt = time.Now()
+	if err := s.store.SaveMetadata(ctx, s.meta); err != nil {
+		return fmt.Errorf("save metadata: %w", err)
+	}
+	applog.Info("session provider/model switched", applog.M("session_id", s.meta.ID, "provider", providerName, "model", model))
+	return nil
 }
 
 // runPersistence subscribes to all bus events and persists them.

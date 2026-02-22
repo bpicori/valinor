@@ -38,10 +38,10 @@ type Config struct {
 
 // ProviderConfig holds configuration for a specific LLM provider.
 type ProviderConfig struct {
-	Type    string `toml:"type"`     // "openai", "anthropic", "gemini", "openai-compatible"
-	APIKey  string `toml:"api_key"`  // API key for the provider
-	BaseURL string `toml:"base_url"` // Base URL (for openai-compatible providers)
-	Model   string `toml:"model"`    // Model name to use
+	Type         string `toml:"type"`          // "openai", "anthropic", "gemini", "openai-compatible"
+	APIKey       string `toml:"api_key"`       // API key for the provider
+	BaseURL      string `toml:"base_url"`      // Base URL (for openai-compatible providers)
+	DefaultModel string `toml:"default_model"` // Default model for new sessions (bootstrap fallback)
 }
 
 // LoadFromFile loads configuration from a TOML file.
@@ -57,7 +57,7 @@ func LoadFromFile(path string) (Config, error) {
 	if cfg.DefaultProvider == "" {
 		return Config{}, fmt.Errorf("default_provider is required")
 	}
-	if cfg.Providers == nil || len(cfg.Providers) == 0 {
+	if len(cfg.Providers) == 0 {
 		return Config{}, fmt.Errorf("at least one provider must be configured")
 	}
 	if _, ok := cfg.Providers[cfg.DefaultProvider]; !ok {
@@ -75,9 +75,10 @@ func LoadFromFile(path string) (Config, error) {
 		if provider.APIKey == "" {
 			return Config{}, fmt.Errorf("provider '%s' missing api_key field", name)
 		}
-		if provider.Model == "" {
-			return Config{}, fmt.Errorf("provider '%s' missing model field", name)
+		if provider.DefaultModel == "" {
+			return Config{}, fmt.Errorf("provider '%s' missing default_model field", name)
 		}
+		cfg.Providers[name] = provider
 		if provider.Type == "openai-compatible" && provider.BaseURL == "" {
 			return Config{}, fmt.Errorf("provider '%s' of type 'openai-compatible' requires base_url field", name)
 		}

@@ -48,6 +48,29 @@ func (p *Provider) Name() string {
 	return "gemini"
 }
 
+// ListModels returns models available from the Gemini API.
+func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	var out []llm.ModelInfo
+	for m, err := range p.client.Models.All(ctx) {
+		if err != nil {
+			return nil, err
+		}
+		id := m.Name
+		if id == "" {
+			continue
+		}
+		// Strip "models/" prefix for consistency with Stream API usage
+		if len(id) > 7 && id[:7] == "models/" {
+			id = id[7:]
+		}
+		out = append(out, llm.ModelInfo{
+			ID:          id,
+			DisplayName: m.DisplayName,
+		})
+	}
+	return out, nil
+}
+
 // Stream implements the Provider interface for Gemini.
 func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.StreamResult, error) {
 	// Convert messages to Gemini format

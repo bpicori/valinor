@@ -21,7 +21,7 @@ import (
 
 // CreateConfig holds parameters for creating a new session.
 type CreateConfig struct {
-	ProviderConfig     config.ProviderConfig
+	Config             config.Config
 	Bus                *bus.Bus
 	MaxAgentIterations int
 }
@@ -46,6 +46,13 @@ func NewManager(sessionDir, workspaceDir string) *Manager {
 // Create creates a new session with a fresh agent and empty transcript.
 // Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
 func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error) {
+	providerName := cfg.Config.DefaultProvider
+	providerCfg, ok := cfg.Config.Providers[providerName]
+	if !ok {
+		return nil, fmt.Errorf("default provider '%s' not found", providerName)
+	}
+	model := providerCfg.DefaultModel
+
 	id := uuid.New().String()
 	dir := filepath.Join(m.sessionDir, id)
 	workspaceDir := m.workspaceDir
@@ -57,6 +64,8 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		CreatedAt:    now,
 		UpdatedAt:    now,
 		WorkspaceDir: workspaceDir,
+		Provider:     providerName,
+		Model:        model,
 	}
 
 	store, err := NewJSONLStore(dir)
@@ -80,7 +89,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 	}
 
 	// Create provider
-	provider, err := createProvider(cfg.ProviderConfig, cfg.Bus)
+	provider, err := createProvider(providerCfg, cfg.Bus)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session create provider error", applog.M("session_id", id, "error", err))
@@ -95,10 +104,10 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("create tools: %w", err)
 	}
 
-	ag, err := llm.New(provider, cfg.ProviderConfig.Model, tools, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := llm.New(provider, model, tools, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
-		applog.Error("session create agent error", applog.M("session_id", id, "model", cfg.ProviderConfig.Model, "error", err))
+		applog.Error("session create agent error", applog.M("session_id", id, "model", model, "error", err))
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
@@ -109,8 +118,8 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 			Content: snapshot.SystemPrompt,
 		},
 	}
-	sess := NewSession(meta, store, ag, runBuilder, initialMessages, cfg.Bus)
-	applog.Info("session create success", applog.M("session_id", id, "model", cfg.ProviderConfig.Model, "workspace_dir", workspaceDir))
+	sess := NewSession(meta, store, ag, runBuilder, initialMessages, cfg.Bus, cfg.Config)
+	applog.Info("session create success", applog.M("session_id", id, "provider", providerName, "model", model, "workspace_dir", workspaceDir))
 	return sess, nil
 }
 
@@ -148,6 +157,24 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		workspaceDir = meta.WorkspaceDir
 	}
 
+	// Resolve provider and model: use metadata with fallback to config defaults
+	providerName := meta.Provider
+	if providerName == "" {
+		providerName = cfg.Config.DefaultProvider
+	}
+	providerCfg, ok := cfg.Config.Providers[providerName]
+	if !ok {
+		_ = store.Close()
+		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
+	}
+	model := meta.Model
+	if model == "" {
+		model = providerCfg.DefaultModel
+	}
+	// Persist resolved values for backward compatibility
+	meta.Provider = providerName
+	meta.Model = model
+
 	ctxBuilder := agentcontext.NewBuilder(agentcontext.SystemPrompt())
 	snapshot, err := ctxBuilder.Build(workspaceDir)
 	if err != nil {
@@ -164,7 +191,7 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 	}
 
 	// Create provider
-	provider, err := createProvider(cfg.ProviderConfig, cfg.Bus)
+	provider, err := createProvider(providerCfg, cfg.Bus)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session resume provider error", applog.M("session_id", id, "error", err))
@@ -179,10 +206,10 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("create tools: %w", err)
 	}
 
-	ag, err := llm.New(provider, cfg.ProviderConfig.Model, tools, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := llm.New(provider, model, tools, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
-		applog.Error("session resume agent error", applog.M("session_id", id, "model", cfg.ProviderConfig.Model, "error", err))
+		applog.Error("session resume agent error", applog.M("session_id", id, "model", model, "error", err))
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
@@ -190,7 +217,7 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 	_ = store.SaveMetadata(ctx, *meta)
 
 	runBuilder := agentcontext.NewBuilder(snapshot.SystemPrompt)
-	sess := NewSession(*meta, store, ag, runBuilder, msgs, cfg.Bus)
+	sess := NewSession(*meta, store, ag, runBuilder, msgs, cfg.Bus, cfg.Config)
 	applog.Info("session resume success", applog.M("session_id", id, "message_count", len(msgs), "event_count", len(events)))
 	return sess, nil
 }
@@ -237,6 +264,17 @@ func (m *Manager) List() ([]Metadata, error) {
 	}
 	applog.Debug("session list success", applog.M("count", len(list)))
 	return list, nil
+}
+
+// GetMetadata returns metadata for a session by ID.
+func (m *Manager) GetMetadata(ctx context.Context, id string) (*Metadata, error) {
+	dir := filepath.Join(m.sessionDir, id)
+	store, err := NewJSONLStore(dir)
+	if err != nil {
+		return nil, fmt.Errorf("open store: %w", err)
+	}
+	defer store.Close()
+	return store.LoadMetadata(ctx)
 }
 
 // LoadEvents returns persisted transcript events for a given session ID.

@@ -4,6 +4,10 @@ const state = {
   selectedSessionId: "",
   isSelectedSessionActive: false,
   messages: [],
+  providers: [],
+  models: [],
+  currentProvider: "",
+  currentModel: "",
 };
 
 const sessionsEl = document.getElementById("sessions");
@@ -12,6 +16,8 @@ const statusEl = document.getElementById("status");
 const composerEl = document.getElementById("composer");
 const inputEl = document.getElementById("input");
 const newConversationEl = document.getElementById("new-conversation");
+const providerSelectEl = document.getElementById("provider-select");
+const modelSelectEl = document.getElementById("model-select");
 
 async function requestJSON(url, options = {}) {
   const res = await fetch(url, options);
@@ -121,6 +127,12 @@ function applyRealtimeEvent(event) {
       assistant.error = event.payload.error || "unknown error";
       break;
     }
+    case "change_provider_model": {
+      state.currentProvider = event.payload?.provider || "";
+      state.currentModel = event.payload?.model || "";
+      renderModelSelector();
+      break;
+    }
     default:
       break;
   }
@@ -128,16 +140,62 @@ function applyRealtimeEvent(event) {
 }
 
 async function loadSessions() {
-  const [sessionsData, activeData] = await Promise.all([
+  const [sessionsData, activeData, providersData] = await Promise.all([
     requestJSON("/api/sessions"),
     requestJSON("/api/active-session"),
+    requestJSON("/api/providers"),
   ]);
   state.sessions = sessionsData.sessions || [];
   state.activeSessionId = activeData.id;
+  state.providers = providersData.providers || [];
   if (!state.selectedSessionId) {
     state.selectedSessionId = state.activeSessionId || state.sessions[0]?.id || "";
   }
   renderSessions();
+  renderModelSelector();
+}
+
+function renderModelSelector() {
+  providerSelectEl.innerHTML = "";
+  modelSelectEl.innerHTML = "";
+  for (const p of state.providers) {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.textContent = p;
+    if (p === state.currentProvider) opt.selected = true;
+    providerSelectEl.appendChild(opt);
+  }
+  for (const m of state.models) {
+    const opt = document.createElement("option");
+    opt.value = m.id;
+    opt.textContent = m.display_name || m.id;
+    if (m.id === state.currentModel) opt.selected = true;
+    modelSelectEl.appendChild(opt);
+  }
+  providerSelectEl.disabled = !state.isSelectedSessionActive;
+  modelSelectEl.disabled = !state.isSelectedSessionActive;
+}
+
+async function loadModelsForProvider(provider) {
+  try {
+    const data = await requestJSON(`/api/providers/${provider}/models`);
+    state.models = data.models || [];
+  } catch (_) {
+    state.models = [];
+  }
+  renderModelSelector();
+}
+
+async function changeSessionModel(provider, model) {
+  if (!state.selectedSessionId || !state.isSelectedSessionActive) return;
+  await requestJSON(`/api/sessions/${state.selectedSessionId}/model`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ provider, model }),
+  });
+  state.currentProvider = provider;
+  state.currentModel = model;
+  renderModelSelector();
 }
 
 async function selectSession(sessionId) {
@@ -145,11 +203,22 @@ async function selectSession(sessionId) {
     return;
   }
   state.selectedSessionId = sessionId;
-  const data = await requestJSON(`/api/sessions/${sessionId}/messages`);
-  state.messages = data.messages || [];
-  state.isSelectedSessionActive = !!data.active;
+  const [messagesData, modelData] = await Promise.all([
+    requestJSON(`/api/sessions/${sessionId}/messages`),
+    requestJSON(`/api/sessions/${sessionId}/model`),
+  ]);
+  state.messages = messagesData.messages || [];
+  state.isSelectedSessionActive = !!messagesData.active;
+  state.currentProvider = modelData.provider || "";
+  state.currentModel = modelData.model || "";
   inputEl.disabled = !state.isSelectedSessionActive;
   newConversationEl.disabled = !state.isSelectedSessionActive;
+  if (state.currentProvider) {
+    await loadModelsForProvider(state.currentProvider);
+  } else {
+    state.models = [];
+    renderModelSelector();
+  }
   renderSessions();
   renderMessages();
 }
@@ -202,6 +271,24 @@ newConversationEl.addEventListener("click", async () => {
   await requestJSON(`/api/sessions/${state.selectedSessionId}/new`, {
     method: "POST",
   });
+});
+
+providerSelectEl.addEventListener("change", async () => {
+  const provider = providerSelectEl.value;
+  if (!provider) return;
+  await loadModelsForProvider(provider);
+  const model = modelSelectEl.value || (state.models[0]?.id || "");
+  if (model && state.isSelectedSessionActive) {
+    await changeSessionModel(provider, model);
+  }
+});
+
+modelSelectEl.addEventListener("change", async () => {
+  const provider = providerSelectEl.value;
+  const model = modelSelectEl.value;
+  if (provider && model && state.isSelectedSessionActive) {
+    await changeSessionModel(provider, model);
+  }
 });
 
 async function boot() {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"valinor/internal/applog"
@@ -60,17 +59,10 @@ func run() error {
 	}()
 	applog.Info("logging to file", applog.M("log_path", logPath))
 
-	// Get provider config for default provider
-	providerCfg, ok := cfg.Providers[cfg.DefaultProvider]
-	if !ok {
-		applog.Error("default provider not found", applog.M("provider", cfg.DefaultProvider))
-		return fmt.Errorf("default provider '%s' not found in config", cfg.DefaultProvider)
-	}
-
 	b := bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir)
 	createCfg := session.CreateConfig{
-		ProviderConfig:     providerCfg,
+		Config:             cfg,
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}
@@ -103,14 +95,31 @@ func run() error {
 	go sess.Run(ctx)
 
 	if cfg.WebEnabled {
-		webServer := web.NewServer(cfg.WebHost, cfg.WebPort, b, sm, sess.Meta().ID)
+		webServer := web.NewServer(cfg.WebHost, cfg.WebPort, cfg, b, sm, sess.Meta().ID)
 		if err := webServer.Start(ctx); err != nil {
 			applog.Error("start web server failed", applog.M("error", err))
 			return err
 		}
 	}
 
-	model := tui.New(b, providerCfg.Model)
+	// Use session's provider/model for display; will be updated via bus when changed
+	providerName := sess.Meta().Provider
+	if providerName == "" {
+		providerName = cfg.DefaultProvider
+	}
+	modelName := sess.Meta().Model
+	if modelName == "" {
+		if pc, ok := cfg.Providers[providerName]; ok {
+			modelName = pc.DefaultModel
+		}
+		if modelName == "" && len(cfg.Providers) > 0 {
+			for _, pc := range cfg.Providers {
+				modelName = pc.DefaultModel
+				break
+			}
+		}
+	}
+	model := tui.New(b, cfg, providerName, modelName)
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),

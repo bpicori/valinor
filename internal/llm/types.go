@@ -77,12 +77,21 @@ type StreamResult struct {
 	Usage   Usage
 }
 
+// ModelInfo represents information about an available model.
+type ModelInfo struct {
+	ID          string // Model identifier for API calls
+	DisplayName string // Optional human-readable name
+}
+
 // Provider defines the interface that all LLM providers must implement.
 type Provider interface {
 	Stream(ctx context.Context, params StreamParams) (*StreamResult, error)
 
 	// Name returns a human-readable identifier for this provider.
 	Name() string
+
+	// ListModels returns models available from this provider.
+	ListModels(ctx context.Context) ([]ModelInfo, error)
 }
 
 // RunRequest configures a single run invocation.

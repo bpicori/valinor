@@ -15,6 +15,8 @@ type SessionDTO struct {
 	Title     string    `json:"title"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	Provider  string    `json:"provider,omitempty"`
+	Model     string    `json:"model,omitempty"`
 }
 
 // ToolCallDTO represents one assistant tool call in the timeline.
@@ -71,6 +73,16 @@ type postMessageRequest struct {
 	Content string `json:"content"`
 }
 
+type modelInfoDTO struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name,omitempty"`
+}
+
+type patchSessionModelRequest struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
 func toSessionDTOs(items []session.Metadata) []SessionDTO {
 	out := make([]SessionDTO, 0, len(items))
 	for _, item := range items {
@@ -79,6 +91,8 @@ func toSessionDTOs(items []session.Metadata) []SessionDTO {
 			Title:     item.Title,
 			CreatedAt: item.CreatedAt,
 			UpdatedAt: item.UpdatedAt,
+			Provider:  item.Provider,
+			Model:     item.Model,
 		})
 	}
 	return out
@@ -97,6 +111,18 @@ func toBusEventDTO(ev bus.Event) (BusEventDTO, error) {
 		}, nil
 	case bus.EventNewConversation:
 		return BusEventDTO{Type: "new_conversation"}, nil
+	case bus.EventChangeProviderModel:
+		p, ok := ev.Payload.(bus.ChangeProviderModelPayload)
+		if !ok {
+			return BusEventDTO{}, fmt.Errorf("invalid change_provider_model payload")
+		}
+		return BusEventDTO{
+			Type: "change_provider_model",
+			Payload: map[string]string{
+				"provider": p.Provider,
+				"model":    p.Model,
+			},
+		}, nil
 	case bus.EventAgentContentDelta:
 		p, ok := ev.Payload.(bus.ContentDeltaPayload)
 		if !ok {

@@ -161,6 +161,14 @@ func (m Model) View() string {
 		return "\n  Initializing..."
 	}
 
+	if m.state == stateModelPicker {
+		help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("↑/↓ select • enter choose • esc cancel")
+		return lipgloss.JoinVertical(lipgloss.Left,
+			lipgloss.NewStyle().Padding(1, 2).Render(m.modelPicker.View()),
+			help,
+		)
+	}
+
 	spinnerLine := ""
 	if m.state == stateWaiting {
 		elapsed := int(time.Since(m.thinkingStartedAt).Seconds())
@@ -176,7 +184,11 @@ func (m Model) View() string {
 	)
 	topRow := lipgloss.JoinHorizontal(lipgloss.Left, mainContent)
 
-	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: " + m.modelName))
+	providerModel := m.modelName
+	if m.providerName != "" {
+		providerModel = m.providerName + " / " + m.modelName
+	}
+	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: "+providerModel) + " (ctrl+m)")
 	tokensText := tokensLabelStyle.Render("Context: ") +
 		tokensValueStyle.Render(formatTokens(m.totalUsage.TotalTokens))
 	tokensRow := lipgloss.NewStyle().

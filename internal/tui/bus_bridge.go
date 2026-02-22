@@ -20,6 +20,7 @@ func StartBusBridge(ctx context.Context, p *tea.Program, b *bus.Bus) *bus.Subscr
 	sub := b.Subscribe(
 		bus.EventUserMessage,
 		bus.EventNewConversation,
+		bus.EventChangeProviderModel,
 		bus.EventAgentContentDelta,
 		bus.EventAgentRefusal,
 		bus.EventAgentToolCallStart,

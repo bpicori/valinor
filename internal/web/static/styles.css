@@ -66,6 +66,27 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+  gap: 12px;
+}
+
+.model-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.model-selector select {
+  border: 1px solid #3a4253;
+  border-radius: 6px;
+  background: #11151c;
+  color: #e7e7e7;
+  padding: 6px 10px;
+  font-size: 12px;
+  min-width: 120px;
+}
+
+.model-selector select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .status {

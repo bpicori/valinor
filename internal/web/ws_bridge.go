@@ -34,6 +34,7 @@ func (h *wsHub) start(ctx context.Context, b *bus.Bus) *bus.Subscription {
 	sub := b.Subscribe(
 		bus.EventUserMessage,
 		bus.EventNewConversation,
+		bus.EventChangeProviderModel,
 		bus.EventAgentContentDelta,
 		bus.EventAgentRefusal,
 		bus.EventAgentToolCallStart,

@@ -13,6 +13,8 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/config"
+	"valinor/internal/llm/factory"
 	"valinor/internal/session"
 )
 
@@ -22,6 +24,7 @@ var staticFS embed.FS
 // Server serves HTTP endpoints and websocket updates for the active session.
 type Server struct {
 	addr            string
+	config          config.Config
 	bus             *bus.Bus
 	sessionManager  *session.Manager
 	activeSessionID string
@@ -32,10 +35,11 @@ type Server struct {
 }
 
 // NewServer creates a new web server instance.
-func NewServer(host string, port int, b *bus.Bus, sm *session.Manager, activeSessionID string) *Server {
+func NewServer(host string, port int, cfg config.Config, b *bus.Bus, sm *session.Manager, activeSessionID string) *Server {
 	addr := host + ":" + strconv.Itoa(port)
 	return &Server{
 		addr:            addr,
+		config:          cfg,
 		bus:             b,
 		sessionManager:  sm,
 		activeSessionID: activeSessionID,
@@ -52,6 +56,8 @@ func (s *Server) Start(ctx context.Context) error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/active-session", s.handleActiveSession)
+	mux.HandleFunc("/api/providers", s.handleProvidersRoot)
+	mux.HandleFunc("/api/providers/", s.handleProviderRoutes)
 	mux.HandleFunc("/api/sessions", s.handleSessionsRoot)
 	mux.HandleFunc("/api/sessions/", s.handleSessionRoutes)
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +135,10 @@ func (s *Server) handleSessionRoutes(w http.ResponseWriter, r *http.Request) {
 		s.handlePostMessage(w, r, sessionID)
 	case action == "new" && r.Method == http.MethodPost:
 		s.handleNewConversation(w, sessionID)
+	case action == "model" && r.Method == http.MethodGet:
+		s.handleGetSessionModel(w, r, sessionID)
+	case action == "model" && r.Method == http.MethodPatch:
+		s.handlePatchSessionModel(w, r, sessionID)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -180,6 +190,104 @@ func (s *Server) handleNewConversation(w http.ResponseWriter, sessionID string) 
 		return
 	}
 	s.bus.Publish(bus.Event{Type: bus.EventNewConversation})
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+}
+
+func (s *Server) handleProvidersRoot(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	names := make([]string, 0, len(s.config.Providers))
+	for name := range s.config.Providers {
+		names = append(names, name)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"providers": names})
+}
+
+func (s *Server) handleProviderRoutes(w http.ResponseWriter, r *http.Request) {
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/providers/")
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) != 2 || parts[1] != "models" {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
+	providerName := parts[0]
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	s.handleProviderModels(w, r, providerName)
+}
+
+func (s *Server) handleProviderModels(w http.ResponseWriter, r *http.Request, providerName string) {
+	providerCfg, ok := s.config.Providers[providerName]
+	if !ok {
+		writeError(w, http.StatusNotFound, "provider not found")
+		return
+	}
+	provider, err := factory.CreateProvider(providerCfg, s.bus)
+	if err != nil {
+		applog.Error("web create provider error", applog.M("provider", providerName, "error", err))
+		writeError(w, http.StatusInternalServerError, "failed to create provider")
+		return
+	}
+	models, err := provider.ListModels(r.Context())
+	if err != nil {
+		applog.Error("web list models error", applog.M("provider", providerName, "error", err))
+		writeError(w, http.StatusInternalServerError, "failed to list models")
+		return
+	}
+	dtos := make([]modelInfoDTO, len(models))
+	for i, m := range models {
+		dtos[i] = modelInfoDTO{ID: m.ID, DisplayName: m.DisplayName}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": dtos})
+}
+
+func (s *Server) handleGetSessionModel(w http.ResponseWriter, r *http.Request, sessionID string) {
+	meta, err := s.sessionManager.GetMetadata(r.Context(), sessionID)
+	if err != nil || meta == nil {
+		writeError(w, http.StatusNotFound, "session not found")
+		return
+	}
+	provider := meta.Provider
+	model := meta.Model
+	if provider == "" {
+		provider = s.config.DefaultProvider
+	}
+	if model == "" {
+		if pc, ok := s.config.Providers[provider]; ok {
+			model = pc.DefaultModel
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"provider": provider, "model": model})
+}
+
+func (s *Server) handlePatchSessionModel(w http.ResponseWriter, r *http.Request, sessionID string) {
+	if sessionID != s.activeSessionID {
+		writeError(w, http.StatusConflict, "selected session is not active")
+		return
+	}
+	var req patchSessionModelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	provider := strings.TrimSpace(req.Provider)
+	model := strings.TrimSpace(req.Model)
+	if provider == "" || model == "" {
+		writeError(w, http.StatusBadRequest, "provider and model are required")
+		return
+	}
+	if _, ok := s.config.Providers[provider]; !ok {
+		writeError(w, http.StatusBadRequest, "provider not found")
+		return
+	}
+	s.bus.Publish(bus.Event{
+		Type:    bus.EventChangeProviderModel,
+		Payload: bus.ChangeProviderModelPayload{Provider: provider, Model: model},
+	})
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 

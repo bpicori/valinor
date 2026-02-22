@@ -1,17 +1,21 @@
 package tui
 
 import (
+	"sort"
 	"strings"
 	"time"
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/config"
 
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // Layout constants
@@ -20,11 +24,13 @@ const sidebarWidth = 26
 // Key bindings
 var (
 	keymap = struct {
-		Submit key.Binding
-		Quit   key.Binding
+		Submit      key.Binding
+		Quit        key.Binding
+		ChangeModel key.Binding
 	}{
-		Submit: key.NewBinding(key.WithKeys("enter")),
-		Quit:   key.NewBinding(key.WithKeys("ctrl+c")),
+		Submit:      key.NewBinding(key.WithKeys("enter")),
+		Quit:        key.NewBinding(key.WithKeys("ctrl+c")),
+		ChangeModel: key.NewBinding(key.WithKeys("ctrl+m")),
 	}
 )
 
@@ -32,9 +38,20 @@ var (
 type appState int
 
 const (
-	stateReady   appState = iota // Waiting for user input
-	stateWaiting                 // Waiting for agent response
+	stateReady       appState = iota // Waiting for user input
+	stateWaiting                     // Waiting for agent response
+	stateModelPicker                 // Showing provider/model picker
 )
+
+// providerModelItem is a list item for the provider/model picker.
+type providerModelItem struct {
+	Provider string
+	Model    string
+}
+
+func (i providerModelItem) Title() string       { return i.Provider }
+func (i providerModelItem) Description() string { return i.Model }
+func (i providerModelItem) FilterValue() string { return i.Provider + " " + i.Model }
 
 // messageRole identifies who authored a chat message.
 type messageRole int
@@ -73,10 +90,13 @@ type Usage struct {
 // Model is the top-level Bubble Tea model.
 type Model struct {
 	bus               *bus.Bus
+	config            config.Config
+	providerName      string
 	modelName         string
 	viewport          viewport.Model
 	textinput         textinput.Model
 	spinner           spinner.Model
+	modelPicker       list.Model
 	state             appState
 	messages          []chatMessage
 	totalUsage        Usage
@@ -89,24 +109,52 @@ type Model struct {
 }
 
 // New creates a new UI model.
-func New(b *bus.Bus, modelName string) Model {
+func New(b *bus.Bus, cfg config.Config, providerName, modelName string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Send a message..."
 	ti.Prompt = "> "
 	ti.CharLimit = 0
-	ti.SetSuggestions([]string{"/new", "/clear", "/exit"})
+	ti.SetSuggestions([]string{"/new", "/clear", "/model", "/exit"})
 	ti.ShowSuggestions = true
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
+	items := buildProviderModelItems(cfg)
+	delegate := list.NewDefaultDelegate()
+	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Bold(true)
+	l := list.New(items, delegate, 40, 14)
+	l.Title = "Provider / Model"
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(true)
+	l.Styles.Title = lipgloss.NewStyle().Bold(true)
+
 	return Model{
-		bus:       b,
-		modelName: modelName,
-		textinput: ti,
-		spinner:   sp,
-		state:     stateReady,
+		bus:          b,
+		config:       cfg,
+		providerName: providerName,
+		modelName:    modelName,
+		textinput:    ti,
+		spinner:      sp,
+		modelPicker:  l,
+		state:        stateReady,
 	}
+}
+
+// buildProviderModelItems returns sorted list items from config providers.
+func buildProviderModelItems(cfg config.Config) []list.Item {
+	names := make([]string, 0, len(cfg.Providers))
+	for n := range cfg.Providers {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	items := make([]list.Item, 0, len(names))
+	for _, name := range names {
+		pc := cfg.Providers[name]
+		model := pc.DefaultModel
+		items = append(items, providerModelItem{Provider: name, Model: model})
+	}
+	return items
 }
 
 // Init initializes the model
@@ -155,14 +203,53 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
 	if key.Matches(msg, keymap.Quit) {
 		return m, nil, true, true
 	}
+	if m.state == stateModelPicker {
+		return m.handleModelPickerKey(msg)
+	}
 	if m.state != stateReady {
 		return m, nil, false, false
+	}
+	if key.Matches(msg, keymap.ChangeModel) {
+		return m.openModelPicker(), nil, true, false
 	}
 	if !key.Matches(msg, keymap.Submit) {
 		return m, nil, false, false
 	}
 
 	return m.handleSubmit()
+}
+
+// handleModelPickerKey handles keys when the model picker is open.
+func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
+	if msg.String() == "esc" {
+		m.state = stateReady
+		return m, nil, true, false
+	}
+	var cmd tea.Cmd
+	m.modelPicker, cmd = m.modelPicker.Update(msg)
+	// Check if user selected an item (Enter on a selected item)
+	if msg.String() == "enter" {
+		if i, ok := m.modelPicker.SelectedItem().(providerModelItem); ok {
+			m.bus.Publish(bus.Event{
+				Type:    bus.EventChangeProviderModel,
+				Payload: bus.ChangeProviderModelPayload{Provider: i.Provider, Model: i.Model},
+			})
+			m.providerName = i.Provider
+			m.modelName = i.Model
+			m.state = stateReady
+			return m, nil, true, false
+		}
+	}
+	return m, cmd, true, false
+}
+
+// openModelPicker switches to the model picker state.
+func (m Model) openModelPicker() Model {
+	m.state = stateModelPicker
+	if m.contentWidth > 4 && m.height > 6 {
+		m.modelPicker.SetSize(m.contentWidth-4, m.height-6)
+	}
+	return m
 }
 
 // handleSubmit handles Enter/submit while the model is ready.
@@ -179,6 +266,9 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 		m.bus.Publish(bus.Event{Type: bus.EventNewConversation})
 		return m, nil, true, false
 	}
+	if strings.HasPrefix(input, "/model") {
+		return m.handleModelCommand(input)
+	}
 
 	m.state = stateWaiting
 	m.thinkingStartedAt = time.Now()
@@ -187,6 +277,34 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 		Payload: bus.UserMessagePayload{Content: input},
 	})
 	return m, tea.Batch(m.spinner.Tick), true, false
+}
+
+// handleModelCommand processes /model, /model <provider>, or /model <provider> <model>.
+func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
+	parts := strings.Fields(strings.TrimPrefix(input, "/model"))
+	if len(parts) == 0 {
+		return m.openModelPicker(), nil, true, false
+	}
+	provider := strings.TrimSpace(parts[0])
+	if provider == "" {
+		return m.openModelPicker(), nil, true, false
+	}
+	if _, ok := m.config.Providers[provider]; !ok {
+		applog.Warning("tui unknown provider", applog.M("provider", provider))
+		return m, nil, true, false
+	}
+	pc := m.config.Providers[provider]
+	model := pc.DefaultModel
+	if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
+		model = strings.TrimSpace(parts[1])
+	}
+	m.bus.Publish(bus.Event{
+		Type:    bus.EventChangeProviderModel,
+		Payload: bus.ChangeProviderModelPayload{Provider: provider, Model: model},
+	})
+	m.providerName = provider
+	m.modelName = model
+	return m, nil, true, false
 }
 
 func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
@@ -218,6 +336,9 @@ func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
 	}
 
 	m.textinput.Width = m.contentWidth - 4
+	if m.state == stateModelPicker && m.contentWidth > 4 && m.height > 6 {
+		m.modelPicker.SetSize(m.contentWidth-4, m.height-6)
+	}
 	m.rebuildViewportContent()
 }
 
@@ -231,6 +352,14 @@ func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleUserMessage(payload)
 	case bus.EventNewConversation:
 		return m, m.handleNewConversation()
+	case bus.EventChangeProviderModel:
+		payload, ok := msg.Event.Payload.(bus.ChangeProviderModelPayload)
+		if !ok {
+			return m, nil
+		}
+		m.providerName = payload.Provider
+		m.modelName = payload.Model
+		return m, nil
 	}
 
 	last, ok := m.lastMessage()
@@ -365,6 +494,11 @@ func (m *Model) handleAgentError(last *chatMessage, payload bus.AgentErrorPayloa
 func (m Model) updateChildComponents(msg tea.Msg, cmds []tea.Cmd) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
+	if m.state == stateModelPicker {
+		m.modelPicker, cmd = m.modelPicker.Update(msg)
+		cmds = append(cmds, cmd)
+		return m, tea.Batch(cmds...)
+	}
 	if m.ready {
 		m.viewport, cmd = m.viewport.Update(msg)
 		cmds = append(cmds, cmd)
