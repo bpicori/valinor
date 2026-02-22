@@ -11,7 +11,7 @@ import (
 
 // ToGeminiContents converts provider-agnostic messages to Gemini Content format.
 // Gemini uses RoleUser and RoleModel (not assistant), and system messages are treated as user messages.
-func ToGeminiContents(messages []llm.Message) []*genai.Content {
+func ToGeminiContents(messages []llm.Message, thoughtSignatures map[string][]byte) []*genai.Content {
 	contents := []*genai.Content{}
 
 	for _, m := range messages {
@@ -42,13 +42,16 @@ func ToGeminiContents(messages []llm.Message) []*genai.Content {
 						args = map[string]any{}
 					}
 
-					// Create a Part with FunctionCall
+					// Re-attach Gemini thought_signature when available.
 					part := &genai.Part{
 						FunctionCall: &genai.FunctionCall{
 							ID:   tc.ID,
 							Name: tc.Name,
 							Args: args,
 						},
+					}
+					if thoughtSignature, ok := thoughtSignatures[tc.ID]; ok {
+						part.ThoughtSignature = thoughtSignature
 					}
 					parts = append(parts, part)
 				}

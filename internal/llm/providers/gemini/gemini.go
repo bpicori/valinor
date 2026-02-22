@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
@@ -16,6 +17,9 @@ import (
 type Provider struct {
 	client *genai.Client
 	bus    *bus.Bus
+
+	mu                sync.RWMutex
+	thoughtSignatures map[string][]byte
 }
 
 // New creates a new Gemini provider instance.
@@ -33,8 +37,9 @@ func New(apiKey string, b *bus.Bus) (*Provider, error) {
 	}
 
 	return &Provider{
-		client: client,
-		bus:    b,
+		client:            client,
+		bus:               b,
+		thoughtSignatures: make(map[string][]byte),
 	}, nil
 }
 
@@ -46,7 +51,7 @@ func (p *Provider) Name() string {
 // Stream implements the Provider interface for Gemini.
 func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.StreamResult, error) {
 	// Convert messages to Gemini format
-	contents := ToGeminiContents(params.Messages)
+	contents := ToGeminiContents(params.Messages, p.snapshotThoughtSignatures())
 
 	// Prepare config
 	config := &genai.GenerateContentConfig{
@@ -69,8 +74,8 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 
 	var usage llm.Usage
 	var assistantContent string
-	var functionCalls []*genai.FunctionCall
-	callIDCounter := 0 // Gemini doesn't provide IDs, so we generate sequential ones
+	var toolCalls []llm.ToolCall
+	callIDCounter := 0
 
 	for response, err := range stream {
 		if err != nil {
@@ -104,11 +109,25 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 					// Handle function calls
 					if part.FunctionCall != nil {
 						// Generate an ID if not provided
-						if part.FunctionCall.ID == "" {
-							part.FunctionCall.ID = fmt.Sprintf("call_%d", callIDCounter)
+						id := part.FunctionCall.ID
+						if id == "" {
+							id = fmt.Sprintf("call_%d", callIDCounter)
 							callIDCounter++
 						}
-						functionCalls = append(functionCalls, part.FunctionCall)
+
+						// Marshal the arguments to JSON string
+						argsJSON, err := json.Marshal(part.FunctionCall.Args)
+						if err != nil {
+							applog.Error("gemini function call args marshal error", applog.M("function", part.FunctionCall.Name, "error", err))
+							argsJSON = []byte("{}")
+						}
+
+						toolCalls = append(toolCalls, llm.ToolCall{
+							ID:        id,
+							Name:      part.FunctionCall.Name,
+							Arguments: string(argsJSON),
+						})
+						p.storeThoughtSignature(id, part.ThoughtSignature)
 					}
 				}
 			}
@@ -118,23 +137,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	// Build result message
 	var resultMsg llm.Message
 
-	if len(functionCalls) > 0 {
-		// Assistant requested tool calls
-		toolCalls := []llm.ToolCall{}
-		for _, fc := range functionCalls {
-			// Marshal the arguments to JSON string
-			argsJSON, err := json.Marshal(fc.Args)
-			if err != nil {
-				applog.Error("gemini function call args marshal error", applog.M("function", fc.Name, "error", err))
-				argsJSON = []byte("{}")
-			}
-
-			toolCalls = append(toolCalls, llm.ToolCall{
-				ID:        fc.ID,
-				Name:      fc.Name,
-				Arguments: string(argsJSON),
-			})
-		}
+	if len(toolCalls) > 0 {
 		resultMsg = llm.Message{
 			Role:      llm.RoleAssistant,
 			ToolCalls: toolCalls,
@@ -151,4 +154,25 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 		Message: resultMsg,
 		Usage:   usage,
 	}, nil
+}
+
+func (p *Provider) storeThoughtSignature(toolCallID string, signature []byte) {
+	if toolCallID == "" || len(signature) == 0 {
+		return
+	}
+	dup := append([]byte(nil), signature...)
+	p.mu.Lock()
+	p.thoughtSignatures[toolCallID] = dup
+	p.mu.Unlock()
+}
+
+func (p *Provider) snapshotThoughtSignatures() map[string][]byte {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	snapshot := make(map[string][]byte, len(p.thoughtSignatures))
+	for id, signature := range p.thoughtSignatures {
+		snapshot[id] = append([]byte(nil), signature...)
+	}
+	return snapshot
 }
