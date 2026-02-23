@@ -2,11 +2,17 @@ package main
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
 	"valinor/internal/config"
+	"valinor/internal/gateway"
+	"valinor/internal/router"
 	"valinor/internal/session"
 	"valinor/internal/tui"
 
@@ -14,52 +20,80 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
-		applog.Error("tui exit error", applog.M("error", err))
+	// Define command-line flags
+	var (
+		mode        = flag.String("mode", "tui", "Run mode: 'gateway' or 'tui'")
+		gatewayURL  = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui mode, defaults to config)")
+	)
+	flag.Parse()
+
+	if err := run(*mode, *gatewayURL); err != nil {
+		applog.Error("valinor exit error", applog.M("error", err))
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(mode, gatewayURL string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Handle shutdown signals
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		applog.Info("shutdown signal received", nil)
+		cancel()
+	}()
+
+	// Load configuration (needed by both modes)
 	cfg, err := config.LoadFromFile("config.toml")
 	if err != nil {
 		applog.Error("load config failed", applog.M("error", err))
 		return err
 	}
 
+	switch mode {
+	case "gateway":
+		return runGateway(ctx, cfg)
+	case "tui":
+		return runTUI(ctx, cfg, gatewayURL)
+	default:
+		return fmt.Errorf("invalid mode '%s': must be 'gateway' or 'tui'", mode)
+	}
+}
+
+// runGateway starts the gateway and session core (no TUI).
+func runGateway(ctx context.Context, cfg config.Config) error {
+	applog.Info("starting valinor in gateway mode", nil)
+
+	// Resolve directories
 	valinorDir, err := cfg.ResolveValinorDir()
 	if err != nil {
-		applog.Error("resolve valinor dir failed", applog.M("error", err))
-		return err
+		return fmt.Errorf("resolve valinor dir: %w", err)
 	}
 	sessionsDir, err := cfg.ResolveSessionDir()
 	if err != nil {
-		applog.Error("resolve session dir failed", applog.M("error", err))
-		return err
+		return fmt.Errorf("resolve session dir: %w", err)
 	}
 	workspaceDir, err := cfg.ResolveWorkspaceDir()
 	if err != nil {
-		applog.Error("resolve workspace dir failed", applog.M("error", err))
-		return err
+		return fmt.Errorf("resolve workspace dir: %w", err)
 	}
 
+	// Initialize logger
 	logPath, closeLogger, err := applog.Init(valinorDir)
 	if err != nil {
-		applog.Error("init logger failed", applog.M("error", err))
-		return err
+		return fmt.Errorf("init logger: %w", err)
 	}
-	defer func() {
-		if err := closeLogger(); err != nil {
-			applog.Error("close logger failed", applog.M("error", err))
-		}
-	}()
+	defer closeLogger()
 	applog.Info("logging to file", applog.M("log_path", logPath))
 
+	// Initialize core components
 	b := bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir, cfg)
+
+	// Create initial session
 	createCfg := session.CreateOptions{
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
@@ -68,14 +102,13 @@ func run() error {
 	var sess *session.Session
 	sessions, err := sm.List()
 	if err != nil {
-		applog.Error("list sessions failed", applog.M("error", err))
-		return err
+		return fmt.Errorf("list sessions: %w", err)
 	}
 	if len(sessions) > 0 {
 		latestSession := sessions[0]
 		sess, err = sm.Resume(context.Background(), latestSession.ID, createCfg)
 		if err != nil {
-			applog.Error("resume latest session failed", applog.M("session_id", latestSession.ID, "error", err))
+			applog.Warning("resume latest session failed", applog.M("session_id", latestSession.ID, "error", err))
 		} else {
 			applog.Info("resumed session", applog.M("session_id", latestSession.ID))
 		}
@@ -83,44 +116,97 @@ func run() error {
 	if sess == nil {
 		sess, err = sm.Create(context.Background(), createCfg)
 		if err != nil {
-			applog.Error("create session failed", applog.M("error", err))
-			return err
+			return fmt.Errorf("create session: %w", err)
 		}
 		applog.Info("created new session", applog.M("session_id", sess.Meta().ID))
 	}
 
+	// Start session runtime
 	runtime := session.NewRuntime(ctx, sm, createCfg, sess, b, nil)
 	runtime.Start()
 	defer runtime.Close()
 
-	// Use session's provider/model for display; will be updated via bus when changed
-	providerName := sess.Meta().Provider
-	if providerName == "" {
-		providerName = cfg.DefaultProvider
+	// Create identity map store
+	identityMap, err := session.NewIdentityMapStore(valinorDir)
+	if err != nil {
+		applog.Warning("failed to create identity map store, continuing without persistence",
+			applog.M("error", err))
+		identityMap = nil
 	}
-	modelName := sess.Meta().Model
-	if modelName == "" {
-		if pc, ok := cfg.Providers[providerName]; ok {
-			modelName = pc.DefaultModel
-		}
-		if modelName == "" && len(cfg.Providers) > 0 {
-			for _, pc := range cfg.Providers {
-				modelName = pc.DefaultModel
-				break
-			}
-		}
+
+	// Create router
+	rtr := router.NewRouter(b, runtime, sm, createCfg, identityMap)
+	rtr.Start(ctx)
+	defer rtr.Stop()
+
+	// Create and start gateway server
+	gwCfg := gateway.Config{
+		Host: cfg.GatewayHost,
+		Port: cfg.GatewayPort,
+		Path: cfg.GatewayPath,
 	}
-	model := tui.New(b, cfg, providerName, modelName)
+	gw := gateway.NewServer(gwCfg, rtr)
+
+	applog.Info("gateway server starting",
+		applog.M("url", cfg.GatewayWebSocketURL()))
+
+	// Start gateway (blocks until shutdown)
+	if err := gw.Start(ctx); err != nil {
+		return fmt.Errorf("gateway server: %w", err)
+	}
+
+	applog.Info("gateway server stopped", nil)
+	return nil
+}
+
+// runTUI starts the TUI client connecting to a gateway.
+func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
+	applog.Info("starting valinor in tui mode", nil)
+
+	// Use config URL if not provided via flag
+	if gatewayURL == "" {
+		gatewayURL = cfg.GatewayWebSocketURL()
+	}
+
+	// Resolve directories for logging
+	valinorDir, err := cfg.ResolveValinorDir()
+	if err != nil {
+		return fmt.Errorf("resolve valinor dir: %w", err)
+	}
+
+	// Initialize logger
+	logPath, closeLogger, err := applog.Init(valinorDir)
+	if err != nil {
+		return fmt.Errorf("init logger: %w", err)
+	}
+	defer closeLogger()
+	applog.Info("logging to file", applog.M("log_path", logPath))
+
+	// Create TUI model and program
+	// Note: We still need bus for now because tui.Model expects it
+	// In a future refactoring, we can remove this dependency
+	b := bus.New()
+	model := tui.New(b, cfg, cfg.DefaultProvider, "")
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
-	uiSub := tui.StartBusBridge(ctx, p, b)
-	defer b.Unsubscribe(uiSub)
-	runtime.PublishActiveContextTokens()
 
+	// Connect TUI via WebSocket to gateway
+	applog.Info("connecting to gateway", applog.M("url", gatewayURL))
+
+	wsBridge := tui.NewWSBridge(gatewayURL)
+	if err := wsBridge.Start(ctx, p); err != nil {
+		return fmt.Errorf("connect to gateway: %w", err)
+	}
+	defer wsBridge.Stop()
+
+	applog.Info("tui startup complete", applog.M("gateway", gatewayURL))
+
+	// Run TUI
 	if _, err := p.Run(); err != nil {
 		return err
 	}
+
 	return nil
 }

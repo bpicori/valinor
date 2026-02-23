@@ -23,6 +23,14 @@ const (
 	DefaultWebPort    = 7777
 )
 
+// Default gateway configuration.
+const (
+	DefaultGatewayEnabled = true
+	DefaultGatewayHost    = "127.0.0.1"
+	DefaultGatewayPort    = 7778
+	DefaultGatewayPath    = "/ws"
+)
+
 // Config holds provider configurations and application paths.
 type Config struct {
 	DefaultProvider    string                    `toml:"default_provider"`
@@ -34,6 +42,12 @@ type Config struct {
 	WebEnabled         bool                      `toml:"web_enabled"`
 	WebHost            string                    `toml:"web_host"`
 	WebPort            int                       `toml:"web_port"`
+
+	// Gateway configuration for WebSocket client connections.
+	GatewayEnabled bool   `toml:"gateway_enabled"`
+	GatewayHost    string `toml:"gateway_host"`
+	GatewayPort    int    `toml:"gateway_port"`
+	GatewayPath    string `toml:"gateway_path"`
 }
 
 // ProviderConfig holds configuration for a specific LLM provider.
@@ -100,6 +114,21 @@ func LoadFromFile(path string) (Config, error) {
 	if !md.IsDefined("web_enabled") {
 		cfg.WebEnabled = DefaultWebEnabled
 	}
+
+	// Apply gateway defaults
+	if cfg.GatewayHost == "" {
+		cfg.GatewayHost = DefaultGatewayHost
+	}
+	if cfg.GatewayPort <= 0 {
+		cfg.GatewayPort = DefaultGatewayPort
+	}
+	if cfg.GatewayPath == "" {
+		cfg.GatewayPath = DefaultGatewayPath
+	}
+	if !md.IsDefined("gateway_enabled") {
+		cfg.GatewayEnabled = DefaultGatewayEnabled
+	}
+
 	return cfg, nil
 }
 
@@ -166,6 +195,16 @@ func (c Config) ResolveLogsDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(baseDir, "logs"), nil
+}
+
+// GatewayWebSocketURL returns the WebSocket URL for the gateway.
+func (c Config) GatewayWebSocketURL() string {
+	return fmt.Sprintf("ws://%s:%d%s", c.GatewayHost, c.GatewayPort, c.GatewayPath)
+}
+
+// GatewayHTTPURL returns the HTTP URL for the gateway health endpoint.
+func (c Config) GatewayHTTPURL() string {
+	return fmt.Sprintf("http://%s:%d/health", c.GatewayHost, c.GatewayPort)
 }
 
 // resolvePathWithTilde returns an absolute path.
