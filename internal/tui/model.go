@@ -101,6 +101,8 @@ type Model struct {
 	messages          []chatMessage
 	totalUsage        Usage
 	lastUsage         Usage
+	contextPrompt     int64
+	contextEstimated  bool
 	width             int
 	height            int
 	contentWidth      int // width minus sidebar for viewport/chat
@@ -250,7 +252,6 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 	return m, cmd, true, false
 }
 
-
 // openModelPicker switches to the model picker state.
 func (m Model) openModelPicker() Model {
 	m.state = stateModelPicker
@@ -377,6 +378,14 @@ func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
 		return m, nil
+	case bus.EventContextTokens:
+		payload, ok := msg.Event.Payload.(bus.ContextTokensPayload)
+		if !ok {
+			return m, nil
+		}
+		m.contextPrompt = payload.PromptTokens
+		m.contextEstimated = payload.Estimated
+		return m, nil
 	}
 
 	last, ok := m.lastMessage()
@@ -494,6 +503,8 @@ func (m *Model) handleAgentDone(last *chatMessage, payload bus.AgentDonePayload)
 	m.totalUsage.PromptTokens += payload.PromptTokens
 	m.totalUsage.CompletionTokens += payload.CompletionTokens
 	m.totalUsage.TotalTokens += payload.TotalTokens
+	m.contextPrompt = payload.PromptTokens
+	m.contextEstimated = false
 	m.state = stateReady
 	m.rebuildViewportContent()
 	return nil

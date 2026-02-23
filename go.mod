@@ -7,12 +7,11 @@ require github.com/openai/openai-go/v3 v3.22.0
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/anthropics/anthropic-sdk-go v1.26.0
-	github.com/bpicori/red-keep v0.1.10
+	github.com/bpicori/red-keep v0.1.11
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/coder/websocket v1.8.14
 	github.com/google/uuid v1.6.0
 	google.golang.org/genai v1.47.0
 )

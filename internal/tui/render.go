@@ -189,8 +189,12 @@ func (m Model) View() string {
 		providerModel = m.providerName + " / " + m.modelName
 	}
 	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: "+providerModel) + " (ctrl+m)")
-	tokensText := tokensLabelStyle.Render("Context: ") +
-		tokensValueStyle.Render(formatTokens(m.totalUsage.TotalTokens))
+	contextLabel := "Context: "
+	if m.contextEstimated {
+		contextLabel = "Context (~): "
+	}
+	tokensText := tokensLabelStyle.Render(contextLabel) +
+		tokensValueStyle.Render(formatTokens(m.contextPrompt))
 	tokensRow := lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder(), true, false, false, false).
 		BorderForeground(lipgloss.Color("238")).

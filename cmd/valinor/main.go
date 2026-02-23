@@ -9,7 +9,6 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/session"
 	"valinor/internal/tui"
-	"valinor/internal/web"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -90,20 +89,9 @@ func run() error {
 		applog.Info("created new session", applog.M("session_id", sess.Meta().ID))
 	}
 
-	activeSessionID := sess.Meta().ID
-	runtime := session.NewRuntime(ctx, sm, createCfg, sess, b, func(id string) {
-		activeSessionID = id
-	})
+	runtime := session.NewRuntime(ctx, sm, createCfg, sess, b, nil)
 	runtime.Start()
 	defer runtime.Close()
-
-	if cfg.WebEnabled {
-		webServer := web.NewServer(cfg.WebHost, cfg.WebPort, cfg, b, sm, &activeSessionID, runtime.HandleCreateSessionRequest)
-		if err := webServer.Start(ctx); err != nil {
-			applog.Error("start web server failed", applog.M("error", err))
-			return err
-		}
-	}
 
 	// Use session's provider/model for display; will be updated via bus when changed
 	providerName := sess.Meta().Provider
@@ -129,6 +117,7 @@ func run() error {
 	)
 	uiSub := tui.StartBusBridge(ctx, p, b)
 	defer b.Unsubscribe(uiSub)
+	runtime.PublishActiveContextTokens()
 
 	if _, err := p.Run(); err != nil {
 		return err

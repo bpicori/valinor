@@ -5,16 +5,17 @@ type EventType int
 
 const (
 	// User intent events (published by UI).
-	EventUserMessage       EventType = iota // User sent a chat message.
-	EventNewConversation                   // User requested /new or /clear.
-	EventChangeProviderModel               // User changed model for the session (same provider only).
-	EventCreateNewSession                  // User requested new session with different provider.
+	EventUserMessage         EventType = iota // User sent a chat message.
+	EventNewConversation                      // User requested /new or /clear.
+	EventChangeProviderModel                  // User changed model for the session (same provider only).
+	EventCreateNewSession                     // User requested new session with different provider.
 
 	// Agent streaming events (published by Agent).
 	EventAgentContentDelta  // Streamed content chunk.
 	EventAgentContentFull   // Full assistant content for this streamed response.
 	EventAgentThinking      // Reasoning/thinking step.
 	EventAgentStepTokens    // Per-step token usage.
+	EventContextTokens      // Current context token estimate/exact value.
 	EventAgentRefusal       // Model refusal.
 	EventAgentToolCallStart // Tool call initiated.
 	EventAgentToolCallDone  // Tool call completed.
@@ -95,6 +96,12 @@ type StepTokenUsagePayload struct {
 	PromptTokens     int64
 	CompletionTokens int64
 	TotalTokens      int64
+}
+
+// ContextTokensPayload carries current context token information.
+type ContextTokensPayload struct {
+	PromptTokens int64
+	Estimated    bool
 }
 
 // AgentErrorPayload carries an error from the agent.

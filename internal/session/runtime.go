@@ -7,6 +7,7 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/tokens"
 )
 
 // Runtime owns the active session lifecycle and handles provider/model switch commands.
@@ -67,6 +68,7 @@ func (r *Runtime) Start() {
 		bus.EventCreateNewSession,
 	)
 	r.startActiveSessionLocked()
+	r.publishActiveContextTokens()
 	r.startCommandHandlerLocked()
 }
 
@@ -146,6 +148,7 @@ func (r *Runtime) handleNewConversation() {
 		return
 	}
 	r.active.ResetConversation()
+	r.publishActiveContextTokens()
 }
 
 func (r *Runtime) handleChangeProviderModel(provider, model string) error {
@@ -216,6 +219,7 @@ func (r *Runtime) HandleCreateSessionRequest(provider, model string) (string, er
 	oldSession := r.detachActiveLocked()
 	r.active = newSession
 	r.startActiveSessionLocked()
+	r.publishActiveContextTokens()
 	activeSessionID := r.active.Meta().ID
 	onActiveSessionChanged := r.onActiveSessionChanged
 	r.mu.Unlock()
@@ -254,6 +258,16 @@ func (r *Runtime) Close() {
 	r.wg.Wait()
 }
 
+// PublishActiveContextTokens publishes context token information for the active session.
+func (r *Runtime) PublishActiveContextTokens() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.started || r.closed {
+		return
+	}
+	r.publishActiveContextTokens()
+}
+
 func (r *Runtime) startActiveSessionLocked() {
 	if r.active == nil {
 		return
@@ -273,4 +287,19 @@ func (r *Runtime) detachActiveLocked() *Session {
 	active := r.active
 	r.active = nil
 	return active
+}
+
+func (r *Runtime) publishActiveContextTokens() {
+	if r.active == nil {
+		return
+	}
+	messages := r.active.agentContext.Messages()
+	promptTokens := tokens.EstimatePromptTokens(messages)
+	r.bus.Publish(bus.Event{
+		Type: bus.EventContextTokens,
+		Payload: bus.ContextTokensPayload{
+			PromptTokens: promptTokens,
+			Estimated:    true,
+		},
+	})
 }
