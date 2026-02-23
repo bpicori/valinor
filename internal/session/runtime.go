@@ -13,7 +13,7 @@ import (
 type Runtime struct {
 	ctx          context.Context
 	manager      *Manager
-	createConfig CreateConfig
+	createConfig CreateOptions
 	bus          *bus.Bus
 
 	mu         sync.Mutex
@@ -34,7 +34,7 @@ type Runtime struct {
 func NewRuntime(
 	ctx context.Context,
 	manager *Manager,
-	createConfig CreateConfig,
+	createConfig CreateOptions,
 	initial *Session,
 	eventBus *bus.Bus,
 	onActiveSessionChanged func(string),
@@ -187,7 +187,7 @@ func (r *Runtime) HandleCreateSessionRequest(provider, model string) (string, er
 	createCfg := r.createConfig
 	r.mu.Unlock()
 
-	provider, model, err := resolveProviderModel(createCfg.Config, provider, model)
+	provider, model, err := r.manager.config.ResolveProviderModel(provider, model)
 	if err != nil {
 		return "", err
 	}
@@ -260,12 +260,9 @@ func (r *Runtime) startActiveSessionLocked() {
 	}
 	activeCtx, activeStop := context.WithCancel(r.runtimeCtx)
 	r.activeStop = activeStop
-	active := r.active
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
-		active.Run(activeCtx)
-	}()
+	r.wg.Go(func() {
+		<-activeCtx.Done()
+	})
 }
 
 func (r *Runtime) detachActiveLocked() *Session {

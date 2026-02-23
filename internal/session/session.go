@@ -2,85 +2,78 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
 	"valinor/internal/applog"
-	"valinor/internal/bus"
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/llm"
 )
 
-// Session owns the agent and persists conversation events to the store.
+// Metadata holds session metadata persisted in metadata.json.
+type Metadata struct {
+	ID           string    `json:"id"`
+	Title        string    `json:"title"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	WorkspaceDir string    `json:"workspace_dir"`
+	Provider     string    `json:"provider,omitempty"` // Config key for the LLM provider
+	Model        string    `json:"model,omitempty"`    // Model ID for the session
+}
+
+// Session owns the agent and persists conversation messages to the store.
 type Session struct {
-	meta       Metadata
-	store      Store
-	agent      *llm.LLM
-	builder    *agentcontext.Builder
-	messages   []agentcontext.Message
-	config     config.Config
-	persister  *timelinePersister
-	mu         sync.Mutex
+	meta         Metadata
+	store        Store
+	agent        *llm.LLM
+	agentContext agentcontext.Context
+	config       config.Config
+	mu           sync.Mutex
 }
 
-// NewSession creates a session with a dedicated timeline persister.
-func NewSession(meta Metadata, store Store, ag *llm.LLM, builder *agentcontext.Builder, initialMessages []agentcontext.Message, eventBus *bus.Bus, cfg config.Config) *Session {
+// NewSession creates a session with one owned context state.
+func NewSession(meta Metadata, store Store, ag *llm.LLM, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config) *Session {
 	return &Session{
-		meta:       meta,
-		store:      store,
-		agent:      ag,
-		builder:    builder,
-		messages:   append([]agentcontext.Message{}, initialMessages...),
-		config:     cfg,
-		persister:  newTimelinePersister(meta.ID, store, eventBus),
+		meta:         meta,
+		store:        store,
+		agent:        ag,
+		agentContext: agentcontext.NewContext(systemPrompt, initialMessages),
+		config:       cfg,
 	}
-}
-
-// Run starts the persistence loop. Call in a goroutine.
-// Returns when ctx is cancelled.
-func (s *Session) Run(ctx context.Context) {
-	applog.Info("session run start", applog.M("session_id", s.meta.ID))
-	s.persister.Run(ctx)
-	applog.Info("session run cancelled", applog.M("session_id", s.meta.ID))
 }
 
 // HandleUserMessage appends and processes a user message through the active agent.
 func (s *Session) HandleUserMessage(ctx context.Context, content string) error {
 	s.mu.Lock()
-	if err := s.appendUserMessage(ctx, content); err != nil {
-		s.mu.Unlock()
-		return fmt.Errorf("append user message: %w", err)
-	}
-	s.messages = append(s.messages, agentcontext.Message{
-		Role:    agentcontext.RoleUser,
-		Content: content,
-	})
-	runCtx := s.builder.BuildRunContext(append([]agentcontext.Message{}, s.messages...))
+	s.agentContext.AppendUserMessage(content)
+	runMessages := s.agentContext.Messages()
 	s.mu.Unlock()
 
-	result, err := s.agent.Run(ctx, llm.RunRequest{Context: runCtx})
+	result, err := s.agent.Run(ctx, llm.RunRequest{Messages: runMessages})
 	if err != nil {
 		return fmt.Errorf("agent run: %w", err)
 	}
 
 	s.mu.Lock()
-	s.messages = result.Messages
+	s.agentContext.ReplaceMessages(result.Messages)
+	persistMessages := s.agentContext.Messages()
 	s.mu.Unlock()
+	if err := s.store.SaveMessages(ctx, persistMessages); err != nil {
+		return fmt.Errorf("save messages: %w", err)
+	}
 	return nil
 }
 
 // ResetConversation clears messages to only the base system prompt.
 func (s *Session) ResetConversation() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.messages = []agentcontext.Message{
-		{
-			Role:    agentcontext.RoleSystem,
-			Content: s.builder.BasePrompt(),
-		},
+	s.agentContext.Reset()
+	persistMessages := s.agentContext.Messages()
+	s.mu.Unlock()
+	if err := s.store.SaveMessages(context.Background(), persistMessages); err != nil {
+		applog.Error("session reset save messages error", applog.M("session_id", s.meta.ID, "error", err))
 	}
 }
 
@@ -113,26 +106,10 @@ func (s *Session) SwitchProviderModel(ctx context.Context, providerName, model s
 	return nil
 }
 
-func (s *Session) appendUserMessage(ctx context.Context, userMessage string) error {
-	content, err := json.Marshal(userMessageContent{Content: userMessage})
-	if err != nil {
-		return fmt.Errorf("marshal user message: %w", err)
-	}
-	return s.store.AppendEvent(ctx, StoredEvent{
-		Timestamp: time.Now(),
-		Type:      StoredEventUserMessage,
-		Content:   content,
-	})
-}
-
 // Close releases resources. Call when the session is no longer needed.
 func (s *Session) Close() error {
 	sessionID := s.meta.ID
 	applog.Debug("session close start", applog.M("session_id", sessionID))
-	if s.persister != nil {
-		s.persister.Close()
-		s.persister = nil
-	}
 	s.agent = nil
 	if s.store != nil {
 		err := s.store.Close()

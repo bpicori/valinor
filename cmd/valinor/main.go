@@ -60,9 +60,8 @@ func run() error {
 	applog.Info("logging to file", applog.M("log_path", logPath))
 
 	b := bus.New()
-	sm := session.NewManager(sessionsDir, workspaceDir)
-	createCfg := session.CreateConfig{
-		Config:             cfg,
+	sm := session.NewManager(sessionsDir, workspaceDir, cfg)
+	createCfg := session.CreateOptions{
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}

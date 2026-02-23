@@ -1,7 +1,6 @@
 package session
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,17 +8,17 @@ import (
 	"path/filepath"
 
 	"valinor/internal/applog"
+	agentcontext "valinor/internal/context"
 )
 
 const (
-	MetadataFile   = "metadata.json"
-	TranscriptFile = "transcript.jsonl"
+	MetadataFile = "metadata.json"
+	MessagesFile = "messages.json"
 )
 
 // JSONLStore implements Store using JSONL files on disk.
 type JSONLStore struct {
-	dir        string
-	transcript *os.File
+	dir string
 }
 
 // NewJSONLStore opens or creates a session directory and returns a Store.
@@ -30,86 +29,64 @@ func NewJSONLStore(dir string) (*JSONLStore, error) {
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 
-	transcriptPath := filepath.Join(dir, TranscriptFile)
-	f, err := os.OpenFile(transcriptPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		applog.Error("store create transcript error", applog.M("dir", dir, "error", err))
-		return nil, fmt.Errorf("open transcript: %w", err)
-	}
-
 	return &JSONLStore{
-		dir:        dir,
-		transcript: f,
+		dir: dir,
 	}, nil
 }
 
-// AppendEvent appends a single event as a JSON line to transcript.jsonl.
-func (s *JSONLStore) AppendEvent(ctx context.Context, evt StoredEvent) error {
+// SaveMessages writes messages atomically (write to temp, then rename).
+func (s *JSONLStore) SaveMessages(ctx context.Context, messages []agentcontext.Message) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
 	default:
 	}
 
-	data, err := json.Marshal(evt)
+	data, err := json.MarshalIndent(messages, "", "  ")
 	if err != nil {
-		applog.Error("store append marshal error", applog.M("dir", s.dir, "event_type", evt.Type, "error", err))
-		return fmt.Errorf("marshal event: %w", err)
+		applog.Error("store save messages marshal error", applog.M("dir", s.dir, "error", err))
+		return fmt.Errorf("marshal messages: %w", err)
 	}
-	data = append(data, '\n')
 
-	_, err = s.transcript.Write(data)
-	if err != nil {
-		applog.Error("store append write error", applog.M("dir", s.dir, "event_type", evt.Type, "error", err))
-		return fmt.Errorf("write transcript: %w", err)
+	tmpPath := filepath.Join(s.dir, MessagesFile+".tmp")
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		applog.Error("store save messages write error", applog.M("dir", s.dir, "error", err))
+		return fmt.Errorf("write messages: %w", err)
+	}
+
+	messagesPath := filepath.Join(s.dir, MessagesFile)
+	if err := os.Rename(tmpPath, messagesPath); err != nil {
+		_ = os.Remove(tmpPath)
+		applog.Error("store save messages rename error", applog.M("dir", s.dir, "error", err))
+		return fmt.Errorf("rename messages: %w", err)
 	}
 	return nil
 }
 
-// LoadEvents reads all events from transcript.jsonl in order.
-func (s *JSONLStore) LoadEvents(ctx context.Context) ([]StoredEvent, error) {
+// LoadMessages reads all persisted messages.
+func (s *JSONLStore) LoadMessages(ctx context.Context) ([]agentcontext.Message, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	default:
 	}
 
-	transcriptPath := filepath.Join(s.dir, TranscriptFile)
-	f, err := os.Open(transcriptPath)
+	messagesPath := filepath.Join(s.dir, MessagesFile)
+	data, err := os.ReadFile(messagesPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		applog.Error("store load open error", applog.M("dir", s.dir, "error", err))
-		return nil, fmt.Errorf("open transcript: %w", err)
+		applog.Error("store load messages read error", applog.M("dir", s.dir, "error", err))
+		return nil, fmt.Errorf("read messages: %w", err)
 	}
-	defer f.Close()
 
-	var events []StoredEvent
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var evt StoredEvent
-		if err := json.Unmarshal(line, &evt); err != nil {
-			applog.Error("store load unmarshal error", applog.M("dir", s.dir, "error", err))
-			return nil, fmt.Errorf("unmarshal event: %w", err)
-		}
-		events = append(events, evt)
+	var messages []agentcontext.Message
+	if err := json.Unmarshal(data, &messages); err != nil {
+		applog.Error("store load messages unmarshal error", applog.M("dir", s.dir, "error", err))
+		return nil, fmt.Errorf("unmarshal messages: %w", err)
 	}
-	if err := scanner.Err(); err != nil {
-		applog.Error("store load scanner error", applog.M("dir", s.dir, "error", err))
-		return nil, fmt.Errorf("read transcript: %w", err)
-	}
-	return events, nil
+	return messages, nil
 }
 
 // SaveMetadata writes metadata atomically (write to temp, then rename).
@@ -169,15 +146,6 @@ func (s *JSONLStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 
 // Close releases resources.
 func (s *JSONLStore) Close() error {
-	if s.transcript != nil {
-		dir := s.dir
-		err := s.transcript.Close()
-		s.transcript = nil
-		if err != nil {
-			applog.Error("store close error", applog.M("dir", dir, "error", err))
-			return err
-		}
-		applog.Debug("store close success", applog.M("dir", dir))
-	}
+	applog.Debug("store close success", applog.M("dir", s.dir))
 	return nil
 }

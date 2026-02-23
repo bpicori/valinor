@@ -136,6 +136,29 @@ func (c Config) ResolveWorkspaceDir() (string, error) {
 	return filepath.Join(baseDir, "workspace"), nil
 }
 
+// ResolveProviderModel resolves provider/model with config defaults.
+func (c Config) ResolveProviderModel(provider, model string) (string, string, error) {
+	resolvedProvider := provider
+	if resolvedProvider == "" {
+		resolvedProvider = c.DefaultProvider
+	}
+
+	providerCfg, ok := c.Providers[resolvedProvider]
+	if !ok {
+		return "", "", fmt.Errorf("provider '%s' not found in config", resolvedProvider)
+	}
+
+	resolvedModel := model
+	if resolvedModel == "" {
+		resolvedModel = providerCfg.DefaultModel
+	}
+	if resolvedModel == "" {
+		return "", "", fmt.Errorf("provider and model are required")
+	}
+
+	return resolvedProvider, resolvedModel, nil
+}
+
 // ResolveLogsDir returns the absolute path for application logs.
 func (c Config) ResolveLogsDir() (string, error) {
 	baseDir, err := c.ResolveValinorDir()

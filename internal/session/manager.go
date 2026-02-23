@@ -19,12 +19,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateConfig holds parameters for creating a new session.
-type CreateConfig struct {
-	Config             config.Config
+// CreateOptions holds parameters for creating/resuming a session.
+type CreateOptions struct {
 	Bus                *bus.Bus
 	MaxAgentIterations int
-	// Provider and Model override config defaults when set.
+	// Provider and Model override manager config defaults when set.
 	Provider string
 	Model    string
 }
@@ -33,27 +32,27 @@ type CreateConfig struct {
 type Manager struct {
 	sessionDir   string
 	workspaceDir string
+	config       config.Config
 }
 
 // Message history lifecycle:
 // - During a live session, session appends user input to message history.
-// - Context builder compacts/builds that history before each LLM run.
-// - Session events are persisted as JSONL transcript records.
-// - On resume, transcript events are reconstructed into message history.
+// - The full message history is persisted after each completed turn.
+// - On resume, persisted messages are loaded and system prompt is rebuilt.
 
 // NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
-func NewManager(sessionDir, workspaceDir string) *Manager {
-	return &Manager{sessionDir: sessionDir, workspaceDir: workspaceDir}
+func NewManager(sessionDir, workspaceDir string, cfg config.Config) *Manager {
+	return &Manager{sessionDir: sessionDir, workspaceDir: workspaceDir, config: cfg}
 }
 
 // Create creates a new session with a fresh agent and empty transcript.
 // Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
-func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error) {
-	providerName, model, err := resolveProviderModel(cfg.Config, cfg.Provider, cfg.Model)
+func (m *Manager) Create(ctx context.Context, cfg CreateOptions) (*Session, error) {
+	providerName, model, err := m.config.ResolveProviderModel(cfg.Provider, cfg.Model)
 	if err != nil {
 		return nil, err
 	}
-	providerCfg := cfg.Config.Providers[providerName]
+	providerCfg := m.config.Providers[providerName]
 
 	id := uuid.New().String()
 	dir := filepath.Join(m.sessionDir, id)
@@ -89,43 +88,31 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	// Create provider
-	provider, err := createProvider(providerCfg, cfg.Bus)
-	if err != nil {
-		_ = store.Close()
-		applog.Error("session create provider error", applog.M("session_id", id, "error", err))
-		return nil, fmt.Errorf("create provider: %w", err)
-	}
-
-	// Create tools
-	tools, err := createTools(workspaceDir)
-	if err != nil {
-		_ = store.Close()
-		applog.Error("session create tools error", applog.M("session_id", id, "error", err))
-		return nil, fmt.Errorf("create tools: %w", err)
-	}
-
-	ag, err := llm.New(provider, model, tools, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := buildAgent(workspaceDir, providerCfg, model, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session create agent error", applog.M("session_id", id, "model", model, "error", err))
-		return nil, fmt.Errorf("create agent: %w", err)
+		return nil, err
 	}
 
-	runBuilder := agentcontext.NewBuilder(systemPrompt)
 	initialMessages := []agentcontext.Message{
 		{
 			Role:    agentcontext.RoleSystem,
 			Content: systemPrompt,
 		},
 	}
-	sess := NewSession(meta, store, ag, runBuilder, initialMessages, cfg.Bus, cfg.Config)
+	if err := store.SaveMessages(ctx, initialMessages); err != nil {
+		_ = store.Close()
+		applog.Error("session create save messages error", applog.M("session_id", id, "error", err))
+		return nil, fmt.Errorf("save messages: %w", err)
+	}
+	sess := NewSession(meta, store, ag, systemPrompt, initialMessages, m.config)
 	applog.Info("session create success", applog.M("session_id", id, "provider", providerName, "model", model, "workspace_dir", workspaceDir))
 	return sess, nil
 }
 
 // Resume loads an existing session from storage and restores the agent's message history.
-func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Session, error) {
+func (m *Manager) Resume(ctx context.Context, id string, cfg CreateOptions) (*Session, error) {
 	dir := filepath.Join(m.sessionDir, id)
 	applog.Debug("session resume start", applog.M("session_id", id))
 	store, err := NewJSONLStore(dir)
@@ -146,11 +133,11 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("session %s not found", id)
 	}
 
-	events, err := store.LoadEvents(ctx)
+	messages, err := store.LoadMessages(ctx)
 	if err != nil {
 		_ = store.Close()
-		applog.Error("session resume events load error", applog.M("session_id", id, "error", err))
-		return nil, fmt.Errorf("load events: %w", err)
+		applog.Error("session resume messages load error", applog.M("session_id", id, "error", err))
+		return nil, fmt.Errorf("load messages: %w", err)
 	}
 
 	workspaceDir := m.workspaceDir
@@ -158,12 +145,12 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		workspaceDir = meta.WorkspaceDir
 	}
 
-	providerName, model, err := resolveProviderModel(cfg.Config, meta.Provider, meta.Model)
+	providerName, model, err := m.config.ResolveProviderModel(meta.Provider, meta.Model)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
-	providerCfg := cfg.Config.Providers[providerName]
+	providerCfg := m.config.Providers[providerName]
 	// Persist resolved values for backward compatibility
 	meta.Provider = providerName
 	meta.Model = model
@@ -175,42 +162,20 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	msgs, err := ReconstructMessages(events, systemPrompt)
-	if err != nil {
-		_ = store.Close()
-		applog.Error("session resume reconstruct error", applog.M("session_id", id, "event_count", len(events), "error", err))
-		return nil, fmt.Errorf("reconstruct messages: %w", err)
-	}
-
-	// Create provider
-	provider, err := createProvider(providerCfg, cfg.Bus)
-	if err != nil {
-		_ = store.Close()
-		applog.Error("session resume provider error", applog.M("session_id", id, "error", err))
-		return nil, fmt.Errorf("create provider: %w", err)
-	}
-
-	// Create tools
-	tools, err := createTools(workspaceDir)
-	if err != nil {
-		_ = store.Close()
-		applog.Error("session resume tools error", applog.M("session_id", id, "error", err))
-		return nil, fmt.Errorf("create tools: %w", err)
-	}
-
-	ag, err := llm.New(provider, model, tools, cfg.Bus, cfg.MaxAgentIterations)
+	msgs := normalizeSystemPrompt(messages, systemPrompt)
+	ag, err := buildAgent(workspaceDir, providerCfg, model, cfg.Bus, cfg.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session resume agent error", applog.M("session_id", id, "model", model, "error", err))
-		return nil, fmt.Errorf("create agent: %w", err)
+		return nil, err
 	}
 
 	meta.UpdatedAt = time.Now()
 	_ = store.SaveMetadata(ctx, *meta)
+	_ = store.SaveMessages(ctx, msgs)
 
-	runBuilder := agentcontext.NewBuilder(systemPrompt)
-	sess := NewSession(*meta, store, ag, runBuilder, msgs, cfg.Bus, cfg.Config)
-	applog.Info("session resume success", applog.M("session_id", id, "message_count", len(msgs), "event_count", len(events)))
+	sess := NewSession(*meta, store, ag, systemPrompt, msgs, m.config)
+	applog.Info("session resume success", applog.M("session_id", id, "message_count", len(msgs)))
 	return sess, nil
 }
 
@@ -269,8 +234,8 @@ func (m *Manager) GetMetadata(ctx context.Context, id string) (*Metadata, error)
 	return store.LoadMetadata(ctx)
 }
 
-// LoadEvents returns persisted transcript events for a given session ID.
-func (m *Manager) LoadEvents(ctx context.Context, id string) ([]StoredEvent, error) {
+// LoadMessages returns persisted messages for a given session ID.
+func (m *Manager) LoadMessages(ctx context.Context, id string) ([]agentcontext.Message, error) {
 	dir := filepath.Join(m.sessionDir, id)
 	store, err := NewJSONLStore(dir)
 	if err != nil {
@@ -286,11 +251,11 @@ func (m *Manager) LoadEvents(ctx context.Context, id string) ([]StoredEvent, err
 		return nil, fmt.Errorf("session %s not found", id)
 	}
 
-	events, err := store.LoadEvents(ctx)
+	messages, err := store.LoadMessages(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load events: %w", err)
+		return nil, fmt.Errorf("load messages: %w", err)
 	}
-	return events, nil
+	return messages, nil
 }
 
 // Delete removes a session directory and all its data.
@@ -317,4 +282,40 @@ func createTools(workspaceDir string) ([]llm.Tool, error) {
 		return nil, fmt.Errorf("create runtime: %w", err)
 	}
 	return tools.BuildTools(rt), nil
+}
+
+func buildAgent(workspaceDir string, providerCfg config.ProviderConfig, model string, b *bus.Bus, maxIterations int) (*llm.LLM, error) {
+	provider, err := createProvider(providerCfg, b)
+	if err != nil {
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+	availableTools, err := createTools(workspaceDir)
+	if err != nil {
+		return nil, fmt.Errorf("create tools: %w", err)
+	}
+	ag, err := llm.New(provider, model, availableTools, b, maxIterations)
+	if err != nil {
+		return nil, fmt.Errorf("create agent: %w", err)
+	}
+	return ag, nil
+}
+
+func normalizeSystemPrompt(messages []agentcontext.Message, systemPrompt string) []agentcontext.Message {
+	base := agentcontext.CloneMessages(messages)
+	if len(base) == 0 {
+		return []agentcontext.Message{{
+			Role:    agentcontext.RoleSystem,
+			Content: systemPrompt,
+		}}
+	}
+
+	if base[0].Role == agentcontext.RoleSystem {
+		base[0].Content = systemPrompt
+		return base
+	}
+
+	return append([]agentcontext.Message{{
+		Role:    agentcontext.RoleSystem,
+		Content: systemPrompt,
+	}}, base...)
 }
