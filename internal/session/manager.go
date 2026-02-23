@@ -49,18 +49,11 @@ func NewManager(sessionDir, workspaceDir string) *Manager {
 // Create creates a new session with a fresh agent and empty transcript.
 // Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
 func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error) {
-	providerName := cfg.Provider
-	if providerName == "" {
-		providerName = cfg.Config.DefaultProvider
+	providerName, model, err := resolveProviderModel(cfg.Config, cfg.Provider, cfg.Model)
+	if err != nil {
+		return nil, err
 	}
-	providerCfg, ok := cfg.Config.Providers[providerName]
-	if !ok {
-		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
-	}
-	model := cfg.Model
-	if model == "" {
-		model = providerCfg.DefaultModel
-	}
+	providerCfg := cfg.Config.Providers[providerName]
 
 	id := uuid.New().String()
 	dir := filepath.Join(m.sessionDir, id)
@@ -89,8 +82,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	ctxBuilder := agentcontext.NewBuilder(agentcontext.SystemPrompt())
-	snapshot, err := ctxBuilder.Build(workspaceDir)
+	systemPrompt, err := agentcontext.BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session create context build error", applog.M("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -120,11 +112,11 @@ func (m *Manager) Create(ctx context.Context, cfg CreateConfig) (*Session, error
 		return nil, fmt.Errorf("create agent: %w", err)
 	}
 
-	runBuilder := agentcontext.NewBuilder(snapshot.SystemPrompt)
+	runBuilder := agentcontext.NewBuilder(systemPrompt)
 	initialMessages := []agentcontext.Message{
 		{
 			Role:    agentcontext.RoleSystem,
-			Content: snapshot.SystemPrompt,
+			Content: systemPrompt,
 		},
 	}
 	sess := NewSession(meta, store, ag, runBuilder, initialMessages, cfg.Bus, cfg.Config)
@@ -166,33 +158,24 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 		workspaceDir = meta.WorkspaceDir
 	}
 
-	// Resolve provider and model: use metadata with fallback to config defaults
-	providerName := meta.Provider
-	if providerName == "" {
-		providerName = cfg.Config.DefaultProvider
-	}
-	providerCfg, ok := cfg.Config.Providers[providerName]
-	if !ok {
+	providerName, model, err := resolveProviderModel(cfg.Config, meta.Provider, meta.Model)
+	if err != nil {
 		_ = store.Close()
-		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
+		return nil, err
 	}
-	model := meta.Model
-	if model == "" {
-		model = providerCfg.DefaultModel
-	}
+	providerCfg := cfg.Config.Providers[providerName]
 	// Persist resolved values for backward compatibility
 	meta.Provider = providerName
 	meta.Model = model
 
-	ctxBuilder := agentcontext.NewBuilder(agentcontext.SystemPrompt())
-	snapshot, err := ctxBuilder.Build(workspaceDir)
+	systemPrompt, err := agentcontext.BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session resume context build error", applog.M("session_id", id, "workspace_dir", workspaceDir, "error", err))
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	msgs, err := ReconstructMessages(events, snapshot.SystemPrompt)
+	msgs, err := ReconstructMessages(events, systemPrompt)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session resume reconstruct error", applog.M("session_id", id, "event_count", len(events), "error", err))
@@ -225,7 +208,7 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateConfig) (*Ses
 	meta.UpdatedAt = time.Now()
 	_ = store.SaveMetadata(ctx, *meta)
 
-	runBuilder := agentcontext.NewBuilder(snapshot.SystemPrompt)
+	runBuilder := agentcontext.NewBuilder(systemPrompt)
 	sess := NewSession(*meta, store, ag, runBuilder, msgs, cfg.Bus, cfg.Config)
 	applog.Info("session resume success", applog.M("session_id", id, "message_count", len(msgs), "event_count", len(events)))
 	return sess, nil

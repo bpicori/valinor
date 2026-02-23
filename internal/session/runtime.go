@@ -19,7 +19,7 @@ type Runtime struct {
 	mu         sync.Mutex
 	active     *Session
 	activeStop context.CancelFunc
-	subCreate  *bus.Subscription
+	subCommand *bus.Subscription
 	wg         sync.WaitGroup
 
 	runtimeCtx    context.Context
@@ -49,7 +49,7 @@ func NewRuntime(
 	}
 }
 
-// Start runs the initial session and starts listening for create-session commands.
+// Start runs the initial session and starts listening for session command events.
 func (r *Runtime) Start() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -60,38 +60,109 @@ func (r *Runtime) Start() {
 	r.started = true
 	r.runtimeCtx, r.runtimeCancel = context.WithCancel(r.ctx)
 
-	r.subCreate = r.bus.Subscribe(bus.EventCreateNewSession)
+	r.subCommand = r.bus.Subscribe(
+		bus.EventUserMessage,
+		bus.EventNewConversation,
+		bus.EventChangeProviderModel,
+		bus.EventCreateNewSession,
+	)
 	r.startActiveSessionLocked()
-	r.startCreateSessionHandlerLocked()
+	r.startCommandHandlerLocked()
 }
 
-func (r *Runtime) startCreateSessionHandlerLocked() {
+func (r *Runtime) startCommandHandlerLocked() {
 	r.wg.Add(1)
-	go r.runCreateSessionHandlerLoop()
+	go r.runCommandHandlerLoop()
 }
 
-func (r *Runtime) runCreateSessionHandlerLoop() {
+func (r *Runtime) runCommandHandlerLoop() {
 	defer r.wg.Done()
 	for {
 		select {
 		case <-r.runtimeCtx.Done():
 			return
-		case ev, ok := <-r.subCreate.Ch():
+		case ev, ok := <-r.subCommand.Ch():
 			if !ok {
 				return
 			}
-			if ev.Type != bus.EventCreateNewSession {
-				continue
-			}
-			payload, ok := ev.Payload.(bus.CreateNewSessionPayload)
-			if !ok {
-				continue
-			}
-			if _, err := r.HandleCreateSessionRequest(payload.Provider, payload.Model); err != nil {
-				applog.Error("session runtime create-session command failed", applog.M("provider", payload.Provider, "model", payload.Model, "error", err))
-			}
+			r.handleCommandEvent(ev)
 		}
 	}
+}
+
+func (r *Runtime) handleCommandEvent(ev bus.Event) {
+	switch ev.Type {
+	case bus.EventUserMessage:
+		payload, ok := ev.Payload.(bus.UserMessagePayload)
+		if !ok {
+			return
+		}
+		if err := r.handleUserMessage(payload.Content); err != nil {
+			applog.Error("session runtime user message command failed", applog.M("error", err))
+		}
+	case bus.EventNewConversation:
+		r.handleNewConversation()
+	case bus.EventChangeProviderModel:
+		payload, ok := ev.Payload.(bus.ChangeProviderModelPayload)
+		if !ok {
+			return
+		}
+		if err := r.handleChangeProviderModel(payload.Provider, payload.Model); err != nil {
+			applog.Error("session runtime change provider/model command failed", applog.M("provider", payload.Provider, "model", payload.Model, "error", err))
+		}
+	case bus.EventCreateNewSession:
+		payload, ok := ev.Payload.(bus.CreateNewSessionPayload)
+		if !ok {
+			return
+		}
+		if _, err := r.HandleCreateSessionRequest(payload.Provider, payload.Model); err != nil {
+			applog.Error("session runtime create-session command failed", applog.M("provider", payload.Provider, "model", payload.Model, "error", err))
+		}
+	}
+}
+
+func (r *Runtime) handleUserMessage(content string) error {
+	r.mu.Lock()
+	if !r.started || r.closed {
+		r.mu.Unlock()
+		return fmt.Errorf("session runtime unavailable")
+	}
+	if r.active == nil {
+		r.mu.Unlock()
+		return fmt.Errorf("no active session")
+	}
+	active := r.active
+	runtimeCtx := r.runtimeCtx
+	r.mu.Unlock()
+
+	return active.HandleUserMessage(runtimeCtx, content)
+}
+
+func (r *Runtime) handleNewConversation() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if !r.started || r.closed || r.active == nil {
+		return
+	}
+	r.active.ResetConversation()
+}
+
+func (r *Runtime) handleChangeProviderModel(provider, model string) error {
+	r.mu.Lock()
+	if !r.started || r.closed {
+		r.mu.Unlock()
+		return fmt.Errorf("session runtime unavailable")
+	}
+	if r.active == nil {
+		r.mu.Unlock()
+		return fmt.Errorf("no active session")
+	}
+	active := r.active
+	runtimeCtx := r.runtimeCtx
+	r.mu.Unlock()
+
+	return active.SwitchProviderModel(runtimeCtx, provider, model)
 }
 
 // HandleCreateSessionRequest handles provider/model changes initiated by UI or web handlers.
@@ -99,41 +170,36 @@ func (r *Runtime) runCreateSessionHandlerLoop() {
 // If provider changes, it creates and switches to a new session.
 func (r *Runtime) HandleCreateSessionRequest(provider, model string) (string, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if r.closed {
+		r.mu.Unlock()
 		return "", fmt.Errorf("session runtime closed")
 	}
 	if !r.started {
+		r.mu.Unlock()
 		return "", fmt.Errorf("session runtime not started")
 	}
 	if r.active == nil {
+		r.mu.Unlock()
 		return "", fmt.Errorf("no active session")
 	}
+	active := r.active
+	runtimeCtx := r.runtimeCtx
+	createCfg := r.createConfig
+	r.mu.Unlock()
 
-	if provider == "" {
-		provider = r.createConfig.Config.DefaultProvider
-	}
-	providerCfg, ok := r.createConfig.Config.Providers[provider]
-	if !ok {
-		return "", fmt.Errorf("provider '%s' not found in config", provider)
-	}
-	if model == "" {
-		model = providerCfg.DefaultModel
-	}
-	if model == "" {
-		return "", fmt.Errorf("provider and model are required")
+	provider, model, err := resolveProviderModel(createCfg.Config, provider, model)
+	if err != nil {
+		return "", err
 	}
 
-	if r.active.Meta().Provider == provider {
-		r.bus.Publish(bus.Event{
-			Type:    bus.EventChangeProviderModel,
-			Payload: bus.ChangeProviderModelPayload{Provider: provider, Model: model},
-		})
-		return r.active.Meta().ID, nil
+	if active.Meta().Provider == provider {
+		if err := active.SwitchProviderModel(runtimeCtx, provider, model); err != nil {
+			return "", err
+		}
+		return active.Meta().ID, nil
 	}
 
-	newConfig := r.createConfig
+	newConfig := createCfg
 	newConfig.Provider = provider
 	newConfig.Model = model
 	newSession, err := r.manager.Create(r.ctx, newConfig)
@@ -141,18 +207,25 @@ func (r *Runtime) HandleCreateSessionRequest(provider, model string) (string, er
 		return "", fmt.Errorf("create session for provider '%s' model '%s': %w", provider, model, err)
 	}
 
-	r.stopActiveLocked()
+	r.mu.Lock()
+	if r.closed || !r.started {
+		r.mu.Unlock()
+		_ = newSession.Close()
+		return "", fmt.Errorf("session runtime unavailable")
+	}
+	oldSession := r.detachActiveLocked()
 	r.active = newSession
 	r.startActiveSessionLocked()
-
 	activeSessionID := r.active.Meta().ID
-	if r.onActiveSessionChanged != nil {
-		r.onActiveSessionChanged(activeSessionID)
+	onActiveSessionChanged := r.onActiveSessionChanged
+	r.mu.Unlock()
+
+	if oldSession != nil {
+		_ = oldSession.Close()
 	}
-	r.bus.Publish(bus.Event{
-		Type:    bus.EventChangeProviderModel,
-		Payload: bus.ChangeProviderModelPayload{Provider: provider, Model: model},
-	})
+	if onActiveSessionChanged != nil {
+		onActiveSessionChanged(activeSessionID)
+	}
 	applog.Info("session switched", applog.M("session_id", activeSessionID, "provider", provider, "model", model))
 	return activeSessionID, nil
 }
@@ -165,16 +238,19 @@ func (r *Runtime) Close() {
 		return
 	}
 	r.closed = true
-	if r.subCreate != nil {
-		r.bus.Unsubscribe(r.subCreate)
-		r.subCreate = nil
+	if r.subCommand != nil {
+		r.bus.Unsubscribe(r.subCommand)
+		r.subCommand = nil
 	}
 	if r.runtimeCancel != nil {
 		r.runtimeCancel()
 		r.runtimeCancel = nil
 	}
-	r.stopActiveLocked()
+	activeSession := r.detachActiveLocked()
 	r.mu.Unlock()
+	if activeSession != nil {
+		_ = activeSession.Close()
+	}
 	r.wg.Wait()
 }
 
@@ -192,13 +268,12 @@ func (r *Runtime) startActiveSessionLocked() {
 	}()
 }
 
-func (r *Runtime) stopActiveLocked() {
+func (r *Runtime) detachActiveLocked() *Session {
 	if r.activeStop != nil {
 		r.activeStop()
 		r.activeStop = nil
 	}
-	if r.active != nil {
-		_ = r.active.Close()
-		r.active = nil
-	}
+	active := r.active
+	r.active = nil
+	return active
 }

@@ -52,6 +52,15 @@ func (b *Builder) Build(workspaceDir string) (Snapshot, error) {
 	}, nil
 }
 
+// BuildSystemPrompt builds the composed system prompt for the workspace.
+func BuildSystemPrompt(workspaceDir string) (string, error) {
+	snapshot, err := NewBuilder(SystemPrompt()).Build(workspaceDir)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.SystemPrompt, nil
+}
+
 func (b *Builder) composeSystemPrompt(identity string, skills []Skill) string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(b.basePrompt))

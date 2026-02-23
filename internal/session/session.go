@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"valinor/internal/applog"
@@ -20,84 +21,74 @@ type Session struct {
 	agent      *llm.LLM
 	builder    *agentcontext.Builder
 	messages   []agentcontext.Message
-	bus        *bus.Bus
 	config     config.Config
-	subPersist *bus.Subscription
-	subControl *bus.Subscription
+	persister  *timelinePersister
+	mu         sync.Mutex
 }
 
-// NewSession creates a session that subscribes to all bus events for persistence.
-func NewSession(meta Metadata, store Store, ag *llm.LLM, builder *agentcontext.Builder, initialMessages []agentcontext.Message, b *bus.Bus, cfg config.Config) *Session {
+// NewSession creates a session with a dedicated timeline persister.
+func NewSession(meta Metadata, store Store, ag *llm.LLM, builder *agentcontext.Builder, initialMessages []agentcontext.Message, eventBus *bus.Bus, cfg config.Config) *Session {
 	return &Session{
 		meta:       meta,
 		store:      store,
 		agent:      ag,
 		builder:    builder,
 		messages:   append([]agentcontext.Message{}, initialMessages...),
-		bus:        b,
 		config:     cfg,
-		subPersist: b.Subscribe(), // no types = all events
-		subControl: b.Subscribe(bus.EventUserMessage, bus.EventNewConversation, bus.EventChangeProviderModel),
+		persister:  newTimelinePersister(meta.ID, store, eventBus),
 	}
 }
 
-// Run starts the control and persistence loops. Call in a goroutine.
+// Run starts the persistence loop. Call in a goroutine.
 // Returns when ctx is cancelled.
 func (s *Session) Run(ctx context.Context) {
 	applog.Info("session run start", applog.M("session_id", s.meta.ID))
-	go s.runPersistence(ctx)
-	s.runControl(ctx)
+	s.persister.Run(ctx)
 	applog.Info("session run cancelled", applog.M("session_id", s.meta.ID))
 }
 
-// runControl dispatches input events to the agent.
-func (s *Session) runControl(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, ok := <-s.subControl.Ch():
-			if !ok {
-				applog.Warning("session control channel closed", applog.M("session_id", s.meta.ID))
-				return
-			}
-			switch ev.Type {
-			case bus.EventUserMessage:
-				p := ev.Payload.(bus.UserMessagePayload)
-				if err := s.appendUserMessage(ctx, p.Content); err != nil {
-					applog.Error("session append error", applog.M("session_id", s.meta.ID, "error", err))
-					continue
-				}
-				s.messages = append(s.messages, agentcontext.Message{
-					Role:    agentcontext.RoleUser,
-					Content: p.Content,
-				})
-				runCtx := s.builder.BuildRunContext(s.messages)
-				result, err := s.agent.Run(ctx, llm.RunRequest{Context: runCtx})
-				if err != nil {
-					applog.Error("session agent run error", applog.M("session_id", s.meta.ID, "error", err))
-				} else {
-					s.messages = result.Messages
-				}
-			case bus.EventNewConversation:
-				s.messages = []agentcontext.Message{
-					{
-						Role:    agentcontext.RoleSystem,
-						Content: s.builder.BasePrompt(),
-					},
-				}
-			case bus.EventChangeProviderModel:
-				p := ev.Payload.(bus.ChangeProviderModelPayload)
-				if err := s.switchProviderModel(ctx, p.Provider, p.Model); err != nil {
-					applog.Error("session switch provider/model error", applog.M("session_id", s.meta.ID, "provider", p.Provider, "model", p.Model, "error", err))
-				}
-			}
-		}
+// HandleUserMessage appends and processes a user message through the active agent.
+func (s *Session) HandleUserMessage(ctx context.Context, content string) error {
+	s.mu.Lock()
+	if err := s.appendUserMessage(ctx, content); err != nil {
+		s.mu.Unlock()
+		return fmt.Errorf("append user message: %w", err)
+	}
+	s.messages = append(s.messages, agentcontext.Message{
+		Role:    agentcontext.RoleUser,
+		Content: content,
+	})
+	runCtx := s.builder.BuildRunContext(append([]agentcontext.Message{}, s.messages...))
+	s.mu.Unlock()
+
+	result, err := s.agent.Run(ctx, llm.RunRequest{Context: runCtx})
+	if err != nil {
+		return fmt.Errorf("agent run: %w", err)
+	}
+
+	s.mu.Lock()
+	s.messages = result.Messages
+	s.mu.Unlock()
+	return nil
+}
+
+// ResetConversation clears messages to only the base system prompt.
+func (s *Session) ResetConversation() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = []agentcontext.Message{
+		{
+			Role:    agentcontext.RoleSystem,
+			Content: s.builder.BasePrompt(),
+		},
 	}
 }
 
-// switchProviderModel updates the session's model within the same provider.
-func (s *Session) switchProviderModel(ctx context.Context, providerName, model string) error {
+// SwitchProviderModel updates the session's model within the same provider.
+func (s *Session) SwitchProviderModel(ctx context.Context, providerName, model string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if providerName == "" || model == "" {
 		return fmt.Errorf("provider and model are required")
 	}
@@ -106,6 +97,9 @@ func (s *Session) switchProviderModel(ctx context.Context, providerName, model s
 	}
 	if s.meta.Provider != providerName {
 		return fmt.Errorf("changing provider requires creating a new session")
+	}
+	if s.meta.Model == model {
+		return nil
 	}
 
 	// Same provider: only update model
@@ -117,119 +111,6 @@ func (s *Session) switchProviderModel(ctx context.Context, providerName, model s
 	}
 	applog.Info("session model switched", applog.M("session_id", s.meta.ID, "model", model))
 	return nil
-}
-
-// runPersistence subscribes to all bus events and persists them.
-func (s *Session) runPersistence(ctx context.Context) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, ok := <-s.subPersist.Ch():
-			if !ok {
-				return
-			}
-			s.persistEvent(ctx, ev)
-		}
-	}
-}
-
-// persistEvent converts a bus event to a StoredEvent and appends to the store.
-func (s *Session) persistEvent(ctx context.Context, ev bus.Event) {
-	now := time.Now()
-
-	switch ev.Type {
-	case bus.EventAgentContentDelta:
-		// UI streaming event; persistence uses EventAgentContentFull.
-		return
-
-	case bus.EventAgentContentFull:
-		p := ev.Payload.(bus.ContentFullPayload)
-		content, err := json.Marshal(assistantContentPayload{Content: p.Content})
-		if err != nil {
-			applog.Error("session persist marshal error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAssistantContent, "error", err))
-			return
-		}
-		if err := s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAssistantContent, Content: content}); err != nil {
-			applog.Error("session persist append error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAssistantContent, "error", err))
-		}
-		return
-
-	case bus.EventAgentThinking:
-		p := ev.Payload.(bus.ThinkingPayload)
-		content, err := json.Marshal(p)
-		if err != nil {
-			applog.Error("session persist marshal error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAgentThinking, "error", err))
-			return
-		}
-		if err := s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAgentThinking, Content: content}); err != nil {
-			applog.Error("session persist append error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAgentThinking, "error", err))
-		}
-		return
-
-	case bus.EventAgentStepTokens:
-		p := ev.Payload.(bus.StepTokenUsagePayload)
-		content, err := json.Marshal(p)
-		if err != nil {
-			applog.Error("session persist marshal error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAgentStepTokens, "error", err))
-			return
-		}
-		if err := s.store.AppendEvent(ctx, StoredEvent{Timestamp: now, Type: StoredEventAgentStepTokens, Content: content}); err != nil {
-			applog.Error("session persist append error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAgentStepTokens, "error", err))
-		}
-		return
-
-	case bus.EventAgentToolCallStart:
-		p := ev.Payload.(bus.ToolCallStartPayload)
-		content, err := json.Marshal(toolCallContent{
-			ToolCallID: p.ToolCallID,
-			ToolName:   p.ToolName,
-			ToolArgs:   p.ToolArgs,
-		})
-		if err != nil {
-			applog.Error("session persist marshal error", applog.M("session_id", s.meta.ID, "event_type", StoredEventToolCall, "error", err))
-			return
-		}
-		evt := StoredEvent{Timestamp: now, Type: StoredEventToolCall, Content: content}
-		if err := s.store.AppendEvent(ctx, evt); err != nil {
-			applog.Error("session persist append error", applog.M("session_id", s.meta.ID, "event_type", StoredEventToolCall, "error", err))
-		}
-		return
-
-	case bus.EventAgentToolCallDone:
-		p := ev.Payload.(bus.ToolCallDonePayload)
-		content, err := json.Marshal(toolResultContent{
-			ToolCallID: p.ToolCallID,
-			ToolName:   p.ToolName,
-			ToolResult: p.ToolResult,
-		})
-		if err != nil {
-			applog.Error("session persist marshal error", applog.M("session_id", s.meta.ID, "event_type", StoredEventToolResult, "error", err))
-			return
-		}
-		evt := StoredEvent{Timestamp: now, Type: StoredEventToolResult, Content: content}
-		if err := s.store.AppendEvent(ctx, evt); err != nil {
-			applog.Error("session persist append error", applog.M("session_id", s.meta.ID, "event_type", StoredEventToolResult, "error", err))
-		}
-		return
-
-	case bus.EventAgentDone:
-		p := ev.Payload.(bus.AgentDonePayload)
-		doneContent, err := json.Marshal(map[string]int64{
-			"prompt_tokens":     p.PromptTokens,
-			"completion_tokens": p.CompletionTokens,
-			"total_tokens":      p.TotalTokens,
-		})
-		if err != nil {
-			applog.Error("session persist marshal error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAgentDone, "error", err))
-			return
-		}
-		evt := StoredEvent{Timestamp: now, Type: StoredEventAgentDone, Content: doneContent}
-		if err := s.store.AppendEvent(ctx, evt); err != nil {
-			applog.Error("session persist append error", applog.M("session_id", s.meta.ID, "event_type", StoredEventAgentDone, "error", err))
-		}
-		return
-	}
 }
 
 func (s *Session) appendUserMessage(ctx context.Context, userMessage string) error {
@@ -248,13 +129,9 @@ func (s *Session) appendUserMessage(ctx context.Context, userMessage string) err
 func (s *Session) Close() error {
 	sessionID := s.meta.ID
 	applog.Debug("session close start", applog.M("session_id", sessionID))
-	if s.subPersist != nil {
-		s.bus.Unsubscribe(s.subPersist)
-		s.subPersist = nil
-	}
-	if s.subControl != nil {
-		s.bus.Unsubscribe(s.subControl)
-		s.subControl = nil
+	if s.persister != nil {
+		s.persister.Close()
+		s.persister = nil
 	}
 	s.agent = nil
 	if s.store != nil {
