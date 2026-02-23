@@ -199,16 +199,12 @@ func (s *Server) handleSessionRoutes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSessionMessages(w http.ResponseWriter, r *http.Request, sessionID string) {
-	events, err := s.sessionManager.LoadEvents(r.Context(), sessionID)
+	storedMessages, err := s.sessionManager.LoadMessages(r.Context(), sessionID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "session not found")
 		return
 	}
-	messages, err := toTimelineMessages(events)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "decode session messages failed")
-		return
-	}
+	messages := toTimelineMessages(storedMessages)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id": sessionID,
 		"messages":   messages,

@@ -49,7 +49,7 @@ func (l *LLM) MaxIterations() int {
 
 // Run executes one LLM operation: reset, restore, or user-message turn.
 func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
-	messages := append([]agentcontext.Message{}, req.Context.Messages...)
+	messages := append([]agentcontext.Message{}, req.Messages...)
 	if len(messages) == 0 {
 		return RunResult{}, nil
 	}

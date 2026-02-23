@@ -96,7 +96,7 @@ type Provider interface {
 
 // RunRequest configures a single run invocation.
 type RunRequest struct {
-	Context agentcontext.RunContext
+	Messages []agentcontext.Message
 }
 
 // RunResult returns the updated messages after the loop.

@@ -1,11 +1,11 @@
 package web
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
 	"valinor/internal/bus"
+	agentcontext "valinor/internal/context"
 	"valinor/internal/session"
 )
 
@@ -200,72 +200,41 @@ func toBusEventDTO(ev bus.Event) (BusEventDTO, error) {
 	}
 }
 
-type storedUserMessageContent struct {
-	Content string `json:"content"`
-}
-
-type storedToolCallContent struct {
-	ToolCallID string `json:"tool_call_id"`
-	ToolName   string `json:"tool_name"`
-	ToolArgs   string `json:"tool_args"`
-}
-
-type storedToolResultContent struct {
-	ToolCallID string `json:"tool_call_id"`
-	ToolResult string `json:"tool_result"`
-}
-
-type storedAssistantContent struct {
-	Content string `json:"content"`
-}
-
-func toTimelineMessages(events []session.StoredEvent) ([]TimelineMessageDTO, error) {
+func toTimelineMessages(storedMessages []agentcontext.Message) []TimelineMessageDTO {
 	messages := make([]TimelineMessageDTO, 0)
-	for _, evt := range events {
-		switch evt.Type {
-		case session.StoredEventUserMessage:
-			var c storedUserMessageContent
-			if err := json.Unmarshal(evt.Content, &c); err != nil {
-				return nil, fmt.Errorf("decode user message: %w", err)
-			}
+	for _, msg := range storedMessages {
+		switch msg.Role {
+		case agentcontext.RoleSystem:
+			// System prompt is not part of the timeline UI.
+		case agentcontext.RoleUser:
 			messages = append(messages, TimelineMessageDTO{
 				Role:    "user",
-				Content: c.Content,
+				Content: msg.Content,
 			})
-		case session.StoredEventToolCall:
-			var c storedToolCallContent
-			if err := json.Unmarshal(evt.Content, &c); err != nil {
-				return nil, fmt.Errorf("decode tool call: %w", err)
-			}
+		case agentcontext.RoleAssistant:
 			assistant := ensureAssistantMessage(&messages)
-			assistant.ToolCalls = append(assistant.ToolCalls, ToolCallDTO{
-				ID:   c.ToolCallID,
-				Name: c.ToolName,
-				Args: c.ToolArgs,
-			})
-		case session.StoredEventToolResult:
-			var c storedToolResultContent
-			if err := json.Unmarshal(evt.Content, &c); err != nil {
-				return nil, fmt.Errorf("decode tool result: %w", err)
+			assistant.Content = msg.Content
+		case agentcontext.RoleAssistantToolCalls:
+			assistant := ensureAssistantMessage(&messages)
+			for _, tc := range msg.ToolCalls {
+				assistant.ToolCalls = append(assistant.ToolCalls, ToolCallDTO{
+					ID:   tc.ID,
+					Name: tc.Name,
+					Args: tc.Arguments,
+				})
 			}
+		case agentcontext.RoleTool:
 			assistant := ensureAssistantMessage(&messages)
 			for i := range assistant.ToolCalls {
-				if assistant.ToolCalls[i].ID == c.ToolCallID && !assistant.ToolCalls[i].Done {
-					assistant.ToolCalls[i].Result = c.ToolResult
+				if assistant.ToolCalls[i].ID == msg.ToolCallID && !assistant.ToolCalls[i].Done {
+					assistant.ToolCalls[i].Result = msg.Content
 					assistant.ToolCalls[i].Done = true
 					break
 				}
 			}
-		case session.StoredEventAssistantContent:
-			var c storedAssistantContent
-			if err := json.Unmarshal(evt.Content, &c); err != nil {
-				return nil, fmt.Errorf("decode assistant content: %w", err)
-			}
-			assistant := ensureAssistantMessage(&messages)
-			assistant.Content = c.Content
 		}
 	}
-	return messages, nil
+	return messages
 }
 
 func ensureAssistantMessage(messages *[]TimelineMessageDTO) *TimelineMessageDTO {
