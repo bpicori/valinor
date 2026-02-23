@@ -9,6 +9,7 @@ const (
 	EventNewConversation                      // User requested /new or /clear.
 	EventChangeProviderModel                  // User changed model for the session (same provider only).
 	EventCreateNewSession                     // User requested new session with different provider.
+	EventCancelAgentRun                       // User requested cancellation of in-flight agent run.
 
 	// Agent streaming events (published by Agent).
 	EventAgentContentDelta  // Streamed content chunk.
@@ -21,6 +22,7 @@ const (
 	EventAgentToolCallDone  // Tool call completed.
 	EventAgentDone          // Agent turn finished.
 	EventAgentError         // Agent error.
+	EventAgentCancelled     // Agent run was cancelled by user.
 )
 
 // Event is a bus message with a typed payload.
@@ -108,3 +110,6 @@ type ContextTokensPayload struct {
 type AgentErrorPayload struct {
 	Error error
 }
+
+// AgentCancelledPayload indicates the agent run was cancelled by the user.
+type AgentCancelledPayload struct{}

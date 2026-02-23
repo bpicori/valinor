@@ -208,6 +208,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
 	if m.state == stateModelPicker {
 		return m.handleModelPickerKey(msg)
 	}
+	if m.state == stateWaiting {
+		if msg.String() == "esc" {
+			m.bus.Publish(bus.Event{Type: bus.EventCancelAgentRun})
+			return m, nil, true, false
+		}
+		return m, nil, false, false
+	}
 	if m.state != stateReady {
 		return m, nil, false, false
 	}
@@ -430,6 +437,8 @@ func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.handleAgentError(last, payload)
+	case bus.EventAgentCancelled:
+		return m, m.handleAgentCancelled(last)
 	default:
 		return m, nil
 	}
@@ -514,6 +523,14 @@ func (m *Model) handleAgentError(last *chatMessage, payload bus.AgentErrorPayloa
 	applog.Error("tui agent error", applog.M("error", payload.Error))
 	last.Streaming = false
 	last.Error = payload.Error.Error()
+	m.state = stateReady
+	m.rebuildViewportContent()
+	return nil
+}
+
+func (m *Model) handleAgentCancelled(last *chatMessage) tea.Cmd {
+	last.Streaming = false
+	last.Rendered = renderMarkdown(last.Content, m.width-4)
 	m.state = stateReady
 	m.rebuildViewportContent()
 	return nil

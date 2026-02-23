@@ -17,11 +17,13 @@ type Runtime struct {
 	createConfig CreateOptions
 	bus          *bus.Bus
 
-	mu         sync.Mutex
-	active     *Session
-	activeStop context.CancelFunc
-	subCommand *bus.Subscription
-	wg         sync.WaitGroup
+	mu            sync.Mutex
+	active        *Session
+	activeStop    context.CancelFunc
+	runCancel     context.CancelFunc
+	runInProgress bool
+	subCommand    *bus.Subscription
+	wg            sync.WaitGroup
 
 	runtimeCtx    context.Context
 	runtimeCancel context.CancelFunc
@@ -66,6 +68,7 @@ func (r *Runtime) Start() {
 		bus.EventNewConversation,
 		bus.EventChangeProviderModel,
 		bus.EventCreateNewSession,
+		bus.EventCancelAgentRun,
 	)
 	r.startActiveSessionLocked()
 	r.publishActiveContextTokens()
@@ -120,6 +123,8 @@ func (r *Runtime) handleCommandEvent(ev bus.Event) {
 		if _, err := r.HandleCreateSessionRequest(payload.Provider, payload.Model); err != nil {
 			applog.Error("session runtime create-session command failed", applog.M("provider", payload.Provider, "model", payload.Model, "error", err))
 		}
+	case bus.EventCancelAgentRun:
+		r.cancelCurrentRun()
 	}
 }
 
@@ -135,9 +140,39 @@ func (r *Runtime) handleUserMessage(content string) error {
 	}
 	active := r.active
 	runtimeCtx := r.runtimeCtx
+
+	// Cancel any existing run before starting a new one
+	if r.runCancel != nil {
+		r.runCancel()
+	}
+
+	runCtx, runCancel := context.WithCancel(runtimeCtx)
+	r.runCancel = runCancel
+	r.runInProgress = true
 	r.mu.Unlock()
 
-	return active.HandleUserMessage(runtimeCtx, content)
+	r.wg.Go(func() {
+		defer func() {
+			r.mu.Lock()
+			r.runCancel = nil
+			r.runInProgress = false
+			r.mu.Unlock()
+		}()
+
+		if err := active.HandleUserMessage(runCtx, content); err != nil {
+			if runCtx.Err() == context.Canceled {
+				applog.Info("session runtime user message cancelled", nil)
+				r.bus.Publish(bus.Event{
+					Type:    bus.EventAgentCancelled,
+					Payload: bus.AgentCancelledPayload{},
+				})
+				return
+			}
+			applog.Error("session runtime user message command failed", applog.M("error", err))
+		}
+	})
+
+	return nil
 }
 
 func (r *Runtime) handleNewConversation() {
@@ -166,6 +201,15 @@ func (r *Runtime) handleChangeProviderModel(provider, model string) error {
 	r.mu.Unlock()
 
 	return active.SwitchProviderModel(runtimeCtx, provider, model)
+}
+
+func (r *Runtime) cancelCurrentRun() {
+	r.mu.Lock()
+	if r.runCancel != nil {
+		r.runCancel()
+		r.runCancel = nil
+	}
+	r.mu.Unlock()
 }
 
 // HandleCreateSessionRequest handles provider/model changes initiated by UI or web handlers.
@@ -245,6 +289,11 @@ func (r *Runtime) Close() {
 	if r.subCommand != nil {
 		r.bus.Unsubscribe(r.subCommand)
 		r.subCommand = nil
+	}
+	// Cancel any in-flight run before shutting down
+	if r.runCancel != nil {
+		r.runCancel()
+		r.runCancel = nil
 	}
 	if r.runtimeCancel != nil {
 		r.runtimeCancel()

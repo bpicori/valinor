@@ -17,10 +17,12 @@ var (
 			Bold(true)
 
 	userMessageBlockStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("235")).
 				Border(lipgloss.ThickBorder(), false, false, false, true).
-				BorderForeground(lipgloss.Color("69")).
-				Padding(0, 1).
-				Margin(0, 0, 1, 0)
+				BorderBackground(lipgloss.Color("235")).
+				Padding(1, 1).
+				Margin(0, 0, 1, 0).
+				Align(lipgloss.Left, lipgloss.Center)
 
 	assistantMessageBlockStyle = lipgloss.NewStyle().
 					Padding(0, 1).

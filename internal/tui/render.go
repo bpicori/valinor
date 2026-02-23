@@ -109,7 +109,8 @@ func (m *Model) rebuildViewportContent() {
 }
 
 func renderUserMessageBlock(msg chatMessage, width int) string {
-	body := userPrefixStyle.Render("> ") + msg.Content
+	contentStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
+	body := userPrefixStyle.Render("> ") + contentStyle.Render(msg.Content)
 	return userMessageBlockStyle.Width(width - 4).Render(body)
 }
 
@@ -172,7 +173,9 @@ func (m Model) View() string {
 	spinnerLine := ""
 	if m.state == stateWaiting {
 		elapsed := int(time.Since(m.thinkingStartedAt).Seconds())
-		spinnerLine = spinnerStyle.Render(m.spinner.View()) + " Thinking... " + strconv.Itoa(elapsed) + "s\n"
+		spinnerLine = spinnerStyle.Render(m.spinner.View()) + " Thinking... " + strconv.Itoa(elapsed) + "s"
+		cancelHint := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" (esc to cancel)")
+		spinnerLine = spinnerLine + cancelHint + "\n"
 	}
 
 	inputBox := inputBorderStyle.Width(m.contentWidth - 2).Render(m.textinput.View())

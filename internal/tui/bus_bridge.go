@@ -28,6 +28,7 @@ func StartBusBridge(ctx context.Context, p *tea.Program, b *bus.Bus) *bus.Subscr
 		bus.EventAgentToolCallDone,
 		bus.EventAgentDone,
 		bus.EventAgentError,
+		bus.EventAgentCancelled,
 	)
 
 	go func() {

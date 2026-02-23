@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"valinor/internal/applog"
@@ -58,6 +59,19 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	iterations := 0
 
 	for {
+		// Check for cancellation before each iteration
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.Canceled) {
+				applog.Info("llm run cancelled by user", nil)
+				l.bus.Publish(bus.Event{
+					Type:    bus.EventAgentCancelled,
+					Payload: bus.AgentCancelledPayload{},
+				})
+				return RunResult{Messages: messages}, nil
+			}
+			return RunResult{}, err
+		}
+
 		if iterations >= l.maxIterations {
 			l.bus.Publish(bus.Event{
 				Type: bus.EventAgentError,
@@ -87,6 +101,15 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Model:    l.model,
 		})
 		if err != nil {
+			// Handle user cancellation gracefully
+			if errors.Is(err, context.Canceled) {
+				applog.Info("llm stream cancelled by user", nil)
+				l.bus.Publish(bus.Event{
+					Type:    bus.EventAgentCancelled,
+					Payload: bus.AgentCancelledPayload{},
+				})
+				return RunResult{Messages: messages}, nil
+			}
 			applog.Error("llm stream error", applog.M("error", err))
 			l.bus.Publish(bus.Event{
 				Type:    bus.EventAgentError,
