@@ -186,20 +186,20 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
 	applog.Info("starting valinor in tui mode", nil)
 	applog.Info("logging to file", applog.M("log_path", logPath))
 
-	// Create TUI model and program
-	// Note: We still need bus for now because tui.Model expects it
-	// In a future refactoring, we can remove this dependency
-	b := bus.New()
-	model := tui.New(b, cfg, cfg.DefaultProvider, "")
+	// Create WebSocket bridge first
+	applog.Info("connecting to gateway", applog.M("url", gatewayURL))
+	wsBridge := tui.NewWSBridge(gatewayURL)
+
+	// Create TUI model with the bridge as command sender
+	model := tui.New(wsBridge, cfg, cfg.DefaultProvider, "")
+
+	// Create Bubble Tea program with the model
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
 
-	// Connect TUI via WebSocket to gateway
-	applog.Info("connecting to gateway", applog.M("url", gatewayURL))
-
-	wsBridge := tui.NewWSBridge(gatewayURL)
+	// Start the bridge with the program for message forwarding
 	if err := wsBridge.Start(ctx, p); err != nil {
 		return fmt.Errorf("connect to gateway: %w", err)
 	}

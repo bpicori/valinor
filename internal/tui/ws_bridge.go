@@ -353,6 +353,14 @@ func (b *WSBridge) SendChangeProviderModel(provider, model string) bool {
 	})
 }
 
+// SendCreateNewSession sends a create new session command.
+func (b *WSBridge) SendCreateNewSession(provider, model string) bool {
+	return b.SendCommand(router.CommandCreateNewSession, router.CreateNewSessionPayload{
+		Provider: provider,
+		Model:    model,
+	})
+}
+
 // SendCancelAgentRun sends a cancel agent run command.
 func (b *WSBridge) SendCancelAgentRun() bool {
 	return b.SendCommand(router.CommandCancelAgentRun, nil)
@@ -407,6 +415,17 @@ func ParseWSEvent(msg wsEventMsg) (router.Event, error) {
 
 	case router.EventContextTokens:
 		var p router.ContextTokensPayload
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			return event, err
+		}
+		event.Payload = p
+
+	case router.EventNewConversation:
+		// No payload for new conversation
+		event.Payload = nil
+
+	case router.EventChangeProviderModel:
+		var p router.ChangeProviderModelPayload
 		if err := json.Unmarshal(msg.Payload, &p); err != nil {
 			return event, err
 		}

@@ -173,8 +173,11 @@ func transportTypes(transports []TransportType) (bool, bool) {
 	hasFile := false
 	hasStdout := false
 	for _, t := range transports {
-		if t == TransportFile {
+		switch t {
+		case TransportFile:
 			hasFile = true
+		case TransportStdout:
+			hasStdout = true
 		}
 	}
 	return hasFile, hasStdout

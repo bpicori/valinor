@@ -187,6 +187,16 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 		}
 		cmd.Payload = p
 
+	case router.CommandCreateNewSession:
+		var p router.CreateNewSessionPayload
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			return nil, fmt.Errorf("invalid create_new_session payload: %w", err)
+		}
+		if p.Provider == "" || p.Model == "" {
+			return nil, fmt.Errorf("create_new_session requires 'provider' and 'model' fields")
+		}
+		cmd.Payload = p
+
 	case router.CommandNewConversation, router.CommandCancelAgentRun:
 		// These commands have no payload
 		cmd.Payload = nil

@@ -69,26 +69,29 @@ const HandshakeKind = "handshake"
 
 // Command types (client -> router).
 const (
-	CommandUserMessage        = "user_message"
-	CommandNewConversation    = "new_conversation"
+	CommandUserMessage         = "user_message"
+	CommandNewConversation     = "new_conversation"
 	CommandChangeProviderModel = "change_provider_model"
-	CommandCancelAgentRun     = "cancel_agent_run"
+	CommandCreateNewSession    = "create_new_session"
+	CommandCancelAgentRun      = "cancel_agent_run"
 )
 
 // Event types (router -> client).
 const (
-	EventAgentContentDelta   = "agent_content_delta"
-	EventAgentContentFull    = "agent_content_full"
-	EventAgentThinking       = "agent_thinking"
-	EventAgentStepTokens     = "agent_step_tokens"
-	EventContextTokens       = "context_tokens"
-	EventAgentRefusal        = "agent_refusal"
-	EventAgentToolCallStart  = "agent_tool_call_start"
-	EventAgentToolCallDone   = "agent_tool_call_done"
-	EventAgentDone           = "agent_done"
-	EventAgentError          = "agent_error"
-	EventAgentCancelled      = "agent_cancelled"
-	EventSessionAttached     = "session_attached"
+	EventAgentContentDelta    = "agent_content_delta"
+	EventAgentContentFull     = "agent_content_full"
+	EventAgentThinking        = "agent_thinking"
+	EventAgentStepTokens      = "agent_step_tokens"
+	EventContextTokens        = "context_tokens"
+	EventAgentRefusal         = "agent_refusal"
+	EventAgentToolCallStart   = "agent_tool_call_start"
+	EventAgentToolCallDone    = "agent_tool_call_done"
+	EventAgentDone            = "agent_done"
+	EventAgentError           = "agent_error"
+	EventAgentCancelled       = "agent_cancelled"
+	EventSessionAttached      = "session_attached"
+	EventNewConversation      = "new_conversation"
+	EventChangeProviderModel  = "change_provider_model"
 )
 
 // Handshake types.
@@ -125,6 +128,12 @@ type UserMessagePayload struct {
 
 // ChangeProviderModelPayload carries provider/model change request.
 type ChangeProviderModelPayload struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
+// CreateNewSessionPayload carries provider and model for creating a new session.
+type CreateNewSessionPayload struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
 }
@@ -403,6 +412,14 @@ func CommandFromBusEvent(be bus.Event, identity ClientIdentity) Command {
 		cmd.Type = CommandChangeProviderModel
 		if p, ok := be.Payload.(bus.ChangeProviderModelPayload); ok {
 			cmd.Payload = ChangeProviderModelPayload{
+				Provider: p.Provider,
+				Model:    p.Model,
+			}
+		}
+	case bus.EventCreateNewSession:
+		cmd.Type = CommandCreateNewSession
+		if p, ok := be.Payload.(bus.CreateNewSessionPayload); ok {
+			cmd.Payload = CreateNewSessionPayload{
 				Provider: p.Provider,
 				Model:    p.Model,
 			}

@@ -284,6 +284,16 @@ func (r *DefaultRouter) commandToBusEvent(cmd Command) bus.Event {
 				},
 			}
 		}
+	case CommandCreateNewSession:
+		if p, ok := cmd.Payload.(CreateNewSessionPayload); ok {
+			return bus.Event{
+				Type: bus.EventCreateNewSession,
+				Payload: bus.CreateNewSessionPayload{
+					Provider: p.Provider,
+					Model:    p.Model,
+				},
+			}
+		}
 	case CommandCancelAgentRun:
 		return bus.Event{
 			Type: bus.EventCancelAgentRun,
