@@ -124,12 +124,21 @@ func (s *Server) Stop() error {
 		s.cancel()
 	}
 
-	// Close all connections
+	// Copy connection set while holding the lock, then close outside the lock.
+	// conn.Close() calls back into server.removeConnection(), so closing while
+	// holding s.mu can deadlock.
+	connections := make([]*ClientConnection, 0, len(s.connections))
 	for conn := range s.connections {
-		conn.Close()
+		connections = append(connections, conn)
 	}
 	s.connections = make(map[*ClientConnection]bool)
+	s.started = false
 	s.mu.Unlock()
+
+	// Close all active client connections.
+	for _, conn := range connections {
+		conn.Close()
+	}
 
 	// Shutdown HTTP server with timeout
 	if s.server != nil {

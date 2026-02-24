@@ -288,9 +288,7 @@ func (c *ClientConnection) SendEvent(event router.Event) bool {
 // sendError sends an error response to the client.
 func (c *ClientConnection) sendError(errorType, errorMsg, requestID string) {
 	env := CreateErrorEnvelope(errorType, errorMsg, requestID)
-	select {
-	case c.outgoing <- env:
-	case <-time.After(WriteTimeout):
+	if !c.enqueueEnvelope(env, WriteTimeout) {
 		applog.Warning("gateway: failed to send error (timeout)",
 			applog.M("error_type", errorType, "identity", c.getIdentityKey()))
 	}
@@ -299,10 +297,21 @@ func (c *ClientConnection) sendError(errorType, errorMsg, requestID string) {
 // sendHandshakeResponse sends a hello_ack response.
 func (c *ClientConnection) sendHandshakeResponse(success bool, errorMsg, sessionKey, provider, model string, contextTokens int64, estimated bool) {
 	env := CreateHandshakeResponse(success, errorMsg, sessionKey, provider, model, contextTokens, estimated)
-	c.conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
-	if err := c.conn.WriteJSON(env); err != nil {
+	if !c.enqueueEnvelope(env, WriteTimeout) {
 		applog.Warning("gateway: failed to send handshake response",
-			applog.M("error", err))
+			applog.M("identity", c.getIdentityKey()))
+	}
+}
+
+// enqueueEnvelope queues an outgoing envelope with timeout protection.
+func (c *ClientConnection) enqueueEnvelope(env *WireEnvelope, timeout time.Duration) bool {
+	select {
+	case <-c.ctx.Done():
+		return false
+	case c.outgoing <- env:
+		return true
+	case <-time.After(timeout):
+		return false
 	}
 }
 

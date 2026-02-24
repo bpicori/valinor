@@ -92,6 +92,11 @@ func (b *WSBridge) Stop() {
 	b.closeOnce.Do(func() {
 		applog.Debug("tui ws bridge: stopping", nil)
 
+		// Mark as closed first so goroutines know to exit
+		b.mu.Lock()
+		b.closed = true
+		b.mu.Unlock()
+
 		b.cancel()
 
 		if b.conn != nil {
@@ -147,19 +152,32 @@ func (b *WSBridge) connect() error {
 		return fmt.Errorf("send client_hello: %w", err)
 	}
 
-	// Wait for hello_ack with timeout
+	// Wait for hello_ack with timeout.
+	// The gateway can emit early events during subscribe, so we keep reading
+	// until hello_ack arrives (or the read deadline expires).
 	b.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var ack gateway.WireEnvelope
-	if err := b.conn.ReadJSON(&ack); err != nil {
-		conn.Close()
-		return fmt.Errorf("read hello_ack: %w", err)
+	for {
+		var env gateway.WireEnvelope
+		if err := b.conn.ReadJSON(&env); err != nil {
+			conn.Close()
+			return fmt.Errorf("read hello_ack: %w", err)
+		}
+
+		if env.Kind == gateway.KindHandshake && env.Type == router.HandshakeHelloAck {
+			ack = env
+			break
+		}
+
+		if env.Kind == gateway.KindError {
+			conn.Close()
+			return fmt.Errorf("gateway handshake error (%s): %s", env.Type, env.Error)
+		}
+
+		applog.Debug("tui ws bridge: skipping pre-ack frame",
+			applog.M("kind", env.Kind, "type", env.Type))
 	}
 	b.conn.SetReadDeadline(time.Time{}) // Clear deadline
-
-	if ack.Kind != gateway.KindHandshake || ack.Type != router.HandshakeHelloAck {
-		conn.Close()
-		return fmt.Errorf("expected hello_ack, got %s/%s", ack.Kind, ack.Type)
-	}
 
 	// Parse ack payload
 	var ackPayload router.HelloAckPayload

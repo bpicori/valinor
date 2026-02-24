@@ -397,9 +397,20 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 		return m.handleModelCommand(input)
 	}
 
+	m.messages = append(m.messages, chatMessage{Role: roleUser, Content: input})
+	m.messages = append(m.messages, chatMessage{Role: roleAssistant, Streaming: true})
 	m.state = stateWaiting
 	m.thinkingStartedAt = time.Now()
-	m.sender.SendUserMessage(input)
+	m.rebuildViewportContent()
+	if !m.sender.SendUserMessage(input) {
+		if last, ok := m.lastMessage(); ok {
+			last.Streaming = false
+			last.Error = "failed to send message to gateway"
+		}
+		m.state = stateReady
+		m.rebuildViewportContent()
+		return m, nil, true, false
+	}
 	return m, tea.Batch(m.spinner.Tick), true, false
 }
 
@@ -528,6 +539,12 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.handleContentDelta(last, payload)
+	case router.EventAgentContentFull:
+		payload, ok := event.Payload.(router.ContentFullPayload)
+		if !ok {
+			return m, nil
+		}
+		return m, m.handleContentFull(last, payload)
 	case router.EventAgentRefusal:
 		payload, ok := event.Payload.(router.RefusalPayload)
 		if !ok {
@@ -658,6 +675,12 @@ func (m *Model) lastMessage() (*chatMessage, bool) {
 
 func (m *Model) handleContentDelta(last *chatMessage, payload router.ContentDeltaPayload) tea.Cmd {
 	last.Content += payload.Content
+	m.rebuildViewportContent()
+	return nil
+}
+
+func (m *Model) handleContentFull(last *chatMessage, payload router.ContentFullPayload) tea.Cmd {
+	last.Content = payload.Content
 	m.rebuildViewportContent()
 	return nil
 }

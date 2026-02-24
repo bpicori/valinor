@@ -157,7 +157,9 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("gateway server: %w", err)
 	}
 
-	applog.Info("gateway server stopped", nil)
+	if err := gw.Stop(); err != nil {
+		return fmt.Errorf("stop gateway server: %w", err)
+	}
 	return nil
 }
 
