@@ -42,11 +42,11 @@ type Router interface {
 
 // DefaultRouter implements the Router interface, bridging clients to the session core.
 type DefaultRouter struct {
-	bus          *bus.Bus
-	runtime      *session.Runtime
-	manager      *session.Manager
-	createConfig session.CreateOptions
-	identityMap  *session.IdentityMapStore
+	bus         *bus.Bus
+	runtime     *session.Runtime
+	manager     *session.Manager
+	sessionOpts session.SessionOptions
+	identityMap *session.IdentityMapStore
 
 	registry *SessionRegistry
 
@@ -65,17 +65,17 @@ func NewRouter(
 	b *bus.Bus,
 	runtime *session.Runtime,
 	manager *session.Manager,
-	createConfig session.CreateOptions,
+	sessionOpts session.SessionOptions,
 	identityMap *session.IdentityMapStore,
 ) *DefaultRouter {
 	return &DefaultRouter{
-		bus:          b,
-		runtime:      runtime,
-		manager:      manager,
-		createConfig: createConfig,
-		identityMap:  identityMap,
-		registry:     NewSessionRegistry(),
-		clientSinks:  make(map[string]ClientEventSink),
+		bus:         b,
+		runtime:     runtime,
+		manager:     manager,
+		sessionOpts: sessionOpts,
+		identityMap: identityMap,
+		registry:    NewSessionRegistry(),
+		clientSinks: make(map[string]ClientEventSink),
 	}
 }
 
@@ -303,7 +303,7 @@ func (r *DefaultRouter) getOrCreateSessionForIdentity(ctx context.Context, ident
 	if r.identityMap != nil {
 		if mapping := r.identityMap.Get(key); mapping != nil {
 			// Try to resume the existing session
-			sess, err := r.manager.Resume(ctx, mapping.SessionID, r.createConfig)
+			sess, err := r.manager.Resume(ctx, mapping.SessionID, r.sessionOpts)
 			if err == nil {
 				applog.Info("router: resumed session from identity map",
 					applog.M("identity_key", key, "session_id", mapping.SessionID))
@@ -317,7 +317,7 @@ func (r *DefaultRouter) getOrCreateSessionForIdentity(ctx context.Context, ident
 	}
 
 	// Create a new session
-	sess, err := r.manager.Create(ctx, r.createConfig)
+	sess, err := r.manager.Create(ctx, r.sessionOpts)
 	if err != nil {
 		return nil, false, fmt.Errorf("manager create session: %w", err)
 	}

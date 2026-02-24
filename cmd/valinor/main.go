@@ -96,7 +96,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	sm := session.NewManager(sessionsDir, workspaceDir, cfg)
 
 	// Create initial session
-	createCfg := session.CreateOptions{
+	sessionOpts := session.SessionOptions{
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}
@@ -108,7 +108,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 	if len(sessions) > 0 {
 		latestSession := sessions[0]
-		sess, err = sm.Resume(context.Background(), latestSession.ID, createCfg)
+		sess, err = sm.Resume(context.Background(), latestSession.ID, sessionOpts)
 		if err != nil {
 			applog.Warning("resume latest session failed", applog.M("session_id", latestSession.ID, "error", err))
 		} else {
@@ -116,7 +116,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		}
 	}
 	if sess == nil {
-		sess, err = sm.Create(context.Background(), createCfg)
+		sess, err = sm.Create(context.Background(), sessionOpts)
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
 		}
@@ -124,7 +124,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 
 	// Start session runtime
-	runtime := session.NewRuntime(ctx, sm, createCfg, sess, b, nil)
+	runtime := session.NewRuntime(ctx, sm, sessionOpts, sess, b, nil)
 	runtime.Start()
 	defer runtime.Close()
 
@@ -137,7 +137,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 
 	// Create router
-	rtr := router.NewRouter(b, runtime, sm, createCfg, identityMap)
+	rtr := router.NewRouter(b, runtime, sm, sessionOpts, identityMap)
 	rtr.Start(ctx)
 	defer rtr.Stop()
 

@@ -15,7 +15,7 @@ import (
 type Runtime struct {
 	ctx          context.Context
 	manager      *Manager
-	createConfig CreateOptions
+	sessionOpts  SessionOptions
 	bus          *bus.Bus
 
 	mu            sync.Mutex
@@ -38,7 +38,7 @@ type Runtime struct {
 func NewRuntime(
 	ctx context.Context,
 	manager *Manager,
-	createConfig CreateOptions,
+	sessionOpts SessionOptions,
 	initial *Session,
 	eventBus *bus.Bus,
 	onActiveSessionChanged func(string),
@@ -46,7 +46,7 @@ func NewRuntime(
 	return &Runtime{
 		ctx:                    ctx,
 		manager:                manager,
-		createConfig:           createConfig,
+		sessionOpts:            sessionOpts,
 		bus:                    eventBus,
 		active:                 initial,
 		onActiveSessionChanged: onActiveSessionChanged,
@@ -275,7 +275,7 @@ func (r *Runtime) HandleCreateSessionRequest(provider, model string) (string, er
 	}
 	active := r.active
 	runtimeCtx := r.runtimeCtx
-	createCfg := r.createConfig
+	opts := r.sessionOpts
 	r.mu.Unlock()
 
 	provider, model, err := r.manager.config.ResolveProviderModel(provider, model)
@@ -290,10 +290,10 @@ func (r *Runtime) HandleCreateSessionRequest(provider, model string) (string, er
 		return active.Meta().ID, nil
 	}
 
-	newConfig := createCfg
-	newConfig.Provider = provider
-	newConfig.Model = model
-	newSession, err := r.manager.Create(r.ctx, newConfig)
+	newOpts := opts
+	newOpts.Provider = provider
+	newOpts.Model = model
+	newSession, err := r.manager.Create(r.ctx, newOpts)
 	if err != nil {
 		return "", fmt.Errorf("create session for provider '%s' model '%s': %w", provider, model, err)
 	}

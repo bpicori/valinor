@@ -20,8 +20,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// CreateOptions holds parameters for creating/resuming a session.
-type CreateOptions struct {
+// SessionOptions holds parameters for creating/resuming a session.
+type SessionOptions struct {
 	Bus                *bus.Bus
 	MaxAgentIterations int
 	// Provider and Model override manager config defaults when set.
@@ -48,8 +48,8 @@ func NewManager(sessionDir, workspaceDir string, cfg config.Config) *Manager {
 
 // Create creates a new session with a fresh agent and empty transcript.
 // Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
-func (m *Manager) Create(ctx context.Context, cfg CreateOptions) (*Session, error) {
-	providerName, model, err := m.config.ResolveProviderModel(cfg.Provider, cfg.Model)
+func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, error) {
+	providerName, model, err := m.config.ResolveProviderModel(opts.Provider, opts.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +89,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateOptions) (*Session, erro
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	ag, err := buildAgent(workspaceDir, providerCfg, model, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := buildAgent(workspaceDir, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session create agent error", applog.M("session_id", id, "model", model, "error", err))
@@ -113,7 +113,7 @@ func (m *Manager) Create(ctx context.Context, cfg CreateOptions) (*Session, erro
 }
 
 // Resume loads an existing session from storage and restores the agent's message history.
-func (m *Manager) Resume(ctx context.Context, id string, cfg CreateOptions) (*Session, error) {
+func (m *Manager) Resume(ctx context.Context, id string, opts SessionOptions) (*Session, error) {
 	dir := filepath.Join(m.sessionDir, id)
 	applog.Debug("session resume start", applog.M("session_id", id))
 	store, err := NewJSONLStore(dir)
@@ -164,7 +164,7 @@ func (m *Manager) Resume(ctx context.Context, id string, cfg CreateOptions) (*Se
 	}
 
 	msgs := normalizeSystemPrompt(messages, systemPrompt)
-	ag, err := buildAgent(workspaceDir, providerCfg, model, cfg.Bus, cfg.MaxAgentIterations)
+	ag, err := buildAgent(workspaceDir, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		applog.Error("session resume agent error", applog.M("session_id", id, "model", model, "error", err))

@@ -198,11 +198,3 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 	return cmd, nil
 }
 
-// MustMarshal marshals a value to JSON, panicking on error (for internal use only).
-func MustMarshal(v any) []byte {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal: %v", err))
-	}
-	return data
-}

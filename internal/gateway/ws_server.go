@@ -97,13 +97,11 @@ func (s *Server) Start(ctx context.Context) error {
 		applog.M("address", addr, "path", s.Path))
 
 	// Start server in a goroutine
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
+	s.wg.Go(func() {
 		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			applog.Error("gateway server error", applog.M("error", err))
 		}
-	}()
+	})
 
 	// Wait for context cancellation or server error
 	<-s.ctx.Done()
