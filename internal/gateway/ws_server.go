@@ -45,15 +45,6 @@ type Config struct {
 	Path string
 }
 
-// DefaultConfig returns the default gateway configuration.
-func DefaultConfig() Config {
-	return Config{
-		Host: "127.0.0.1",
-		Port: 7778, // Different from web server port (7777)
-		Path: "/ws",
-	}
-}
-
 // NewServer creates a new WebSocket gateway server.
 func NewServer(cfg Config, r router.Router) *Server {
 	return &Server{

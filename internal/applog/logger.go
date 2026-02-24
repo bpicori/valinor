@@ -25,37 +25,65 @@ const (
 	LevelError   Level = "error"
 )
 
+type TransportType string
+
+const (
+	TransportFile   TransportType = "file"
+	TransportStdout TransportType = "stdout"
+)
+
 var (
 	mu     sync.Mutex
 	output io.Writer = os.Stderr
 )
 
-// Init configures the app logger to write to a file under valinorDir.
-// Returns the log path and a close function. Call close when shutting down.
-func Init(valinorDir string) (logPath string, closeFn func() error, err error) {
-	targetDir := filepath.Join(valinorDir, logDirName)
-	if err := os.MkdirAll(targetDir, 0o700); err != nil {
-		return "", nil, err
+// Init configures the app logger with specified transports.
+func Init(valinorDir string, transports []TransportType) (logPath string, closeFn func() error, err error) {
+	var writers []io.Writer
+	var file *os.File
+
+	hasFile, hasStdout := transportTypes(transports)
+
+	if hasFile {
+		// ensure the log directory exists
+		targetDir := filepath.Join(valinorDir, logDirName)
+		if err := os.MkdirAll(targetDir, 0o700); err != nil {
+			return "", nil, err
+		}
+
+		logPath = filepath.Join(targetDir, logFileName)
+		file, err = os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			return "", nil, err
+		}
+		writers = append(writers, file)
 	}
 
-	logPath = filepath.Join(targetDir, logFileName)
-	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return "", nil, err
+	if hasStdout {
+		writers = append(writers, os.Stdout)
+	}
+
+	if len(writers) == 0 {
+		// Default to stderr if no transports specified
+		writers = append(writers, os.Stderr)
 	}
 
 	mu.Lock()
-	output = file
+	if len(writers) == 1 {
+		output = writers[0]
+	} else {
+		output = io.MultiWriter(writers...)
+	}
 	mu.Unlock()
 
-	return logPath, file.Close, nil
-}
+	closeFn = func() error {
+		if file != nil {
+			return file.Close()
+		}
+		return nil
+	}
 
-// SetOutput sets the log output. Used by Init; callers typically do not use this.
-func SetOutput(w io.Writer) {
-	mu.Lock()
-	defer mu.Unlock()
-	output = w
+	return logPath, closeFn, nil
 }
 
 // Log writes a structured log line: [LEVEL][MESSAGE][METADATA_JSON]
@@ -125,4 +153,15 @@ func M(kv ...any) map[string]any {
 		m[key] = kv[i+1]
 	}
 	return m
+}
+
+func transportTypes(transports []TransportType) (bool, bool) {
+	hasFile := false
+	hasStdout := false
+	for _, t := range transports {
+		if t == TransportFile {
+			hasFile = true
+		}
+	}
+	return hasFile, hasStdout
 }

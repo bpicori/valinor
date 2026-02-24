@@ -81,13 +81,13 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("resolve workspace dir: %w", err)
 	}
 
-	// Initialize logger
-	logPath, closeLogger, err := applog.Init(valinorDir)
+	// Initialize logger with both file and stdout transports
+	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile, applog.TransportStdout})
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
 	defer closeLogger()
-	applog.Info("logging to file", applog.M("log_path", logPath))
+	applog.Info("logging to file and stdout", applog.M("log_path", logPath))
 
 	// Initialize core components
 	b := bus.New()
@@ -174,8 +174,8 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
 		return fmt.Errorf("resolve valinor dir: %w", err)
 	}
 
-	// Initialize logger
-	logPath, closeLogger, err := applog.Init(valinorDir)
+	// Initialize logger with file transport only (TUI has its own stdout display)
+	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile})
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
