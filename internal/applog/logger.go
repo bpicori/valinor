@@ -35,6 +35,7 @@ const (
 var (
 	mu     sync.Mutex
 	output io.Writer = os.Stderr
+	prefix string
 )
 
 // Init configures the app logger with specified transports.
@@ -86,7 +87,14 @@ func Init(valinorDir string, transports []TransportType) (logPath string, closeF
 	return logPath, closeFn, nil
 }
 
-// Log writes a structured log line: [LEVEL][MESSAGE][METADATA_JSON]
+// SetPrefix sets a prefix that will be included in log messages (e.g., "GATEWAY", "TUI").
+func SetPrefix(p string) {
+	mu.Lock()
+	prefix = p
+	mu.Unlock()
+}
+
+// Log writes a structured log line: [PREFIX][LEVEL][MESSAGE][METADATA_JSON]
 // Message must be a static string; dynamic values go in metadata.
 func Log(level Level, msg string, metadata map[string]any) {
 	meta := normalizeMetadata(metadata)
@@ -95,7 +103,13 @@ func Log(level Level, msg string, metadata map[string]any) {
 		metaJSON = []byte(`{"_marshal_error":"` + err.Error() + `"}`)
 	}
 	ts := time.Now().UTC().Format("2006-01-02 15:04:05.000000")
-	line := fmt.Sprintf("%s [%s][%s][%s]\n", ts, level, msg, string(metaJSON))
+
+	var line string
+	if prefix != "" {
+		line = fmt.Sprintf("%s [%s][%s][%s][%s]\n", ts, prefix, level, msg, string(metaJSON))
+	} else {
+		line = fmt.Sprintf("%s [%s][%s][%s]\n", ts, level, msg, string(metaJSON))
+	}
 
 	mu.Lock()
 	_, _ = output.Write([]byte(line))

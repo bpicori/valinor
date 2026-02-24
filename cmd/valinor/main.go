@@ -65,8 +65,6 @@ func run(mode, gatewayURL string) error {
 
 // runGateway starts the gateway and session core (no TUI).
 func runGateway(ctx context.Context, cfg config.Config) error {
-	applog.Info("starting valinor in gateway mode", nil)
-
 	// Resolve directories
 	valinorDir, err := cfg.ResolveValinorDir()
 	if err != nil {
@@ -87,6 +85,10 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("init logger: %w", err)
 	}
 	defer closeLogger()
+
+	// Set log prefix for gateway mode
+	applog.SetPrefix("GATEWAY")
+	applog.Info("starting valinor in gateway mode", nil)
 	applog.Info("logging to file and stdout", applog.M("log_path", logPath))
 
 	// Initialize core components
@@ -161,8 +163,6 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 
 // runTUI starts the TUI client connecting to a gateway.
 func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
-	applog.Info("starting valinor in tui mode", nil)
-
 	// Use config URL if not provided via flag
 	if gatewayURL == "" {
 		gatewayURL = cfg.GatewayWebSocketURL()
@@ -180,6 +180,10 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
 		return fmt.Errorf("init logger: %w", err)
 	}
 	defer closeLogger()
+
+	// Set log prefix for TUI mode
+	applog.SetPrefix("TUI")
+	applog.Info("starting valinor in tui mode", nil)
 	applog.Info("logging to file", applog.M("log_path", logPath))
 
 	// Create TUI model and program
