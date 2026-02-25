@@ -95,11 +95,25 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			toolDefs[i] = l.tools[i].Def
 		}
 
-		// Call provider stream
+		// Call provider stream with callback to publish deltas to the bus
 		result, err := l.provider.Stream(ctx, StreamParams{
 			Messages: providerMessages,
 			Tools:    toolDefs,
 			Model:    l.model,
+			OnDelta: func(delta StreamDelta) {
+				if delta.Content != "" {
+					l.bus.Publish(event.Event{
+						Type:    event.AgentContentDelta,
+						Payload: event.ContentDeltaPayload{Content: delta.Content},
+					})
+				}
+				if delta.Refusal != "" {
+					l.bus.Publish(event.Event{
+						Type:    event.AgentRefusal,
+						Payload: event.RefusalPayload{Content: delta.Refusal},
+					})
+				}
+			},
 		})
 		if err != nil {
 			// Handle user cancellation gracefully

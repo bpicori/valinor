@@ -7,8 +7,6 @@ import (
 	"sync"
 
 	"valinor/internal/applog"
-	"valinor/internal/bus"
-	"valinor/internal/event"
 	"valinor/internal/llm"
 
 	"google.golang.org/genai"
@@ -17,14 +15,13 @@ import (
 // Provider implements the Gemini LLM provider.
 type Provider struct {
 	client *genai.Client
-	bus    *bus.Bus
 
 	mu                sync.RWMutex
 	thoughtSignatures map[string][]byte
 }
 
 // New creates a new Gemini provider instance.
-func New(apiKey string, b *bus.Bus) (*Provider, error) {
+func New(apiKey string) (*Provider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Gemini provider")
 	}
@@ -39,7 +36,6 @@ func New(apiKey string, b *bus.Bus) (*Provider, error) {
 
 	return &Provider{
 		client:            client,
-		bus:               b,
 		thoughtSignatures: make(map[string][]byte),
 	}, nil
 }
@@ -121,14 +117,13 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 			candidate := response.Candidates[0]
 			if candidate.Content != nil {
 				for _, part := range candidate.Content.Parts {
-					// Handle text parts
-					if part.Text != "" {
-						assistantContent += part.Text
-						p.bus.Publish(event.Event{
-							Type:    event.AgentContentDelta,
-							Payload: event.ContentDeltaPayload{Content: part.Text},
-						})
+				// Handle text parts
+				if part.Text != "" {
+					assistantContent += part.Text
+					if params.OnDelta != nil {
+						params.OnDelta(llm.StreamDelta{Content: part.Text})
 					}
+				}
 
 					// Handle function calls
 					if part.FunctionCall != nil {

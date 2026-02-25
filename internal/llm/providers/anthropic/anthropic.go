@@ -5,8 +5,6 @@ import (
 	"fmt"
 
 	"valinor/internal/applog"
-	"valinor/internal/bus"
-	"valinor/internal/event"
 	"valinor/internal/llm"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -16,11 +14,10 @@ import (
 // Provider implements the Anthropic (Claude) LLM provider.
 type Provider struct {
 	client anthropic.Client
-	bus    *bus.Bus
 }
 
 // New creates a new Anthropic provider instance.
-func New(apiKey string, b *bus.Bus) (*Provider, error) {
+func New(apiKey string) (*Provider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Anthropic provider")
 	}
@@ -31,7 +28,6 @@ func New(apiKey string, b *bus.Bus) (*Provider, error) {
 
 	return &Provider{
 		client: client,
-		bus:    b,
 	}, nil
 }
 
@@ -127,15 +123,15 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 		case "content_block_delta":
 			// Content delta - accumulate text
 			blockDelta := evt.AsContentBlockDelta()
-			if blockDelta.Delta.Type == "text_delta" {
+			switch blockDelta.Delta.Type {
+			case "text_delta":
 				if blockDelta.Delta.Text != "" {
 					assistantContent += blockDelta.Delta.Text
-					p.bus.Publish(event.Event{
-						Type:    event.AgentContentDelta,
-						Payload: event.ContentDeltaPayload{Content: blockDelta.Delta.Text},
-					})
+					if params.OnDelta != nil {
+						params.OnDelta(llm.StreamDelta{Content: blockDelta.Delta.Text})
+					}
 				}
-			} else if blockDelta.Delta.Type == "input_json_delta" {
+			case "input_json_delta":
 				// Tool input is being streamed - accumulate to the last content block
 				if len(contentBlocks) > 0 {
 					idx := len(contentBlocks) - 1

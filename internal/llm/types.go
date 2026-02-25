@@ -8,6 +8,16 @@ import (
 	agentcontext "valinor/internal/context"
 )
 
+// StreamDelta represents a chunk of streamed content from the provider.
+type StreamDelta struct {
+	Content string // Text content delta
+	Refusal string // Refusal/rejection content
+}
+
+// StreamCallback is called by providers during streaming to deliver content chunks.
+// The LLM layer provides this callback to bridge to the event bus.
+type StreamCallback func(delta StreamDelta)
+
 // LLM runs model turns using the provided context runtime.
 type LLM struct {
 	provider      Provider
@@ -63,6 +73,7 @@ type StreamParams struct {
 	Tools     []ToolDefinition
 	Model     string
 	MaxTokens int
+	OnDelta   StreamCallback // Called during streaming for each content chunk
 }
 
 // StreamResult contains the result of a streaming LLM request.

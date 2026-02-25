@@ -272,8 +272,8 @@ func (m *Manager) Delete(id string) error {
 }
 
 // createProvider is a helper that delegates to the factory.
-func createProvider(cfg config.ProviderConfig, b *bus.Bus) (llm.Provider, error) {
-	return factory.CreateProvider(cfg, b)
+func createProvider(cfg config.ProviderConfig) (llm.Provider, error) {
+	return factory.CreateProvider(cfg)
 }
 
 // ListProviderModels fetches available models for the given provider.
@@ -285,7 +285,7 @@ func (m *Manager) ListProviderModels(ctx context.Context, providerName string) (
 	if !ok {
 		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
 	}
-	provider, err := createProvider(providerCfg, nil)
+	provider, err := createProvider(providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider: %w", err)
 	}
@@ -317,7 +317,7 @@ func createTools(workspaceDir string) ([]llm.Tool, error) {
 }
 
 func buildAgent(workspaceDir string, providerCfg config.ProviderConfig, model string, b *bus.Bus, maxIterations int) (*llm.LLM, error) {
-	provider, err := createProvider(providerCfg, b)
+	provider, err := createProvider(providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider: %w", err)
 	}
