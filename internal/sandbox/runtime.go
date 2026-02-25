@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/bpicori/red-keep/pkg/redkeep"
@@ -19,10 +18,13 @@ import (
 type Runtime struct {
 	workspaceDir   string
 	executablePath string
-	mu             sync.Mutex
+	sem            chan struct{}
 }
 
-const fsToolTimeout = 30 * time.Second
+const (
+	fsToolTimeout           = 30 * time.Second
+	defaultMaxConcurrentOps = 10
+)
 
 // NewRuntime creates a runtime configured for a workspace root.
 func NewRuntime(dir string) (*Runtime, error) {
@@ -34,6 +36,7 @@ func NewRuntime(dir string) (*Runtime, error) {
 	return &Runtime{
 		workspaceDir:   dir,
 		executablePath: execPath,
+		sem:            make(chan struct{}, defaultMaxConcurrentOps),
 	}, nil
 }
 
@@ -162,14 +165,14 @@ func (r *Runtime) Close() error {
 }
 
 func (r *Runtime) run(ctx context.Context, req redkeep.RunRequest) (Result, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.sem <- struct{}{}
+	defer func() { <-r.sem }()
 	return runWithRedKeep(ctx, req)
 }
 
 func (r *Runtime) runIO(ctx context.Context, req redkeep.RunRequest, stdin io.Reader, env []string) (Result, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.sem <- struct{}{}
+	defer func() { <-r.sem }()
 	return runWithRedKeepIO(ctx, req, stdin, env)
 }
 
