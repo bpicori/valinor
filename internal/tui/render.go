@@ -163,7 +163,17 @@ func (m Model) View() string {
 	}
 
 	if m.state == stateModelPicker {
-		help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render("↑/↓ select • enter choose • esc cancel")
+		helpText := "↑/↓ select • enter choose • esc cancel"
+		if m.modelPickerState == pickerSelectModel {
+			helpText = "type to search • enter choose • esc back"
+			if m.modelPickerBusy {
+				helpText = "loading models... • esc cancel"
+			}
+		}
+		if m.modelPickerErr != "" {
+			helpText += " • using fallback list"
+		}
+		help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(helpText)
 		return lipgloss.JoinVertical(lipgloss.Left,
 			lipgloss.NewStyle().Padding(1, 2).Render(m.modelPicker.View()),
 			help,

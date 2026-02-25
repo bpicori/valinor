@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"valinor/internal/applog"
@@ -273,6 +274,37 @@ func (m *Manager) Delete(id string) error {
 // createProvider is a helper that delegates to the factory.
 func createProvider(cfg config.ProviderConfig, b *bus.Bus) (llm.Provider, error) {
 	return factory.CreateProvider(cfg, b)
+}
+
+// ListProviderModels fetches available models for the given provider.
+func (m *Manager) ListProviderModels(ctx context.Context, providerName string) ([]llm.ModelInfo, error) {
+	if providerName == "" {
+		return nil, fmt.Errorf("provider is required")
+	}
+	providerCfg, ok := m.config.Providers[providerName]
+	if !ok {
+		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
+	}
+	provider, err := createProvider(providerCfg, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+	models, err := provider.ListModels(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list models: %w", err)
+	}
+	sort.Slice(models, func(i, j int) bool {
+		left := models[i].ID
+		if models[i].DisplayName != "" {
+			left = models[i].DisplayName
+		}
+		right := models[j].ID
+		if models[j].DisplayName != "" {
+			right = models[j].DisplayName
+		}
+		return left < right
+	})
+	return models, nil
 }
 
 // createTools is a helper that creates tools for the given workspace.

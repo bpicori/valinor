@@ -21,6 +21,7 @@ func StartBusBridge(ctx context.Context, p *tea.Program, b *bus.Bus) *bus.Subscr
 		bus.EventUserMessage,
 		bus.EventNewConversation,
 		bus.EventChangeProviderModel,
+		bus.EventProviderModelsResult,
 		bus.EventContextTokens,
 		bus.EventAgentContentDelta,
 		bus.EventAgentRefusal,

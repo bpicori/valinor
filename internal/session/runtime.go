@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
@@ -68,6 +69,7 @@ func (r *Runtime) Start() {
 		bus.EventNewConversation,
 		bus.EventChangeProviderModel,
 		bus.EventCreateNewSession,
+		bus.EventRequestProviderModels,
 		bus.EventCancelAgentRun,
 	)
 	r.startActiveSessionLocked()
@@ -125,6 +127,12 @@ func (r *Runtime) handleCommandEvent(ev bus.Event) {
 		}
 	case bus.EventCancelAgentRun:
 		r.cancelCurrentRun()
+	case bus.EventRequestProviderModels:
+		payload, ok := ev.Payload.(bus.RequestProviderModelsPayload)
+		if !ok {
+			return
+		}
+		r.handleRequestProviderModels(payload.Provider)
 	}
 }
 
@@ -210,6 +218,42 @@ func (r *Runtime) cancelCurrentRun() {
 		r.runCancel = nil
 	}
 	r.mu.Unlock()
+}
+
+func (r *Runtime) handleRequestProviderModels(provider string) {
+	r.mu.Lock()
+	if !r.started || r.closed {
+		r.mu.Unlock()
+		return
+	}
+	runtimeCtx := r.runtimeCtx
+	manager := r.manager
+	r.mu.Unlock()
+
+	r.wg.Go(func() {
+		ctx, cancel := context.WithTimeout(runtimeCtx, 30*time.Second)
+		defer cancel()
+
+		models, err := manager.ListProviderModels(ctx, provider)
+		payload := bus.ProviderModelsResultPayload{
+			Provider: provider,
+			Models:   make([]bus.ProviderModel, 0, len(models)),
+		}
+		if err != nil {
+			payload.Error = err.Error()
+		} else {
+			for _, model := range models {
+				payload.Models = append(payload.Models, bus.ProviderModel{
+					ID:          model.ID,
+					DisplayName: model.DisplayName,
+				})
+			}
+		}
+		r.bus.Publish(bus.Event{
+			Type:    bus.EventProviderModelsResult,
+			Payload: payload,
+		})
+	})
 }
 
 // HandleCreateSessionRequest handles provider/model changes initiated by UI or web handlers.

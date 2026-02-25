@@ -43,15 +43,46 @@ const (
 	stateModelPicker                 // Showing provider/model picker
 )
 
-// providerModelItem is a list item for the provider/model picker.
+type modelPickerState int
+
+const (
+	pickerSelectProvider modelPickerState = iota
+	pickerSelectModel
+)
+
+// providerItem is a list item for provider selection.
+type providerItem struct {
+	Provider     string
+	DefaultModel string
+	Current      bool
+}
+
+func (i providerItem) Title() string { return i.Provider }
+func (i providerItem) Description() string {
+	if i.Current {
+		return "current • default " + i.DefaultModel
+	}
+	return "default " + i.DefaultModel
+}
+func (i providerItem) FilterValue() string { return i.Provider + " " + i.DefaultModel }
+
+// providerModelItem is a list item for model selection.
 type providerModelItem struct {
 	Provider string
 	Model    string
+	Display  string
 }
 
-func (i providerModelItem) Title() string       { return i.Provider }
+func (i providerModelItem) Title() string {
+	if i.Display != "" {
+		return i.Display
+	}
+	return i.Model
+}
 func (i providerModelItem) Description() string { return i.Model }
-func (i providerModelItem) FilterValue() string { return i.Provider + " " + i.Model }
+func (i providerModelItem) FilterValue() string {
+	return i.Provider + " " + i.Model + " " + i.Display
+}
 
 // messageRole identifies who authored a chat message.
 type messageRole int
@@ -97,6 +128,10 @@ type Model struct {
 	textinput         textinput.Model
 	spinner           spinner.Model
 	modelPicker       list.Model
+	modelPickerState  modelPickerState
+	modelPickerHost   string
+	modelPickerBusy   bool
+	modelPickerErr    string
 	state             appState
 	messages          []chatMessage
 	totalUsage        Usage
@@ -122,29 +157,30 @@ func New(b *bus.Bus, cfg config.Config, providerName, modelName string) Model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 
-	items := buildProviderModelItems(cfg)
+	items := buildProviderItems(cfg, providerName)
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Bold(true)
 	l := list.New(items, delegate, 40, 14)
-	l.Title = "Provider / Model"
+	l.Title = "Select Provider"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
 	l.Styles.Title = lipgloss.NewStyle().Bold(true)
 
 	return Model{
-		bus:          b,
-		config:       cfg,
-		providerName: providerName,
-		modelName:    modelName,
-		textinput:    ti,
-		spinner:      sp,
-		modelPicker:  l,
-		state:        stateReady,
+		bus:              b,
+		config:           cfg,
+		providerName:     providerName,
+		modelName:        modelName,
+		textinput:        ti,
+		spinner:          sp,
+		modelPicker:      l,
+		modelPickerState: pickerSelectProvider,
+		state:            stateReady,
 	}
 }
 
-// buildProviderModelItems returns sorted list items from config providers.
-func buildProviderModelItems(cfg config.Config) []list.Item {
+// buildProviderItems returns provider list items from config.
+func buildProviderItems(cfg config.Config, currentProvider string) []list.Item {
 	names := make([]string, 0, len(cfg.Providers))
 	for n := range cfg.Providers {
 		names = append(names, n)
@@ -153,8 +189,11 @@ func buildProviderModelItems(cfg config.Config) []list.Item {
 	items := make([]list.Item, 0, len(names))
 	for _, name := range names {
 		pc := cfg.Providers[name]
-		model := pc.DefaultModel
-		items = append(items, providerModelItem{Provider: name, Model: model})
+		items = append(items, providerItem{
+			Provider:     name,
+			DefaultModel: pc.DefaultModel,
+			Current:      name == currentProvider,
+		})
 	}
 	return items
 }
@@ -231,13 +270,27 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
 // handleModelPickerKey handles keys when the model picker is open.
 func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
 	if msg.String() == "esc" {
+		if m.modelPickerState == pickerSelectModel && !m.modelPickerBusy {
+			return m.openProviderPicker(), nil, true, false
+		}
 		m.state = stateReady
+		m.modelPickerErr = ""
+		m.modelPickerBusy = false
 		return m, nil, true, false
 	}
 	var cmd tea.Cmd
 	m.modelPicker, cmd = m.modelPicker.Update(msg)
 	// Check if user selected an item (Enter on a selected item)
 	if msg.String() == "enter" {
+		if m.modelPickerBusy {
+			return m, nil, true, false
+		}
+		if m.modelPickerState == pickerSelectProvider {
+			if i, ok := m.modelPicker.SelectedItem().(providerItem); ok {
+				return m.openModelPickerForProvider(i.Provider), nil, true, false
+			}
+			return m, nil, true, false
+		}
 		if i, ok := m.modelPicker.SelectedItem().(providerModelItem); ok {
 			if i.Provider != m.providerName {
 				m.bus.Publish(bus.Event{
@@ -253,6 +306,8 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 			m.providerName = i.Provider
 			m.modelName = i.Model
 			m.state = stateReady
+			m.modelPickerErr = ""
+			m.modelPickerBusy = false
 			return m, nil, true, false
 		}
 	}
@@ -261,10 +316,56 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 
 // openModelPicker switches to the model picker state.
 func (m Model) openModelPicker() Model {
+	return m.openProviderPicker()
+}
+
+func (m Model) openProviderPicker() Model {
 	m.state = stateModelPicker
+	m.modelPickerState = pickerSelectProvider
+	m.modelPickerHost = ""
+	m.modelPickerBusy = false
+	m.modelPickerErr = ""
+	m.modelPicker.Title = "Select Provider"
+	m.modelPicker.SetItems(buildProviderItems(m.config, m.providerName))
+	m.modelPicker.ResetFilter()
+	items := m.modelPicker.Items()
+	for i := range items {
+		item, ok := items[i].(providerItem)
+		if ok && item.Provider == m.providerName {
+			m.modelPicker.Select(i)
+			break
+		}
+	}
 	if m.contentWidth > 4 && m.height > 6 {
 		m.modelPicker.SetSize(m.contentWidth-4, m.height-6)
 	}
+	return m
+}
+
+func (m Model) openModelPickerForProvider(provider string) Model {
+	if strings.TrimSpace(provider) == "" {
+		return m.openProviderPicker()
+	}
+	if _, ok := m.config.Providers[provider]; !ok {
+		applog.Warning("tui unknown provider for model picker", applog.M("provider", provider))
+		return m.openProviderPicker()
+	}
+
+	m.state = stateModelPicker
+	m.modelPickerState = pickerSelectModel
+	m.modelPickerHost = provider
+	m.modelPickerBusy = true
+	m.modelPickerErr = ""
+	m.modelPicker.Title = "Loading models for " + provider + "..."
+	m.modelPicker.SetItems(nil)
+	m.modelPicker.ResetFilter()
+	if m.contentWidth > 4 && m.height > 6 {
+		m.modelPicker.SetSize(m.contentWidth-4, m.height-6)
+	}
+	m.bus.Publish(bus.Event{
+		Type:    bus.EventRequestProviderModels,
+		Payload: bus.RequestProviderModelsPayload{Provider: provider},
+	})
 	return m
 }
 
@@ -296,6 +397,7 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 }
 
 // handleModelCommand processes /model, /model <provider>, or /model <provider> <model>.
+// With provider only, it opens searchable model selection for that provider.
 func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	parts := strings.Fields(strings.TrimPrefix(input, "/model"))
 	if len(parts) == 0 {
@@ -309,6 +411,9 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	if !ok {
 		applog.Warning("tui unknown provider", applog.M("provider", provider))
 		return m, nil, true, false
+	}
+	if len(parts) == 1 {
+		return m.openModelPickerForProvider(provider), nil, true, false
 	}
 	model := pc.DefaultModel
 	if len(parts) >= 2 && strings.TrimSpace(parts[1]) != "" {
@@ -385,6 +490,12 @@ func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
 		return m, nil
+	case bus.EventProviderModelsResult:
+		payload, ok := msg.Event.Payload.(bus.ProviderModelsResultPayload)
+		if !ok {
+			return m, nil
+		}
+		return m, m.handleProviderModelsResult(payload)
 	case bus.EventContextTokens:
 		payload, ok := msg.Event.Payload.(bus.ContextTokensPayload)
 		if !ok {
@@ -442,6 +553,74 @@ func (m Model) handleBusEventMsg(msg busEventMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m *Model) handleProviderModelsResult(payload bus.ProviderModelsResultPayload) tea.Cmd {
+	if m.state != stateModelPicker || m.modelPickerState != pickerSelectModel {
+		return nil
+	}
+	if payload.Provider != m.modelPickerHost {
+		return nil
+	}
+
+	m.modelPickerBusy = false
+	m.modelPickerErr = payload.Error
+	m.modelPicker.Title = "Select Model (" + payload.Provider + ")"
+	if payload.Error != "" {
+		applog.Warning("provider model lookup failed", applog.M("provider", payload.Provider, "error", payload.Error))
+		m.modelPicker.Title = "Select Model (" + payload.Provider + ") - fallback"
+	}
+
+	seen := map[string]struct{}{}
+	items := make([]providerModelItem, 0, len(payload.Models)+1)
+	for _, model := range payload.Models {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		items = append(items, providerModelItem{
+			Provider: payload.Provider,
+			Model:    id,
+			Display:  strings.TrimSpace(model.DisplayName),
+		})
+	}
+	if providerCfg, ok := m.config.Providers[payload.Provider]; ok && providerCfg.DefaultModel != "" {
+		if _, exists := seen[providerCfg.DefaultModel]; !exists {
+			items = append(items, providerModelItem{
+				Provider: payload.Provider,
+				Model:    providerCfg.DefaultModel,
+				Display:  providerCfg.DefaultModel,
+			})
+		}
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		left := strings.ToLower(items[i].Title())
+		right := strings.ToLower(items[j].Title())
+		if left == right {
+			return items[i].Model < items[j].Model
+		}
+		return left < right
+	})
+
+	listItems := make([]list.Item, 0, len(items))
+	selectedIdx := 0
+	for idx, item := range items {
+		listItems = append(listItems, item)
+		if payload.Provider == m.providerName && item.Model == m.modelName {
+			selectedIdx = idx
+		}
+	}
+	m.modelPicker.SetItems(listItems)
+	m.modelPicker.ResetFilter()
+	if len(listItems) > 0 {
+		m.modelPicker.Select(selectedIdx)
+	}
+	return nil
 }
 
 func (m *Model) handleUserMessage(payload bus.UserMessagePayload) tea.Cmd {

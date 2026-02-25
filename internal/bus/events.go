@@ -5,24 +5,26 @@ type EventType int
 
 const (
 	// User intent events (published by UI).
-	EventUserMessage         EventType = iota // User sent a chat message.
-	EventNewConversation                      // User requested /new or /clear.
-	EventChangeProviderModel                  // User changed model for the session (same provider only).
-	EventCreateNewSession                     // User requested new session with different provider.
-	EventCancelAgentRun                       // User requested cancellation of in-flight agent run.
+	EventUserMessage           EventType = iota // User sent a chat message.
+	EventNewConversation                        // User requested /new or /clear.
+	EventChangeProviderModel                    // User changed model for the session (same provider only).
+	EventCreateNewSession                       // User requested new session with different provider.
+	EventRequestProviderModels                  // UI requests available models for a provider.
+	EventCancelAgentRun                         // User requested cancellation of in-flight agent run.
 
 	// Agent streaming events (published by Agent).
-	EventAgentContentDelta  // Streamed content chunk.
-	EventAgentContentFull   // Full assistant content for this streamed response.
-	EventAgentThinking      // Reasoning/thinking step.
-	EventAgentStepTokens    // Per-step token usage.
-	EventContextTokens      // Current context token estimate/exact value.
-	EventAgentRefusal       // Model refusal.
-	EventAgentToolCallStart // Tool call initiated.
-	EventAgentToolCallDone  // Tool call completed.
-	EventAgentDone          // Agent turn finished.
-	EventAgentError         // Agent error.
-	EventAgentCancelled     // Agent run was cancelled by user.
+	EventProviderModelsResult // Runtime returns available models for a provider.
+	EventAgentContentDelta    // Streamed content chunk.
+	EventAgentContentFull     // Full assistant content for this streamed response.
+	EventAgentThinking        // Reasoning/thinking step.
+	EventAgentStepTokens      // Per-step token usage.
+	EventContextTokens        // Current context token estimate/exact value.
+	EventAgentRefusal         // Model refusal.
+	EventAgentToolCallStart   // Tool call initiated.
+	EventAgentToolCallDone    // Tool call completed.
+	EventAgentDone            // Agent turn finished.
+	EventAgentError           // Agent error.
+	EventAgentCancelled       // Agent run was cancelled by user.
 )
 
 // Event is a bus message with a typed payload.
@@ -48,6 +50,24 @@ type ChangeProviderModelPayload struct {
 type CreateNewSessionPayload struct {
 	Provider string
 	Model    string
+}
+
+// RequestProviderModelsPayload carries provider name to fetch available models for.
+type RequestProviderModelsPayload struct {
+	Provider string
+}
+
+// ProviderModel describes a model option from a provider.
+type ProviderModel struct {
+	ID          string
+	DisplayName string
+}
+
+// ProviderModelsResultPayload carries available models fetched for a provider.
+type ProviderModelsResultPayload struct {
+	Provider string
+	Models   []ProviderModel
+	Error    string
 }
 
 // ContentDeltaPayload carries a streamed content chunk from the agent.
