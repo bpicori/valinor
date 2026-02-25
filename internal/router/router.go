@@ -139,6 +139,12 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 
 	// Check if we already have an in-memory binding
 	if binding := r.registry.GetByKey(key); binding != nil {
+		activeSession, err := r.runtime.EnsureActiveSession(binding.Session)
+		if err != nil {
+			return nil, fmt.Errorf("ensure active session: %w", err)
+		}
+		binding.Session = activeSession
+
 		// Register the new consumer (replaces any existing consumer for this identity).
 		// Close previous consumer outside lock to avoid deadlock/re-entrancy issues.
 		var oldConsumer ClientEventConsumer
@@ -170,6 +176,11 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 	sess, isNew, err := r.getOrCreateSessionForIdentity(ctx, identity)
 	if err != nil {
 		return nil, fmt.Errorf("get or create session for identity %s: %w", key, err)
+	}
+
+	sess, err = r.runtime.EnsureActiveSession(sess)
+	if err != nil {
+		return nil, fmt.Errorf("ensure active session: %w", err)
 	}
 
 	// Register the binding
@@ -250,6 +261,51 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		applog.BuildMetadata("identity_key", key,
 			"command_type", cmd.Type,
 			"session_id", binding.SessionID))
+
+	// Handle session-creation directly so identity mapping tracks the switched session.
+	if cmd.Type == CommandCreateNewSession {
+		payload, ok := cmd.Payload.(CreateNewSessionPayload)
+		if !ok {
+			return fmt.Errorf("invalid create_new_session payload")
+		}
+
+		newSessionID, err := r.runtime.HandleCreateSessionRequest(payload.Provider, payload.Model)
+		if err != nil {
+			return err
+		}
+
+		activeSession, err := r.runtime.ActiveSession()
+		if err != nil {
+			return fmt.Errorf("fetch active session after switch: %w", err)
+		}
+		updatedBinding, updated := r.registry.UpdateSession(cmd.Identity, activeSession)
+		if !updated {
+			applog.Warning("router: failed to update binding after session switch",
+				applog.BuildMetadata("identity_key", key, "session_id", newSessionID))
+		} else {
+			r.mu.RLock()
+			consumer := r.clientConsumers[key]
+			r.mu.RUnlock()
+			if consumer != nil {
+				consumer.SendEvent(Event{
+					Type: event.SessionAttached,
+					Payload: SessionAttachedPayload{
+						SessionKey: updatedBinding.PublicKey,
+						Provider:   updatedBinding.Session.Meta().Provider,
+						Model:      updatedBinding.Session.Meta().Model,
+					},
+				})
+			}
+		}
+		if r.identityMap != nil {
+			if err := r.identityMap.Set(key, newSessionID, cmd.Identity.Type); err != nil {
+				applog.Warning("router: failed to update identity mapping after session switch",
+					applog.BuildMetadata("error", err, "identity_key", key, "session_id", newSessionID))
+			}
+		}
+
+		return nil
+	}
 
 	// Convert router command to bus event and publish
 	busEvent := r.commandToBusEvent(cmd)

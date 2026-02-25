@@ -103,6 +103,29 @@ func (r *SessionRegistry) Remove(identity ClientIdentity) bool {
 	return false
 }
 
+// UpdateSession updates the bound session for an existing identity binding.
+// Returns the updated binding and true when found, otherwise nil and false.
+func (r *SessionRegistry) UpdateSession(identity ClientIdentity, sess *session.Session) (*SessionBinding, bool) {
+	if sess == nil {
+		return nil, false
+	}
+	key := identity.Key()
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	binding, ok := r.bindings[key]
+	if !ok {
+		return nil, false
+	}
+
+	meta := sess.Meta()
+	binding.Session = sess
+	binding.SessionID = meta.ID
+	binding.PublicKey = identity.SessionKey(meta.ID)
+	return binding, true
+}
+
 // RemoveBySessionID removes all bindings associated with a given session ID.
 func (r *SessionRegistry) RemoveBySessionID(sessionID string) int {
 	r.mu.Lock()

@@ -95,36 +95,15 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	b := bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir, cfg)
 
-	// Create initial session
+	// Session options used when router/runtime create or resume sessions on-demand.
 	sessionOpts := session.SessionOptions{
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}
 
-	var sess *session.Session
-	sessions, err := sm.List()
-	if err != nil {
-		return fmt.Errorf("list sessions: %w", err)
-	}
-	if len(sessions) > 0 {
-		latestSession := sessions[0]
-		sess, err = sm.Resume(ctx, latestSession.ID, sessionOpts)
-		if err != nil {
-			applog.Warning("resume latest session failed", applog.BuildMetadata("session_id", latestSession.ID, "error", err))
-		} else {
-			applog.Info("resumed session", applog.BuildMetadata("session_id", latestSession.ID))
-		}
-	}
-	if sess == nil {
-		sess, err = sm.Create(ctx, sessionOpts)
-		if err != nil {
-			return fmt.Errorf("create session: %w", err)
-		}
-		applog.Info("created new session", applog.BuildMetadata("session_id", sess.Meta().ID))
-	}
-
-	// Start session runtime
-	runtime := session.NewRuntime(ctx, sm, sessionOpts, sess, b, nil)
+	// Start session runtime without an initial active session.
+	// The first connecting client will create/resume and attach one.
+	runtime := session.NewRuntime(ctx, sm, sessionOpts, nil, b, nil)
 	runtime.Start()
 	defer runtime.Close()
 

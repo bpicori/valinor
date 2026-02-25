@@ -270,6 +270,11 @@ func (m Model) View() string {
 	if m.providerName != "" {
 		providerModel = m.providerName + " / " + m.modelName
 	}
+	sessionLabel := m.sessionKey
+	if strings.TrimSpace(sessionLabel) == "" {
+		sessionLabel = "(not attached)"
+	}
+	sessionRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Session: "+sessionLabel))
 	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: "+providerModel) + " (ctrl+m)")
 	contextLabel := "Context: "
 	if m.contextEstimated {
@@ -285,6 +290,6 @@ func (m Model) View() string {
 		Width(m.width).
 		Render(tokensText)
 
-	footer := lipgloss.JoinVertical(lipgloss.Left, modelRow, tokensRow)
+	footer := lipgloss.JoinVertical(lipgloss.Left, sessionRow, modelRow, tokensRow)
 	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
 }

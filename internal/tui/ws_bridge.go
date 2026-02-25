@@ -62,6 +62,9 @@ type wsEventMsg struct {
 type connectionStatusMsg struct {
 	Connected bool
 	Error     error
+	SessionKey string
+	Provider   string
+	Model      string
 }
 
 // NewWSBridge creates a new WebSocket bridge for TUI.
@@ -209,6 +212,15 @@ func (b *WSBridge) connect() error {
 			"provider", ackPayload.Provider,
 			"model", ackPayload.Model))
 
+	if b.program != nil {
+		go b.program.Send(connectionStatusMsg{
+			Connected:  true,
+			SessionKey: ackPayload.SessionKey,
+			Provider:   ackPayload.Provider,
+			Model:      ackPayload.Model,
+		})
+	}
+
 	return nil
 }
 
@@ -315,8 +327,7 @@ func (b *WSBridge) reconnect() error {
 			applog.BuildMetadata("attempt", attempts+1, "backoff", backoff))
 
 		if err := b.connect(); err == nil {
-			// Reconnection successful
-			b.program.Send(connectionStatusMsg{Connected: true, Error: nil})
+			// Reconnection successful (connect() sends updated session/model state).
 			return nil
 		}
 

@@ -78,6 +78,76 @@ func (r *Runtime) Start() {
 	r.startCommandHandlerLocked()
 }
 
+// EnsureActiveSession sets the active session when needed and returns
+// the canonical active session instance to use.
+func (r *Runtime) EnsureActiveSession(sess *Session) (*Session, error) {
+	if sess == nil {
+		return nil, fmt.Errorf("session is required")
+	}
+
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("session runtime closed")
+	}
+	if !r.started {
+		r.mu.Unlock()
+		return nil, fmt.Errorf("session runtime not started")
+	}
+
+	if r.active == nil {
+		r.active = sess
+		r.startActiveSessionLocked()
+		r.publishActiveContextTokens()
+		active := r.active
+		r.mu.Unlock()
+		return active, nil
+	}
+
+	// Reuse existing active instance when both refer to the same session id.
+	if r.active.Meta().ID == sess.Meta().ID {
+		active := r.active
+		r.mu.Unlock()
+		if active != sess {
+			_ = sess.Close()
+		}
+		return active, nil
+	}
+
+	oldSession := r.detachActiveLocked()
+	r.active = sess
+	r.startActiveSessionLocked()
+	r.publishActiveContextTokens()
+	active := r.active
+	activeSessionID := active.Meta().ID
+	onActiveSessionChanged := r.onActiveSessionChanged
+	r.mu.Unlock()
+
+	if oldSession != nil {
+		_ = oldSession.Close()
+	}
+	if onActiveSessionChanged != nil {
+		onActiveSessionChanged(activeSessionID)
+	}
+	return active, nil
+}
+
+// ActiveSession returns the current active session if available.
+func (r *Runtime) ActiveSession() (*Session, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return nil, fmt.Errorf("session runtime closed")
+	}
+	if !r.started {
+		return nil, fmt.Errorf("session runtime not started")
+	}
+	if r.active == nil {
+		return nil, fmt.Errorf("no active session")
+	}
+	return r.active, nil
+}
+
 func (r *Runtime) startCommandHandlerLocked() {
 	r.wg.Add(1)
 	go r.runCommandHandlerLoop()

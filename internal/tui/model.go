@@ -133,6 +133,7 @@ type Usage struct {
 type Model struct {
 	sender            CommandSender
 	config            config.Config
+	sessionKey        string
 	providerName      string
 	modelName         string
 	viewport          viewport.Model
@@ -241,6 +242,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Connection status is logged but not blocking to UI
 		if !typed.Connected && typed.Error != nil {
 			applog.Warning("tui connection lost", applog.BuildMetadata("error", typed.Error))
+			return m, nil
+		}
+		if typed.Connected {
+			if typed.SessionKey != "" {
+				m.sessionKey = typed.SessionKey
+			}
+			if typed.Provider != "" {
+				m.providerName = typed.Provider
+			}
+			if typed.Model != "" {
+				m.modelName = typed.Model
+			}
 		}
 		return m, nil
 	// case for spinner tick
@@ -504,8 +517,14 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		m.sessionKey = payload.SessionKey
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
+		applog.Info("tui session attached", applog.BuildMetadata(
+			"session_key", payload.SessionKey,
+			"provider", payload.Provider,
+			"model", payload.Model,
+		))
 		return m, nil
 	case event.EventType(router.EventNewConversation):
 		return m, m.handleNewConversation()
