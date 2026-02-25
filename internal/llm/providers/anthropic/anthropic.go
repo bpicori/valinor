@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"valinor/internal/applog"
-	"valinor/internal/bus"
 	"valinor/internal/llm"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -15,11 +14,10 @@ import (
 // Provider implements the Anthropic (Claude) LLM provider.
 type Provider struct {
 	client anthropic.Client
-	bus    *bus.Bus
 }
 
 // New creates a new Anthropic provider instance.
-func New(apiKey string, b *bus.Bus) (*Provider, error) {
+func New(apiKey string) (*Provider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Anthropic provider")
 	}
@@ -30,7 +28,6 @@ func New(apiKey string, b *bus.Bus) (*Provider, error) {
 
 	return &Provider{
 		client: client,
-		bus:    b,
 	}, nil
 }
 
@@ -65,9 +62,14 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	systemMessages := ExtractSystemMessages(params.Messages)
 
 	// Convert messages to Anthropic format
+	// Anthropic requires a positive max_tokens value; default to 16384 if unset
+	maxTokens := int64(params.MaxTokens)
+	if maxTokens <= 0 {
+		maxTokens = 16384
+	}
 	antParams := anthropic.MessageNewParams{
 		Model:     anthropic.Model(params.Model),
-		MaxTokens: int64(params.MaxTokens),
+		MaxTokens: maxTokens,
 		Messages:  ToAnthropicMessages(params.Messages),
 		System:    systemMessages,
 	}
@@ -121,15 +123,15 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 		case "content_block_delta":
 			// Content delta - accumulate text
 			blockDelta := evt.AsContentBlockDelta()
-			if blockDelta.Delta.Type == "text_delta" {
+			switch blockDelta.Delta.Type {
+			case "text_delta":
 				if blockDelta.Delta.Text != "" {
 					assistantContent += blockDelta.Delta.Text
-					p.bus.Publish(bus.Event{
-						Type:    bus.EventAgentContentDelta,
-						Payload: bus.ContentDeltaPayload{Content: blockDelta.Delta.Text},
-					})
+					if params.OnDelta != nil {
+						params.OnDelta(llm.StreamDelta{Content: blockDelta.Delta.Text})
+					}
 				}
-			} else if blockDelta.Delta.Type == "input_json_delta" {
+			case "input_json_delta":
 				// Tool input is being streamed - accumulate to the last content block
 				if len(contentBlocks) > 0 {
 					idx := len(contentBlocks) - 1
@@ -140,7 +142,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	}
 
 	if err := stream.Err(); err != nil {
-		applog.Error("anthropic stream error", applog.M("error", err))
+		applog.Error("anthropic stream error", applog.BuildMetadata("error", err))
 		return nil, err
 	}
 

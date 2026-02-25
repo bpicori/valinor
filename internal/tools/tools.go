@@ -25,7 +25,7 @@ func validateRelativePath(path string) (string, string) {
 		cleaned = "."
 	}
 	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/..") {
-		applog.Warning("tool path validation failed", applog.M("path", path, "reason", "absolute or .. not allowed"))
+		applog.Warning("tool path validation failed", applog.BuildMetadata("path", path, "reason", "absolute or .. not allowed"))
 		return "", "Tool Error: path must be relative to workspace (absolute paths and \"..\" not allowed)"
 	}
 	return cleaned, ""
@@ -35,7 +35,7 @@ func validateRelativePath(path string) (string, string) {
 func buildToolDef(name, description string, parameters map[string]any) llm.ToolDefinition {
 	paramsJSON, err := json.Marshal(parameters)
 	if err != nil {
-		applog.Error("tool definition marshal error", applog.M("tool", name, "error", err))
+		applog.Error("tool definition marshal error", applog.BuildMetadata("tool", name, "error", err))
 		paramsJSON = json.RawMessage("{}")
 	}
 	return llm.ToolDefinition{
@@ -43,26 +43,6 @@ func buildToolDef(name, description string, parameters map[string]any) llm.ToolD
 		Description: description,
 		Parameters:  paramsJSON,
 	}
-}
-
-// AvailableTools returns the deterministic list of tool metadata.
-func AvailableTools() []llm.AvailableTool {
-	defs := []llm.ToolDefinition{
-		readFileDef(),
-		writeFileDef(),
-		editFileDef(),
-		listFilesDef(),
-		grepDef(),
-		runCommandDef(),
-	}
-	out := make([]llm.AvailableTool, 0, len(defs))
-	for _, def := range defs {
-		out = append(out, llm.AvailableTool{
-			Name:        def.Name,
-			Description: def.Description,
-		})
-	}
-	return out
 }
 
 // BuildTools returns tool definitions for the given runtime.

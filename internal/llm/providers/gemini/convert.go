@@ -38,7 +38,7 @@ func ToGeminiContents(messages []llm.Message, thoughtSignatures map[string][]byt
 					// Parse the arguments JSON
 					var args map[string]any
 					if err := json.Unmarshal([]byte(tc.Arguments), &args); err != nil {
-						applog.Error("gemini tool call conversion error", applog.M("tool", tc.Name, "error", err))
+						applog.Error("gemini tool call conversion error", applog.BuildMetadata("tool", tc.Name, "error", err))
 						args = map[string]any{}
 					}
 
@@ -82,7 +82,7 @@ func ToGeminiFunctionDeclaration(tool llm.ToolDefinition) *genai.FunctionDeclara
 	// Parse the JSON Schema parameters
 	var schema map[string]any
 	if err := json.Unmarshal(tool.Parameters, &schema); err != nil {
-		applog.Error("gemini tool conversion error", applog.M("tool", tool.Name, "error", err))
+		applog.Error("gemini tool conversion error", applog.BuildMetadata("tool", tool.Name, "error", err))
 		schema = map[string]any{"type": "object"}
 	}
 

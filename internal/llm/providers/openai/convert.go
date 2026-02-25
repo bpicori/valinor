@@ -58,7 +58,7 @@ func ToOpenAITool(tool llm.ToolDefinition) openai.ChatCompletionToolUnionParam {
 	// Parse the JSON Schema parameters
 	var params shared.FunctionParameters
 	if err := json.Unmarshal(tool.Parameters, &params); err != nil {
-		applog.Error("openai tool conversion error", applog.M("tool", tool.Name, "error", err))
+		applog.Error("openai tool conversion error", applog.BuildMetadata("tool", tool.Name, "error", err))
 		params = shared.FunctionParameters{"type": "object"}
 	}
 

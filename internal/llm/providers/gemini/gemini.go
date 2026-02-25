@@ -7,7 +7,6 @@ import (
 	"sync"
 
 	"valinor/internal/applog"
-	"valinor/internal/bus"
 	"valinor/internal/llm"
 
 	"google.golang.org/genai"
@@ -16,14 +15,13 @@ import (
 // Provider implements the Gemini LLM provider.
 type Provider struct {
 	client *genai.Client
-	bus    *bus.Bus
 
 	mu                sync.RWMutex
 	thoughtSignatures map[string][]byte
 }
 
 // New creates a new Gemini provider instance.
-func New(apiKey string, b *bus.Bus) (*Provider, error) {
+func New(apiKey string) (*Provider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Gemini provider")
 	}
@@ -38,7 +36,6 @@ func New(apiKey string, b *bus.Bus) (*Provider, error) {
 
 	return &Provider{
 		client:            client,
-		bus:               b,
 		thoughtSignatures: make(map[string][]byte),
 	}, nil
 }
@@ -102,7 +99,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 
 	for response, err := range stream {
 		if err != nil {
-			applog.Error("gemini stream error", applog.M("error", err))
+			applog.Error("gemini stream error", applog.BuildMetadata("error", err))
 			return nil, err
 		}
 
@@ -120,14 +117,13 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 			candidate := response.Candidates[0]
 			if candidate.Content != nil {
 				for _, part := range candidate.Content.Parts {
-					// Handle text parts
-					if part.Text != "" {
-						assistantContent += part.Text
-						p.bus.Publish(bus.Event{
-							Type:    bus.EventAgentContentDelta,
-							Payload: bus.ContentDeltaPayload{Content: part.Text},
-						})
+				// Handle text parts
+				if part.Text != "" {
+					assistantContent += part.Text
+					if params.OnDelta != nil {
+						params.OnDelta(llm.StreamDelta{Content: part.Text})
 					}
+				}
 
 					// Handle function calls
 					if part.FunctionCall != nil {
@@ -141,7 +137,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 						// Marshal the arguments to JSON string
 						argsJSON, err := json.Marshal(part.FunctionCall.Args)
 						if err != nil {
-							applog.Error("gemini function call args marshal error", applog.M("function", part.FunctionCall.Name, "error", err))
+							applog.Error("gemini function call args marshal error", applog.BuildMetadata("function", part.FunctionCall.Name, "error", err))
 							argsJSON = []byte("{}")
 						}
 

@@ -69,7 +69,7 @@ func LoadIdentity(workspaceDir string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		applog.Error("context load identity read failed", applog.M("path", path, "error", err))
+		applog.Error("context load identity read failed", applog.BuildMetadata("path", path, "error", err))
 		return "", fmt.Errorf("read identity file: %w", err)
 	}
 	return strings.TrimSpace(string(data)), nil
@@ -82,20 +82,20 @@ func SystemPrompt() string {
 
 // BuildSystemPrompt builds the composed system prompt for the workspace.
 func BuildSystemPrompt(workspaceDir string) (string, error) {
-	applog.Debug("context build start", applog.M("workspace_dir", workspaceDir))
+	applog.Debug("context build start", applog.BuildMetadata("workspace_dir", workspaceDir))
 	identity, err := LoadIdentity(workspaceDir)
 	if err != nil {
-		applog.Error("context build identity failed", applog.M("workspace_dir", workspaceDir, "error", err))
+		applog.Error("context build identity failed", applog.BuildMetadata("workspace_dir", workspaceDir, "error", err))
 		return "", fmt.Errorf("load identity: %w", err)
 	}
 	skills, err := LoadSkills(workspaceDir)
 	if err != nil {
-		applog.Error("context build skills failed", applog.M("workspace_dir", workspaceDir, "error", err))
+		applog.Error("context build skills failed", applog.BuildMetadata("workspace_dir", workspaceDir, "error", err))
 		return "", fmt.Errorf("load skills: %w", err)
 	}
 
 	prompt := composeSystemPrompt(SystemPrompt(), identity, skills)
-	applog.Info("context build success", applog.M("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills)))
+	applog.Info("context build success", applog.BuildMetadata("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills)))
 	return prompt, nil
 }
 
@@ -109,7 +109,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		applog.Error("context load skills dir read failed", applog.M("dir", dir, "error", err))
+		applog.Error("context load skills dir read failed", applog.BuildMetadata("dir", dir, "error", err))
 		return nil, fmt.Errorf("read skills dir: %w", err)
 	}
 
@@ -127,7 +127,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		absPath := filepath.Join(dir, name)
 		data, err := os.ReadFile(absPath)
 		if err != nil {
-			applog.Error("context load skills file read failed", applog.M("file", name, "error", err))
+			applog.Error("context load skills file read failed", applog.BuildMetadata("file", name, "error", err))
 			return nil, fmt.Errorf("read skill file %q: %w", name, err)
 		}
 
@@ -135,7 +135,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		if !ok {
 			continue
 		}
-		applog.Debug("context load skills file parsed", applog.M("file", name, "skill_name", skillName, "description", description))
+		applog.Debug("context load skills file parsed", applog.BuildMetadata("file", name, "skill_name", skillName, "description", description))
 		out = append(out, Skill{
 			Name:        skillName,
 			Description: description,

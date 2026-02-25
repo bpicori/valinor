@@ -4,25 +4,50 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Display constants for tool call formatting.
+const (
+	maxToolArgsInlineLen    = 60  // max length for inline tool args display
+	maxToolResultDisplayLen = 200 // threshold for truncating tool result display
+)
+
+// Viewport layout constants.
+const (
+	minContentWidth = 10 // minimum content width before falling back to default
+	defaultWidth    = 80 // default width when content width is too small
+)
+
+// rendererCache stores glamour.TermRenderer instances keyed by width.
+// This avoids the expensive allocation of creating a new renderer on every call.
+var rendererCache sync.Map // map[int]*glamour.TermRenderer
+
 // renderMarkdown converts a markdown string to styled ANSI terminal output.
 // Uses glamour with "dark" style and word-wrapping to the given width.
+// The renderer is cached per width to avoid repeated allocations.
 func renderMarkdown(content string, width int) string {
 	if content == "" {
 		return ""
 	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStylePath("dark"),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return content // fallback to raw text
+
+	r, ok := rendererCache.Load(width)
+	if !ok {
+		newR, err := glamour.NewTermRenderer(
+			glamour.WithStylePath("dark"),
+			glamour.WithWordWrap(width),
+		)
+		if err != nil {
+			return content // fallback to raw text
+		}
+		r, _ = rendererCache.LoadOrStore(width, newR)
 	}
+
+	renderer := r.(*glamour.TermRenderer)
 	out, err := renderer.Render(content)
 	if err != nil {
 		return content
@@ -67,14 +92,14 @@ func extractPrimaryToolArg(tc toolCall) string {
 		}
 	}
 
-	if tc.Args != "" && len(tc.Args) < 60 {
+	if tc.Args != "" && len(tc.Args) < maxToolArgsInlineLen {
 		return tc.Args
 	}
 	return ""
 }
 
 func formatToolResultSummary(result string) string {
-	if len(result) > 200 {
+	if len(result) > maxToolResultDisplayLen {
 		return "(" + strconv.Itoa(len(result)) + " chars)"
 	}
 	if strings.Contains(result, "\n") {
@@ -90,8 +115,8 @@ func (m *Model) rebuildViewportContent() {
 		return
 	}
 	width := m.contentWidth
-	if width < 10 {
-		width = 80
+	if width < minContentWidth {
+		width = defaultWidth
 	}
 	var b strings.Builder
 	for _, msg := range m.messages {
@@ -105,6 +130,50 @@ func (m *Model) rebuildViewportContent() {
 		}
 	}
 	m.viewport.SetContent(b.String())
+	m.viewport.GotoBottom()
+}
+
+// appendStreamingContent efficiently updates the viewport during streaming.
+// Instead of rebuilding all messages, it re-renders only the last streaming message.
+func (m *Model) appendStreamingContent() {
+	if !m.ready {
+		return
+	}
+
+	width := m.contentWidth
+	if width < minContentWidth {
+		width = defaultWidth
+	}
+
+	// Find the content up to (but not including) the last message
+	// We'll rebuild just the last assistant message with the new content
+	var previousContent string
+	if len(m.messages) > 1 {
+		var b strings.Builder
+		for i := 0; i < len(m.messages)-1; i++ {
+			msg := m.messages[i]
+			switch msg.Role {
+			case roleUser:
+				b.WriteString(renderUserMessageBlock(msg, width))
+				b.WriteString("\n")
+			case roleAssistant:
+				b.WriteString(renderAssistantMessageBlock(msg, width))
+				b.WriteString("\n")
+			}
+		}
+		previousContent = b.String()
+	}
+
+	// Render the last message (which should be the streaming assistant message)
+	if last, ok := m.lastMessage(); ok {
+		var b strings.Builder
+		if previousContent != "" {
+			b.WriteString(previousContent)
+		}
+		b.WriteString(renderAssistantMessageBlock(*last, width))
+		b.WriteString("\n")
+		m.viewport.SetContent(b.String())
+	}
 	m.viewport.GotoBottom()
 }
 
@@ -201,6 +270,21 @@ func (m Model) View() string {
 	if m.providerName != "" {
 		providerModel = m.providerName + " / " + m.modelName
 	}
+	sessionLabel := m.sessionKey
+	if strings.TrimSpace(sessionLabel) == "" {
+		sessionLabel = "(not attached)"
+	}
+	gatewayLabel := "Gateway: connected"
+	gatewayStyle := gatewayConnectedStyle
+	if !m.gatewayConnected {
+		gatewayLabel = "Gateway: disconnected"
+		gatewayStyle = gatewayDisconnectedStyle
+		if status := strings.TrimSpace(m.gatewayStatus); status != "" {
+			gatewayLabel += " (" + status + ")"
+		}
+	}
+	gatewayRow := footerStyle.Width(m.width).Render(gatewayStyle.Render(gatewayLabel))
+	sessionRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Session: "+sessionLabel))
 	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: "+providerModel) + " (ctrl+m)")
 	contextLabel := "Context: "
 	if m.contextEstimated {
@@ -216,6 +300,6 @@ func (m Model) View() string {
 		Width(m.width).
 		Render(tokensText)
 
-	footer := lipgloss.JoinVertical(lipgloss.Left, modelRow, tokensRow)
+	footer := lipgloss.JoinVertical(lipgloss.Left, gatewayRow, sessionRow, modelRow, tokensRow)
 	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
 }

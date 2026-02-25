@@ -3,7 +3,6 @@ package factory
 import (
 	"fmt"
 
-	"valinor/internal/bus"
 	"valinor/internal/config"
 	"valinor/internal/llm"
 	"valinor/internal/llm/providers/anthropic"
@@ -12,16 +11,16 @@ import (
 )
 
 // CreateProvider instantiates a provider based on the given configuration.
-func CreateProvider(cfg config.ProviderConfig, bus *bus.Bus) (llm.Provider, error) {
+func CreateProvider(cfg config.ProviderConfig) (llm.Provider, error) {
 	switch cfg.Type {
 	case "openai":
-		return openai.New(cfg.APIKey, "", bus)
+		return openai.New(cfg.APIKey, "")
 	case "anthropic":
-		return anthropic.New(cfg.APIKey, bus)
+		return anthropic.New(cfg.APIKey)
 	case "gemini":
-		return gemini.New(cfg.APIKey, bus)
+		return gemini.New(cfg.APIKey)
 	case "openai-compatible":
-		return openai.New(cfg.APIKey, cfg.BaseURL, bus)
+		return openai.New(cfg.APIKey, cfg.BaseURL)
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", cfg.Type)
 	}
