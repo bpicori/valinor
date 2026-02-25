@@ -84,6 +84,7 @@ func (r *Router) Start(ctx context.Context) {
 		bus.EventAgentDone,
 		bus.EventAgentError,
 		bus.EventAgentCancelled,
+		bus.EventProviderModelsResult,
 	)
 
 	// Start the event forwarding goroutine
@@ -287,6 +288,15 @@ func (r *Router) commandToBusEvent(cmd Command) bus.Event {
 				Payload: bus.CreateNewSessionPayload{
 					Provider: p.Provider,
 					Model:    p.Model,
+				},
+			}
+		}
+	case CommandRequestProviderModels:
+		if p, ok := cmd.Payload.(RequestProviderModelsPayload); ok {
+			return bus.Event{
+				Type: bus.EventRequestProviderModels,
+				Payload: bus.RequestProviderModelsPayload{
+					Provider: p.Provider,
 				},
 			}
 		}

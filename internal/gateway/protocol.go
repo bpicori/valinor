@@ -11,20 +11,20 @@ import (
 
 // WireEnvelope is the JSON structure sent over the WebSocket.
 type WireEnvelope struct {
-	Kind      string          `json:"kind"`       // "command", "event", "handshake", "error"
-	Type      string          `json:"type"`       // specific message type
+	Kind      string          `json:"kind"`                 // "command", "event", "handshake", "error"
+	Type      string          `json:"type"`                 // specific message type
 	RequestID string          `json:"request_id,omitempty"` // optional correlation ID
-	Timestamp int64           `json:"timestamp"`  // Unix milliseconds
+	Timestamp int64           `json:"timestamp"`            // Unix milliseconds
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Error     string          `json:"error,omitempty"` // for error responses
 }
 
 // Constants for envelope kinds.
 const (
-	KindCommand  = "command"
-	KindEvent    = "event"
+	KindCommand   = "command"
+	KindEvent     = "event"
 	KindHandshake = "handshake"
-	KindError    = "error"
+	KindError     = "error"
 )
 
 // MaxMessageSize is the maximum allowed WebSocket message size (1 MB).
@@ -197,6 +197,16 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 		}
 		cmd.Payload = p
 
+	case router.CommandRequestProviderModels:
+		var p router.RequestProviderModelsPayload
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			return nil, fmt.Errorf("invalid request_provider_models payload: %w", err)
+		}
+		if p.Provider == "" {
+			return nil, fmt.Errorf("request_provider_models requires 'provider' field")
+		}
+		cmd.Payload = p
+
 	case router.CommandNewConversation, router.CommandCancelAgentRun:
 		// These commands have no payload
 		cmd.Payload = nil
@@ -207,4 +217,3 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 
 	return cmd, nil
 }
-

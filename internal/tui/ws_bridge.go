@@ -379,6 +379,13 @@ func (b *WSBridge) SendCreateNewSession(provider, model string) bool {
 	})
 }
 
+// SendRequestProviderModels sends a request for available models for a provider.
+func (b *WSBridge) SendRequestProviderModels(provider string) bool {
+	return b.SendCommand(router.CommandRequestProviderModels, router.RequestProviderModelsPayload{
+		Provider: provider,
+	})
+}
+
 // SendCancelAgentRun sends a cancel agent run command.
 func (b *WSBridge) SendCancelAgentRun() bool {
 	return b.SendCommand(router.CommandCancelAgentRun, nil)
@@ -433,6 +440,13 @@ func ParseWSEvent(msg wsEventMsg) (router.Event, error) {
 
 	case router.EventContextTokens:
 		var p router.ContextTokensPayload
+		if err := json.Unmarshal(msg.Payload, &p); err != nil {
+			return event, err
+		}
+		event.Payload = p
+
+	case router.EventProviderModelsResult:
+		var p router.ProviderModelsResultPayload
 		if err := json.Unmarshal(msg.Payload, &p); err != nil {
 			return event, err
 		}

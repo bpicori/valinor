@@ -24,6 +24,7 @@ type CommandSender interface {
 	SendNewConversation() bool
 	SendChangeProviderModel(provider, model string) bool
 	SendCreateNewSession(provider, model string) bool
+	SendRequestProviderModels(provider string) bool
 	SendCancelAgentRun() bool
 }
 
@@ -176,7 +177,7 @@ func New(sender CommandSender, cfg config.Config, providerName, modelName string
 	l.Styles.Title = lipgloss.NewStyle().Bold(true)
 
 	return Model{
-		bus:              b,
+		sender:           sender,
 		config:           cfg,
 		providerName:     providerName,
 		modelName:        modelName,
@@ -265,7 +266,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
 	}
 	if m.state == stateWaiting {
 		if msg.String() == "esc" {
-			m.sender.SendCancelAgentRun()
+			if m.sender != nil {
+				m.sender.SendCancelAgentRun()
+			}
 			return m, nil, true, false
 		}
 		return m, nil, false, false
@@ -308,10 +311,12 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 			return m, nil, true, false
 		}
 		if i, ok := m.modelPicker.SelectedItem().(providerModelItem); ok {
-			if i.Provider != m.providerName {
-				m.sender.SendCreateNewSession(i.Provider, i.Model)
-			} else {
-				m.sender.SendChangeProviderModel(i.Provider, i.Model)
+			if m.sender != nil {
+				if i.Provider != m.providerName {
+					m.sender.SendCreateNewSession(i.Provider, i.Model)
+				} else {
+					m.sender.SendChangeProviderModel(i.Provider, i.Model)
+				}
 			}
 			m.providerName = i.Provider
 			m.modelName = i.Model
@@ -357,7 +362,7 @@ func (m Model) openModelPickerForProvider(provider string) Model {
 		return m.openProviderPicker()
 	}
 	if _, ok := m.config.Providers[provider]; !ok {
-		applog.Warning("tui unknown provider for model picker", applog.M("provider", provider))
+		applog.Warning("tui unknown provider for model picker", applog.BuildMetadata("provider", provider))
 		return m.openProviderPicker()
 	}
 
@@ -372,10 +377,11 @@ func (m Model) openModelPickerForProvider(provider string) Model {
 	if m.contentWidth > 4 && m.height > 6 {
 		m.modelPicker.SetSize(m.contentWidth-4, m.height-6)
 	}
-	m.bus.Publish(bus.Event{
-		Type:    bus.EventRequestProviderModels,
-		Payload: bus.RequestProviderModelsPayload{Provider: provider},
-	})
+	if m.sender == nil || !m.sender.SendRequestProviderModels(provider) {
+		m.modelPickerBusy = false
+		m.modelPickerErr = "failed to request provider models"
+		m.modelPicker.Title = "Select Model (" + provider + ") - request failed"
+	}
 	return m
 }
 
@@ -390,7 +396,9 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 		return m, nil, true, true
 	}
 	if input == "/new" || input == "/clear" {
-		m.sender.SendNewConversation()
+		if m.sender != nil {
+			m.sender.SendNewConversation()
+		}
 		return m, nil, true, false
 	}
 	if strings.HasPrefix(input, "/model") {
@@ -402,7 +410,7 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 	m.state = stateWaiting
 	m.thinkingStartedAt = time.Now()
 	m.rebuildViewportContent()
-	if !m.sender.SendUserMessage(input) {
+	if m.sender == nil || !m.sender.SendUserMessage(input) {
 		if last, ok := m.lastMessage(); ok {
 			last.Streaming = false
 			last.Error = "failed to send message to gateway"
@@ -438,12 +446,16 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 		model = strings.TrimSpace(parts[1])
 	}
 	if provider != m.providerName {
-		m.sender.SendCreateNewSession(provider, model)
+		if m.sender != nil {
+			m.sender.SendCreateNewSession(provider, model)
+		}
 		m.providerName = provider
 		m.modelName = model
 		return m, nil, true, false
 	}
-	m.sender.SendChangeProviderModel(provider, model)
+	if m.sender != nil {
+		m.sender.SendChangeProviderModel(provider, model)
+	}
 	m.providerName = provider
 	m.modelName = model
 	return m, nil, true, false
@@ -511,14 +523,14 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
 		return m, nil
-	case bus.EventProviderModelsResult:
-		payload, ok := msg.Event.Payload.(bus.ProviderModelsResultPayload)
+	case router.EventProviderModelsResult:
+		payload, ok := event.Payload.(router.ProviderModelsResultPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleProviderModelsResult(payload)
-	case bus.EventContextTokens:
-		payload, ok := msg.Event.Payload.(bus.ContextTokensPayload)
+	case router.EventContextTokens:
+		payload, ok := event.Payload.(router.ContextTokensPayload)
 		if !ok {
 			return m, nil
 		}
@@ -582,7 +594,7 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *Model) handleProviderModelsResult(payload bus.ProviderModelsResultPayload) tea.Cmd {
+func (m *Model) handleProviderModelsResult(payload router.ProviderModelsResultPayload) tea.Cmd {
 	if m.state != stateModelPicker || m.modelPickerState != pickerSelectModel {
 		return nil
 	}
@@ -594,7 +606,7 @@ func (m *Model) handleProviderModelsResult(payload bus.ProviderModelsResultPaylo
 	m.modelPickerErr = payload.Error
 	m.modelPicker.Title = "Select Model (" + payload.Provider + ")"
 	if payload.Error != "" {
-		applog.Warning("provider model lookup failed", applog.M("provider", payload.Provider, "error", payload.Error))
+		applog.Warning("provider model lookup failed", applog.BuildMetadata("provider", payload.Provider, "error", payload.Error))
 		m.modelPicker.Title = "Select Model (" + payload.Provider + ") - fallback"
 	}
 
@@ -648,15 +660,6 @@ func (m *Model) handleProviderModelsResult(payload bus.ProviderModelsResultPaylo
 		m.modelPicker.Select(selectedIdx)
 	}
 	return nil
-}
-
-func (m *Model) handleUserMessage(payload bus.UserMessagePayload) tea.Cmd {
-	m.messages = append(m.messages, chatMessage{Role: roleUser, Content: payload.Content})
-	m.messages = append(m.messages, chatMessage{Role: roleAssistant, Streaming: true})
-	m.state = stateWaiting
-	m.thinkingStartedAt = time.Now()
-	m.rebuildViewportContent()
-	return m.spinner.Tick
 }
 
 func (m *Model) handleNewConversation() tea.Cmd {

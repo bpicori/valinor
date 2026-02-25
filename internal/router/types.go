@@ -55,7 +55,7 @@ type Envelope struct {
 	Type      string          `json:"type"`       // specific message type
 	RequestID string          `json:"request_id"` // optional correlation ID
 	Timestamp time.Time       `json:"timestamp"`
-	Payload   json.RawMessage `json:"payload"`    // typed JSON payload
+	Payload   json.RawMessage `json:"payload"` // typed JSON payload
 }
 
 // CommandKind identifies command envelopes.
@@ -69,11 +69,12 @@ const HandshakeKind = "handshake"
 
 // Command types (client -> router).
 const (
-	CommandUserMessage         = "user_message"
-	CommandNewConversation     = "new_conversation"
-	CommandChangeProviderModel = "change_provider_model"
-	CommandCreateNewSession    = "create_new_session"
-	CommandCancelAgentRun      = "cancel_agent_run"
+	CommandUserMessage           = "user_message"
+	CommandNewConversation       = "new_conversation"
+	CommandChangeProviderModel   = "change_provider_model"
+	CommandCreateNewSession      = "create_new_session"
+	CommandRequestProviderModels = "request_provider_models"
+	CommandCancelAgentRun        = "cancel_agent_run"
 )
 
 // Event types (router -> client).
@@ -89,6 +90,7 @@ const (
 	EventAgentDone            = "agent_done"
 	EventAgentError           = "agent_error"
 	EventAgentCancelled       = "agent_cancelled"
+	EventProviderModelsResult = "provider_models_result"
 	EventSessionAttached      = "session_attached"
 	EventNewConversation      = "new_conversation"
 	EventChangeProviderModel  = "change_provider_model"
@@ -110,13 +112,13 @@ type ClientHelloPayload struct {
 
 // HelloAckPayload is the gateway response to client hello.
 type HelloAckPayload struct {
-	Success          bool   `json:"success"`
-	Error            string `json:"error,omitempty"`
-	SessionKey       string `json:"session_key,omitempty"`
-	Provider         string `json:"provider,omitempty"`
-	Model            string `json:"model,omitempty"`
-	ContextTokens    int64  `json:"context_tokens,omitempty"`
-	TokensEstimated  bool   `json:"tokens_estimated,omitempty"`
+	Success         bool   `json:"success"`
+	Error           string `json:"error,omitempty"`
+	SessionKey      string `json:"session_key,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	Model           string `json:"model,omitempty"`
+	ContextTokens   int64  `json:"context_tokens,omitempty"`
+	TokensEstimated bool   `json:"tokens_estimated,omitempty"`
 }
 
 // Command payloads.
@@ -136,6 +138,11 @@ type ChangeProviderModelPayload struct {
 type CreateNewSessionPayload struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
+}
+
+// RequestProviderModelsPayload carries provider name to fetch available models for.
+type RequestProviderModelsPayload struct {
+	Provider string `json:"provider"`
 }
 
 // Event payloads.
@@ -203,6 +210,19 @@ type AgentErrorPayload struct {
 
 // AgentCancelledPayload indicates the agent run was cancelled.
 type AgentCancelledPayload struct{}
+
+// ProviderModel describes a model option from a provider.
+type ProviderModel struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"display_name"`
+}
+
+// ProviderModelsResultPayload carries available models fetched for a provider.
+type ProviderModelsResultPayload struct {
+	Provider string          `json:"provider"`
+	Models   []ProviderModel `json:"models"`
+	Error    string          `json:"error,omitempty"`
+}
 
 // SessionAttachedPayload indicates a session has been attached to this identity.
 type SessionAttachedPayload struct {
@@ -305,6 +325,22 @@ func (e Event) ToBusEvent() bus.Event {
 	case EventAgentCancelled:
 		busType = bus.EventAgentCancelled
 		payload = bus.AgentCancelledPayload{}
+	case EventProviderModelsResult:
+		busType = bus.EventProviderModelsResult
+		if p, ok := e.Payload.(ProviderModelsResultPayload); ok {
+			models := make([]bus.ProviderModel, 0, len(p.Models))
+			for _, model := range p.Models {
+				models = append(models, bus.ProviderModel{
+					ID:          model.ID,
+					DisplayName: model.DisplayName,
+				})
+			}
+			payload = bus.ProviderModelsResultPayload{
+				Provider: p.Provider,
+				Models:   models,
+				Error:    p.Error,
+			}
+		}
 	}
 
 	return bus.Event{Type: busType, Payload: payload}
@@ -388,6 +424,22 @@ func FromBusEvent(be bus.Event) Event {
 	case bus.EventAgentCancelled:
 		e.Type = EventAgentCancelled
 		e.Payload = AgentCancelledPayload{}
+	case bus.EventProviderModelsResult:
+		e.Type = EventProviderModelsResult
+		if p, ok := be.Payload.(bus.ProviderModelsResultPayload); ok {
+			models := make([]ProviderModel, 0, len(p.Models))
+			for _, model := range p.Models {
+				models = append(models, ProviderModel{
+					ID:          model.ID,
+					DisplayName: model.DisplayName,
+				})
+			}
+			e.Payload = ProviderModelsResultPayload{
+				Provider: p.Provider,
+				Models:   models,
+				Error:    p.Error,
+			}
+		}
 	}
 
 	return e
@@ -422,6 +474,13 @@ func CommandFromBusEvent(be bus.Event, identity ClientIdentity) Command {
 			cmd.Payload = CreateNewSessionPayload{
 				Provider: p.Provider,
 				Model:    p.Model,
+			}
+		}
+	case bus.EventRequestProviderModels:
+		cmd.Type = CommandRequestProviderModels
+		if p, ok := be.Payload.(bus.RequestProviderModelsPayload); ok {
+			cmd.Payload = RequestProviderModelsPayload{
+				Provider: p.Provider,
 			}
 		}
 	case bus.EventCancelAgentRun:
