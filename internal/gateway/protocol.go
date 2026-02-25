@@ -27,6 +27,14 @@ const (
 	KindError     = "error"
 )
 
+// validKinds is the set of allowed envelope kinds for validation.
+var validKinds = map[string]bool{
+	KindCommand:   true,
+	KindEvent:     true,
+	KindHandshake: true,
+	KindError:     true,
+}
+
 // MaxMessageSize is the maximum allowed WebSocket message size (1 MB).
 const MaxMessageSize = 1024 * 1024
 
@@ -52,12 +60,6 @@ func ParseEnvelope(data []byte) (*WireEnvelope, error) {
 		return nil, fmt.Errorf("missing 'kind' field")
 	}
 
-	validKinds := map[string]bool{
-		KindCommand:   true,
-		KindEvent:     true,
-		KindHandshake: true,
-		KindError:     true,
-	}
 	if !validKinds[env.Kind] {
 		return nil, fmt.Errorf("invalid 'kind': %s", env.Kind)
 	}

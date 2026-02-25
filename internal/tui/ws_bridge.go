@@ -18,6 +18,13 @@ import (
 	"valinor/internal/router"
 )
 
+// WebSocket timeout and backoff constants.
+const (
+	dialTimeout         = 10 * time.Second // timeout for initial WebSocket dial
+	handshakeTimeout    = 5 * time.Second  // timeout for handshake response
+	maxReconnectBackoff = 30 * time.Second // maximum exponential backoff for reconnection
+)
+
 // WSBridge is a WebSocket-based transport bridge for the TUI.
 // It replaces the direct bus dependency with WebSocket communication to the gateway.
 type WSBridge struct {
@@ -119,11 +126,11 @@ func (b *WSBridge) connect() error {
 	}
 
 	// Connect with timeout
-	dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
 
 	dialer := websocket.Dialer{
-		HandshakeTimeout: 10 * time.Second,
+		HandshakeTimeout: dialTimeout,
 	}
 
 	conn, _, err := dialer.DialContext(dialCtx, u.String(), nil)
@@ -156,7 +163,7 @@ func (b *WSBridge) connect() error {
 	// Wait for hello_ack with timeout.
 	// The gateway can emit early events during subscribe, so we keep reading
 	// until hello_ack arrives (or the read deadline expires).
-	b.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	b.conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 	var ack gateway.WireEnvelope
 	for {
 		var env gateway.WireEnvelope
@@ -301,7 +308,7 @@ func (b *WSBridge) reconnect() error {
 
 	// Exponential backoff: 1s, 2s, 4s, 8s, max 30s
 	backoff := time.Second
-	maxBackoff := 30 * time.Second
+	maxBackoff := maxReconnectBackoff
 
 	for attempts := 0; attempts < 10; attempts++ {
 		applog.Info("tui ws bridge: attempting reconnect",

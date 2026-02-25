@@ -11,6 +11,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Display constants for tool call formatting.
+const (
+	maxToolArgsInlineLen    = 60  // max length for inline tool args display
+	maxToolResultDisplayLen = 200 // threshold for truncating tool result display
+)
+
+// Viewport layout constants.
+const (
+	minContentWidth = 10 // minimum content width before falling back to default
+	defaultWidth    = 80 // default width when content width is too small
+)
+
 // rendererCache stores glamour.TermRenderer instances keyed by width.
 // This avoids the expensive allocation of creating a new renderer on every call.
 var rendererCache sync.Map // map[int]*glamour.TermRenderer
@@ -80,14 +92,14 @@ func extractPrimaryToolArg(tc toolCall) string {
 		}
 	}
 
-	if tc.Args != "" && len(tc.Args) < 60 {
+	if tc.Args != "" && len(tc.Args) < maxToolArgsInlineLen {
 		return tc.Args
 	}
 	return ""
 }
 
 func formatToolResultSummary(result string) string {
-	if len(result) > 200 {
+	if len(result) > maxToolResultDisplayLen {
 		return "(" + strconv.Itoa(len(result)) + " chars)"
 	}
 	if strings.Contains(result, "\n") {
@@ -103,8 +115,8 @@ func (m *Model) rebuildViewportContent() {
 		return
 	}
 	width := m.contentWidth
-	if width < 10 {
-		width = 80
+	if width < minContentWidth {
+		width = defaultWidth
 	}
 	var b strings.Builder
 	for _, msg := range m.messages {
@@ -129,8 +141,8 @@ func (m *Model) appendStreamingContent() {
 	}
 
 	width := m.contentWidth
-	if width < 10 {
-		width = 80
+	if width < minContentWidth {
+		width = defaultWidth
 	}
 
 	// Find the content up to (but not including) the last message
