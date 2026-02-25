@@ -274,6 +274,16 @@ func (m Model) View() string {
 	if strings.TrimSpace(sessionLabel) == "" {
 		sessionLabel = "(not attached)"
 	}
+	gatewayLabel := "Gateway: connected"
+	gatewayStyle := gatewayConnectedStyle
+	if !m.gatewayConnected {
+		gatewayLabel = "Gateway: disconnected"
+		gatewayStyle = gatewayDisconnectedStyle
+		if status := strings.TrimSpace(m.gatewayStatus); status != "" {
+			gatewayLabel += " (" + status + ")"
+		}
+	}
+	gatewayRow := footerStyle.Width(m.width).Render(gatewayStyle.Render(gatewayLabel))
 	sessionRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Session: "+sessionLabel))
 	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: "+providerModel) + " (ctrl+m)")
 	contextLabel := "Context: "
@@ -290,6 +300,6 @@ func (m Model) View() string {
 		Width(m.width).
 		Render(tokensText)
 
-	footer := lipgloss.JoinVertical(lipgloss.Left, sessionRow, modelRow, tokensRow)
+	footer := lipgloss.JoinVertical(lipgloss.Left, gatewayRow, sessionRow, modelRow, tokensRow)
 	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
 }

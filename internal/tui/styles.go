@@ -58,6 +58,14 @@ var (
 				Foreground(lipgloss.Color("252")).
 				Bold(true)
 
+	gatewayConnectedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("108")).
+				Bold(true)
+
+	gatewayDisconnectedStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("203")).
+					Bold(true)
+
 	// Token usage styles.
 	tokensLabelStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("238"))

@@ -133,6 +133,8 @@ type Usage struct {
 type Model struct {
 	sender            CommandSender
 	config            config.Config
+	gatewayConnected  bool
+	gatewayStatus     string
 	sessionKey        string
 	providerName      string
 	modelName         string
@@ -179,6 +181,7 @@ func New(sender CommandSender, cfg config.Config, providerName, modelName string
 	return Model{
 		sender:           sender,
 		config:           cfg,
+		gatewayConnected: true,
 		providerName:     providerName,
 		modelName:        modelName,
 		textinput:        ti,
@@ -239,12 +242,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleWSEventMsg(typed)
 	// case for connection status changes
 	case connectionStatusMsg:
-		// Connection status is logged but not blocking to UI
+		// Connection status updates UI footer state.
 		if !typed.Connected && typed.Error != nil {
 			applog.Warning("tui connection lost", applog.BuildMetadata("error", typed.Error))
+			m.gatewayConnected = false
+			m.gatewayStatus = typed.Error.Error()
 			return m, nil
 		}
 		if typed.Connected {
+			m.gatewayConnected = true
+			m.gatewayStatus = ""
 			if typed.SessionKey != "" {
 				m.sessionKey = typed.SessionKey
 			}
@@ -253,6 +260,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if typed.Model != "" {
 				m.modelName = typed.Model
+			}
+			return m, nil
+		}
+
+		// Handle generic disconnected messages even when no explicit error is attached.
+		if !typed.Connected {
+			m.gatewayConnected = false
+			if m.gatewayStatus == "" {
+				m.gatewayStatus = "connection lost"
 			}
 		}
 		return m, nil
