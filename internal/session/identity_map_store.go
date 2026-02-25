@@ -105,7 +105,7 @@ func (s *IdentityMapStore) Set(identityKey, sessionID, clientType string) error 
 	}
 
 	applog.Info("identity mapping saved",
-		applog.M("identity_key", identityKey, "session_id", sessionID))
+		applog.BuildMetadata("identity_key", identityKey, "session_id", sessionID))
 
 	return nil
 }
@@ -125,7 +125,7 @@ func (s *IdentityMapStore) Remove(identityKey string) error {
 		return fmt.Errorf("save after remove: %w", err)
 	}
 
-	applog.Info("identity mapping removed", applog.M("identity_key", identityKey))
+	applog.Info("identity mapping removed", applog.BuildMetadata("identity_key", identityKey))
 
 	return nil
 }
@@ -151,7 +151,7 @@ func (s *IdentityMapStore) RemoveBySessionID(sessionID string) error {
 		return fmt.Errorf("save after session removal: %w", err)
 	}
 
-	applog.Info("identity mappings removed for session", applog.M("session_id", sessionID))
+	applog.Info("identity mappings removed for session", applog.BuildMetadata("session_id", sessionID))
 
 	return nil
 }
@@ -193,7 +193,7 @@ func (s *IdentityMapStore) load() error {
 	}
 
 	applog.Info("identity mappings loaded",
-		applog.M("count", len(s.data), "path", s.path))
+		applog.BuildMetadata("count", len(s.data), "path", s.path))
 
 	return nil
 }

@@ -11,9 +11,9 @@ import (
 	"valinor/internal/session"
 )
 
-// ClientEventSink is the interface for sending events to a specific client.
+// ClientEventConsumer is the interface for sending events to a specific client.
 // The gateway implements this to forward events to connected WebSocket clients.
-type ClientEventSink interface {
+type ClientEventConsumer interface {
 	// SendEvent sends an event to the client. Non-blocking: drops event if client buffer full.
 	SendEvent(event Event) bool
 	// Close closes the client connection.
@@ -22,26 +22,7 @@ type ClientEventSink interface {
 
 // Router is the central routing component that manages client connections,
 // session bindings, and routes commands/events between clients and the session core.
-type Router interface {
-	// HandleCommand processes a command from a client.
-	HandleCommand(ctx context.Context, cmd Command) error
-
-	// SubscribeClient registers a client event sink for an identity.
-	// Returns the session binding for this identity (creates/gets session).
-	SubscribeClient(ctx context.Context, identity ClientIdentity, sink ClientEventSink) (*SessionBinding, error)
-
-	// UnsubscribeClient unregisters a client event sink.
-	UnsubscribeClient(identity ClientIdentity)
-
-	// Start starts the router event forwarding loop.
-	Start(ctx context.Context)
-
-	// Stop stops the router and cleans up.
-	Stop()
-}
-
-// DefaultRouter implements the Router interface, bridging clients to the session core.
-type DefaultRouter struct {
+type Router struct {
 	bus         *bus.Bus
 	runtime     *session.Runtime
 	manager     *session.Manager
@@ -50,8 +31,8 @@ type DefaultRouter struct {
 
 	registry *SessionRegistry
 
-	mu          sync.RWMutex
-	clientSinks map[string]ClientEventSink // key: identity key
+	mu              sync.RWMutex
+	clientConsumers map[string]ClientEventConsumer // key: identity key
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -67,20 +48,20 @@ func NewRouter(
 	manager *session.Manager,
 	sessionOpts session.SessionOptions,
 	identityMap *session.IdentityMapStore,
-) *DefaultRouter {
-	return &DefaultRouter{
-		bus:         b,
-		runtime:     runtime,
-		manager:     manager,
-		sessionOpts: sessionOpts,
-		identityMap: identityMap,
-		registry:    NewSessionRegistry(),
-		clientSinks: make(map[string]ClientEventSink),
+) *Router {
+	return &Router{
+		bus:             b,
+		runtime:         runtime,
+		manager:         manager,
+		sessionOpts:     sessionOpts,
+		identityMap:     identityMap,
+		registry:        NewSessionRegistry(),
+		clientConsumers: make(map[string]ClientEventConsumer),
 	}
 }
 
 // Start starts the router's event forwarding loop.
-func (r *DefaultRouter) Start(ctx context.Context) {
+func (r *Router) Start(ctx context.Context) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -113,7 +94,7 @@ func (r *DefaultRouter) Start(ctx context.Context) {
 }
 
 // Stop stops the router and cleans up resources.
-func (r *DefaultRouter) Stop() {
+func (r *Router) Stop() {
 	r.mu.Lock()
 	if r.cancel != nil {
 		r.cancel()
@@ -128,19 +109,25 @@ func (r *DefaultRouter) Stop() {
 	// Wait for goroutines to finish
 	r.wg.Wait()
 
-	// Close all client sinks
+	// Copy and clear consumers under lock, then close outside lock to avoid lock
+	// re-entry when consumer.Close() calls back into UnsubscribeClient.
 	r.mu.Lock()
-	for key, sink := range r.clientSinks {
-		sink.Close()
-		delete(r.clientSinks, key)
+	consumers := make([]ClientEventConsumer, 0, len(r.clientConsumers))
+	for key, consumer := range r.clientConsumers {
+		consumers = append(consumers, consumer)
+		delete(r.clientConsumers, key)
 	}
 	r.mu.Unlock()
 
-	applog.Info("router stopped", applog.M("bindings", r.registry.Count()))
+	for _, consumer := range consumers {
+		consumer.Close()
+	}
+
+	applog.Info("router stopped", applog.BuildMetadata("bindings", r.registry.Count()))
 }
 
-// SubscribeClient registers a client event sink and returns/creates their session binding.
-func (r *DefaultRouter) SubscribeClient(ctx context.Context, identity ClientIdentity, sink ClientEventSink) (*SessionBinding, error) {
+// SubscribeClient registers a client event consumer and returns/creates their session binding.
+func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, consumer ClientEventConsumer) (*SessionBinding, error) {
 	// Validate identity
 	if err := ValidateClientIdentity(identity); err != nil {
 		return nil, fmt.Errorf("invalid client identity: %w", err)
@@ -150,19 +137,22 @@ func (r *DefaultRouter) SubscribeClient(ctx context.Context, identity ClientIden
 
 	// Check if we already have an in-memory binding
 	if binding := r.registry.GetByKey(key); binding != nil {
-		// Register the new sink (replaces any existing sink for this identity)
+		// Register the new consumer (replaces any existing consumer for this identity).
+		// Close previous consumer outside lock to avoid deadlock/re-entrancy issues.
+		var oldConsumer ClientEventConsumer
 		r.mu.Lock()
-		if oldSink, ok := r.clientSinks[key]; ok {
-			oldSink.Close()
-		}
-		r.clientSinks[key] = sink
+		oldConsumer = r.clientConsumers[key]
+		r.clientConsumers[key] = consumer
 		r.mu.Unlock()
+		if oldConsumer != nil && oldConsumer != consumer {
+			oldConsumer.Close()
+		}
 
 		applog.Info("router: client reconnected to in-memory session",
-			applog.M("identity_key", key, "session_id", binding.SessionID))
+			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 
 		// Send session attached event
-		sink.SendEvent(Event{
+		consumer.SendEvent(Event{
 			Type: EventSessionAttached,
 			Payload: SessionAttachedPayload{
 				SessionKey: binding.PublicKey,
@@ -187,18 +177,18 @@ func (r *DefaultRouter) SubscribeClient(ctx context.Context, identity ClientIden
 	if r.identityMap != nil {
 		if err := r.identityMap.Set(key, sess.Meta().ID, identity.Type); err != nil {
 			applog.Warning("router: failed to save identity mapping",
-				applog.M("error", err, "identity_key", key))
+				applog.BuildMetadata("error", err, "identity_key", key))
 			// Continue - this is not fatal
 		}
 	}
 
-	// Store the sink
+	// Store the consumer
 	r.mu.Lock()
-	r.clientSinks[key] = sink
+	r.clientConsumers[key] = consumer
 	r.mu.Unlock()
 
 	// Send session attached event
-	sink.SendEvent(Event{
+	consumer.SendEvent(Event{
 		Type: EventSessionAttached,
 		Payload: SessionAttachedPayload{
 			SessionKey: binding.PublicKey,
@@ -209,32 +199,38 @@ func (r *DefaultRouter) SubscribeClient(ctx context.Context, identity ClientIden
 
 	if isNew {
 		applog.Info("router: new client subscribed with new session",
-			applog.M("identity_key", key, "session_id", binding.SessionID))
+			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 	} else {
 		applog.Info("router: new client subscribed with resumed session",
-			applog.M("identity_key", key, "session_id", binding.SessionID))
+			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 	}
 
 	return binding, nil
 }
 
-// UnsubscribeClient unregisters a client event sink.
-func (r *DefaultRouter) UnsubscribeClient(identity ClientIdentity) {
+// UnsubscribeClient unregisters a client event consumer.
+func (r *Router) UnsubscribeClient(identity ClientIdentity, consumer ClientEventConsumer) {
 	key := identity.Key()
 
 	r.mu.Lock()
-	if sink, ok := r.clientSinks[key]; ok {
-		sink.Close()
-		delete(r.clientSinks, key)
+	currentConsumer, ok := r.clientConsumers[key]
+	if ok {
+		if consumer != nil && currentConsumer != consumer {
+			r.mu.Unlock()
+			applog.Debug("router: stale unsubscribe ignored",
+				applog.BuildMetadata("identity_key", key))
+			return
+		}
+		delete(r.clientConsumers, key)
 	}
 	r.mu.Unlock()
 
 	applog.Debug("router: client unsubscribed",
-		applog.M("identity_key", key))
+		applog.BuildMetadata("identity_key", key))
 }
 
 // HandleCommand processes a command from a client.
-func (r *DefaultRouter) HandleCommand(ctx context.Context, cmd Command) error {
+func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 	// Validate we have a valid identity
 	if err := ValidateClientIdentity(cmd.Identity); err != nil {
 		return fmt.Errorf("invalid command identity: %w", err)
@@ -249,7 +245,7 @@ func (r *DefaultRouter) HandleCommand(ctx context.Context, cmd Command) error {
 	}
 
 	applog.Debug("router: handling command",
-		applog.M("identity_key", key,
+		applog.BuildMetadata("identity_key", key,
 			"command_type", cmd.Type,
 			"session_id", binding.SessionID))
 
@@ -261,7 +257,7 @@ func (r *DefaultRouter) HandleCommand(ctx context.Context, cmd Command) error {
 }
 
 // commandToBusEvent converts a router command to a legacy bus event.
-func (r *DefaultRouter) commandToBusEvent(cmd Command) bus.Event {
+func (r *Router) commandToBusEvent(cmd Command) bus.Event {
 	switch cmd.Type {
 	case CommandUserMessage:
 		if p, ok := cmd.Payload.(UserMessagePayload); ok {
@@ -306,7 +302,7 @@ func (r *DefaultRouter) commandToBusEvent(cmd Command) bus.Event {
 
 // getOrCreateSessionForIdentity gets an existing session from the identity map or creates a new one.
 // Returns the session, a boolean indicating if it's new, and any error.
-func (r *DefaultRouter) getOrCreateSessionForIdentity(ctx context.Context, identity ClientIdentity) (*session.Session, bool, error) {
+func (r *Router) getOrCreateSessionForIdentity(ctx context.Context, identity ClientIdentity) (*session.Session, bool, error) {
 	key := identity.Key()
 
 	// Check identity map for existing session
@@ -316,11 +312,11 @@ func (r *DefaultRouter) getOrCreateSessionForIdentity(ctx context.Context, ident
 			sess, err := r.manager.Resume(ctx, mapping.SessionID, r.sessionOpts)
 			if err == nil {
 				applog.Info("router: resumed session from identity map",
-					applog.M("identity_key", key, "session_id", mapping.SessionID))
+					applog.BuildMetadata("identity_key", key, "session_id", mapping.SessionID))
 				return sess, false, nil
 			}
 			applog.Warning("router: failed to resume mapped session, creating new",
-				applog.M("identity_key", key, "session_id", mapping.SessionID, "error", err))
+				applog.BuildMetadata("identity_key", key, "session_id", mapping.SessionID, "error", err))
 			// Remove stale mapping
 			_ = r.identityMap.Remove(key)
 		}
@@ -336,7 +332,7 @@ func (r *DefaultRouter) getOrCreateSessionForIdentity(ctx context.Context, ident
 }
 
 // eventForwardingLoop forwards bus events to connected clients.
-func (r *DefaultRouter) eventForwardingLoop() {
+func (r *Router) eventForwardingLoop() {
 	defer r.wg.Done()
 
 	for {
@@ -355,7 +351,7 @@ func (r *DefaultRouter) eventForwardingLoop() {
 }
 
 // forwardEventToClients converts a bus event and sends to all connected clients.
-func (r *DefaultRouter) forwardEventToClients(be bus.Event) {
+func (r *Router) forwardEventToClients(be bus.Event) {
 	// Convert to router event
 	routerEvent := FromBusEvent(be)
 	if routerEvent.Type == "" {
@@ -364,28 +360,28 @@ func (r *DefaultRouter) forwardEventToClients(be bus.Event) {
 	}
 
 	r.mu.RLock()
-	sinks := make([]ClientEventSink, 0, len(r.clientSinks))
-	for _, sink := range r.clientSinks {
-		sinks = append(sinks, sink)
+	consumers := make([]ClientEventConsumer, 0, len(r.clientConsumers))
+	for _, consumer := range r.clientConsumers {
+		consumers = append(consumers, consumer)
 	}
 	r.mu.RUnlock()
 
 	// Send to all clients (non-blocking)
-	for _, sink := range sinks {
-		sent := sink.SendEvent(routerEvent)
+	for _, consumer := range consumers {
+		sent := consumer.SendEvent(routerEvent)
 		if !sent {
 			applog.Warning("router: event dropped (client buffer full)",
-				applog.M("event_type", routerEvent.Type))
+				applog.BuildMetadata("event_type", routerEvent.Type))
 		}
 	}
 }
 
 // GetBinding retrieves the session binding for an identity (for testing/debugging).
-func (r *DefaultRouter) GetBinding(identity ClientIdentity) *SessionBinding {
+func (r *Router) GetBinding(identity ClientIdentity) *SessionBinding {
 	return r.registry.Get(identity)
 }
 
 // ListBindings returns all current bindings (for debugging/admin).
-func (r *DefaultRouter) ListBindings() []*SessionBinding {
+func (r *Router) ListBindings() []*SessionBinding {
 	return r.registry.List()
 }

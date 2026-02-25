@@ -25,7 +25,7 @@ func validateRelativePath(path string) (string, string) {
 		cleaned = "."
 	}
 	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/..") {
-		applog.Warning("tool path validation failed", applog.M("path", path, "reason", "absolute or .. not allowed"))
+		applog.Warning("tool path validation failed", applog.BuildMetadata("path", path, "reason", "absolute or .. not allowed"))
 		return "", "Tool Error: path must be relative to workspace (absolute paths and \"..\" not allowed)"
 	}
 	return cleaned, ""
@@ -35,7 +35,7 @@ func validateRelativePath(path string) (string, string) {
 func buildToolDef(name, description string, parameters map[string]any) llm.ToolDefinition {
 	paramsJSON, err := json.Marshal(parameters)
 	if err != nil {
-		applog.Error("tool definition marshal error", applog.M("tool", name, "error", err))
+		applog.Error("tool definition marshal error", applog.BuildMetadata("tool", name, "error", err))
 		paramsJSON = json.RawMessage("{}")
 	}
 	return llm.ToolDefinition{

@@ -102,7 +102,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 
 	for response, err := range stream {
 		if err != nil {
-			applog.Error("gemini stream error", applog.M("error", err))
+			applog.Error("gemini stream error", applog.BuildMetadata("error", err))
 			return nil, err
 		}
 
@@ -141,7 +141,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 						// Marshal the arguments to JSON string
 						argsJSON, err := json.Marshal(part.FunctionCall.Args)
 						if err != nil {
-							applog.Error("gemini function call args marshal error", applog.M("function", part.FunctionCall.Name, "error", err))
+							applog.Error("gemini function call args marshal error", applog.BuildMetadata("function", part.FunctionCall.Name, "error", err))
 							argsJSON = []byte("{}")
 						}
 

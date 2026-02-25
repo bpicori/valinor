@@ -55,7 +55,7 @@ func ToAnthropicMessages(messages []llm.Message) []anthropic.MessageParam {
 					// Parse the arguments JSON
 					var inputMap map[string]interface{}
 					if err := json.Unmarshal([]byte(tc.Arguments), &inputMap); err != nil {
-						applog.Error("anthropic tool call conversion error", applog.M("tool", tc.Name, "error", err))
+						applog.Error("anthropic tool call conversion error", applog.BuildMetadata("tool", tc.Name, "error", err))
 						inputMap = map[string]interface{}{}
 					}
 
@@ -90,7 +90,7 @@ func ToAnthropicTool(tool llm.ToolDefinition) anthropic.ToolParam {
 	// Parse the JSON Schema parameters
 	var inputSchema map[string]interface{}
 	if err := json.Unmarshal(tool.Parameters, &inputSchema); err != nil {
-		applog.Error("anthropic tool conversion error", applog.M("tool", tool.Name, "error", err))
+		applog.Error("anthropic tool conversion error", applog.BuildMetadata("tool", tool.Name, "error", err))
 		inputSchema = map[string]interface{}{"type": "object"}
 	}
 

@@ -13,10 +13,10 @@ import (
 
 // Runtime owns the active session lifecycle and handles provider/model switch commands.
 type Runtime struct {
-	ctx          context.Context
-	manager      *Manager
-	sessionOpts  SessionOptions
-	bus          *bus.Bus
+	ctx         context.Context
+	manager     *Manager
+	sessionOpts SessionOptions
+	bus         *bus.Bus
 
 	mu            sync.Mutex
 	active        *Session
@@ -105,7 +105,7 @@ func (r *Runtime) handleCommandEvent(ev bus.Event) {
 			return
 		}
 		if err := r.handleUserMessage(payload.Content); err != nil {
-			applog.Error("session runtime user message command failed", applog.M("error", err))
+			applog.Error("session runtime user message command failed", applog.BuildMetadata("error", err))
 		}
 	case bus.EventNewConversation:
 		r.handleNewConversation()
@@ -115,7 +115,7 @@ func (r *Runtime) handleCommandEvent(ev bus.Event) {
 			return
 		}
 		if err := r.handleChangeProviderModel(payload.Provider, payload.Model); err != nil {
-			applog.Error("session runtime change provider/model command failed", applog.M("provider", payload.Provider, "model", payload.Model, "error", err))
+			applog.Error("session runtime change provider/model command failed", applog.BuildMetadata("provider", payload.Provider, "model", payload.Model, "error", err))
 		}
 	case bus.EventCreateNewSession:
 		payload, ok := ev.Payload.(bus.CreateNewSessionPayload)
@@ -123,7 +123,7 @@ func (r *Runtime) handleCommandEvent(ev bus.Event) {
 			return
 		}
 		if _, err := r.HandleCreateSessionRequest(payload.Provider, payload.Model); err != nil {
-			applog.Error("session runtime create-session command failed", applog.M("provider", payload.Provider, "model", payload.Model, "error", err))
+			applog.Error("session runtime create-session command failed", applog.BuildMetadata("provider", payload.Provider, "model", payload.Model, "error", err))
 		}
 	case bus.EventCancelAgentRun:
 		r.cancelCurrentRun()
@@ -176,7 +176,7 @@ func (r *Runtime) handleUserMessage(content string) error {
 				})
 				return
 			}
-			applog.Error("session runtime user message command failed", applog.M("error", err))
+			applog.Error("session runtime user message command failed", applog.BuildMetadata("error", err))
 		}
 	})
 
@@ -318,7 +318,7 @@ func (r *Runtime) HandleCreateSessionRequest(provider, model string) (string, er
 	if onActiveSessionChanged != nil {
 		onActiveSessionChanged(activeSessionID)
 	}
-	applog.Info("session switched", applog.M("session_id", activeSessionID, "provider", provider, "model", model))
+	applog.Info("session switched", applog.BuildMetadata("session_id", activeSessionID, "provider", provider, "model", model))
 	return activeSessionID, nil
 }
 

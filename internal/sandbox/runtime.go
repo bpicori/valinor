@@ -28,7 +28,7 @@ const fsToolTimeout = 30 * time.Second
 func NewRuntime(dir string) (*Runtime, error) {
 	execPath, err := os.Executable()
 	if err != nil {
-		applog.Error("sandbox runtime exec path failed", applog.M("error", err))
+		applog.Error("sandbox runtime exec path failed", applog.BuildMetadata("error", err))
 		return nil, fmt.Errorf("resolve executable path: %w", err)
 	}
 	return &Runtime{

@@ -240,7 +240,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connectionStatusMsg:
 		// Connection status is logged but not blocking to UI
 		if !typed.Connected && typed.Error != nil {
-			applog.Warning("tui connection lost", applog.M("error", typed.Error))
+			applog.Warning("tui connection lost", applog.BuildMetadata("error", typed.Error))
 		}
 		return m, nil
 	// case for spinner tick
@@ -427,7 +427,7 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	}
 	pc, ok := m.config.Providers[provider]
 	if !ok {
-		applog.Warning("tui unknown provider", applog.M("provider", provider))
+		applog.Warning("tui unknown provider", applog.BuildMetadata("provider", provider))
 		return m, nil, true, false
 	}
 	if len(parts) == 1 {
@@ -488,7 +488,7 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 	// Parse the WebSocket event into a router Event
 	event, err := ParseWSEvent(msg)
 	if err != nil {
-		applog.Warning("tui failed to parse ws event", applog.M("error", err, "type", msg.Type))
+		applog.Warning("tui failed to parse ws event", applog.BuildMetadata("error", err, "type", msg.Type))
 		return m, nil
 	}
 
@@ -732,7 +732,7 @@ func (m *Model) handleAgentDone(last *chatMessage, payload router.AgentDonePaylo
 }
 
 func (m *Model) handleAgentError(last *chatMessage, payload router.AgentErrorPayload) tea.Cmd {
-	applog.Error("tui agent error", applog.M("error", payload.Error))
+	applog.Error("tui agent error", applog.BuildMetadata("error", payload.Error))
 	last.Streaming = false
 	last.Error = payload.Error
 	m.state = stateReady

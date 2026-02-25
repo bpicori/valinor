@@ -153,8 +153,8 @@ func normalizeMetadata(m map[string]any) map[string]any {
 	return out
 }
 
-// M is a convenience for building metadata. Use as: applog.Info("message", applog.M("session_id", id, "error", err))
-func M(kv ...any) map[string]any {
+// BuildMetadata is a convenience for building metadata. Use as: applog.Info("message", applog.BuildMetadata("session_id", id, "error", err))
+func BuildMetadata(kv ...any) map[string]any {
 	if len(kv)%2 != 0 {
 		return map[string]any{"_odd_kv": fmt.Sprintf("%d", len(kv))}
 	}

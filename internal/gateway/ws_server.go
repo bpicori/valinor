@@ -21,7 +21,7 @@ type Server struct {
 	Path string
 
 	// Dependencies
-	router router.Router
+	router *router.Router
 
 	// HTTP server
 	server *http.Server
@@ -32,9 +32,9 @@ type Server struct {
 	connections map[*ClientConnection]bool
 
 	// Lifecycle
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
 	started bool
 }
 
@@ -46,7 +46,7 @@ type Config struct {
 }
 
 // NewServer creates a new WebSocket gateway server.
-func NewServer(cfg Config, r router.Router) *Server {
+func NewServer(cfg Config, r *router.Router) *Server {
 	return &Server{
 		Host:        cfg.Host,
 		Port:        cfg.Port,
@@ -94,12 +94,12 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	applog.Info("gateway server starting",
-		applog.M("address", addr, "path", s.Path))
+		applog.BuildMetadata("address", addr, "path", s.Path))
 
 	// Start server in a goroutine
 	s.wg.Go(func() {
 		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			applog.Error("gateway server error", applog.M("error", err))
+			applog.Error("gateway server error", applog.BuildMetadata("error", err))
 		}
 	})
 
@@ -145,7 +145,7 @@ func (s *Server) Stop() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.server.Shutdown(shutdownCtx); err != nil {
-			applog.Warning("gateway server shutdown error", applog.M("error", err))
+			applog.Warning("gateway server shutdown error", applog.BuildMetadata("error", err))
 		}
 	}
 

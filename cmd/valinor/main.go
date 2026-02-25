@@ -22,13 +22,13 @@ import (
 func main() {
 	// Define command-line flags
 	var (
-		mode        = flag.String("mode", "tui", "Run mode: 'gateway' or 'tui'")
-		gatewayURL  = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui mode, defaults to config)")
+		mode       = flag.String("mode", "tui", "Run mode: 'gateway' or 'tui'")
+		gatewayURL = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui mode, defaults to config)")
 	)
 	flag.Parse()
 
 	if err := run(*mode, *gatewayURL); err != nil {
-		applog.Error("valinor exit error", applog.M("error", err))
+		applog.Error("valinor exit error", applog.BuildMetadata("error", err))
 		os.Exit(1)
 	}
 }
@@ -49,7 +49,7 @@ func run(mode, gatewayURL string) error {
 	// Load configuration (needed by both modes)
 	cfg, err := config.LoadFromFile("config.toml")
 	if err != nil {
-		applog.Error("load config failed", applog.M("error", err))
+		applog.Error("load config failed", applog.BuildMetadata("error", err))
 		return err
 	}
 
@@ -89,7 +89,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	// Set log prefix for gateway mode
 	applog.SetPrefix("GATEWAY")
 	applog.Info("starting valinor in gateway mode", nil)
-	applog.Info("logging to file and stdout", applog.M("log_path", logPath))
+	applog.Info("logging to file and stdout", applog.BuildMetadata("log_path", logPath))
 
 	// Initialize core components
 	b := bus.New()
@@ -110,9 +110,9 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		latestSession := sessions[0]
 		sess, err = sm.Resume(context.Background(), latestSession.ID, sessionOpts)
 		if err != nil {
-			applog.Warning("resume latest session failed", applog.M("session_id", latestSession.ID, "error", err))
+			applog.Warning("resume latest session failed", applog.BuildMetadata("session_id", latestSession.ID, "error", err))
 		} else {
-			applog.Info("resumed session", applog.M("session_id", latestSession.ID))
+			applog.Info("resumed session", applog.BuildMetadata("session_id", latestSession.ID))
 		}
 	}
 	if sess == nil {
@@ -120,7 +120,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
 		}
-		applog.Info("created new session", applog.M("session_id", sess.Meta().ID))
+		applog.Info("created new session", applog.BuildMetadata("session_id", sess.Meta().ID))
 	}
 
 	// Start session runtime
@@ -132,7 +132,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	identityMap, err := session.NewIdentityMapStore(valinorDir)
 	if err != nil {
 		applog.Warning("failed to create identity map store, continuing without persistence",
-			applog.M("error", err))
+			applog.BuildMetadata("error", err))
 		identityMap = nil
 	}
 
@@ -150,7 +150,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	gw := gateway.NewServer(gwCfg, rtr)
 
 	applog.Info("gateway server starting",
-		applog.M("url", cfg.GatewayWebSocketURL()))
+		applog.BuildMetadata("url", cfg.GatewayWebSocketURL()))
 
 	// Start gateway (blocks until shutdown)
 	if err := gw.Start(ctx); err != nil {
@@ -186,10 +186,10 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
 	// Set log prefix for TUI mode
 	applog.SetPrefix("TUI")
 	applog.Info("starting valinor in tui mode", nil)
-	applog.Info("logging to file", applog.M("log_path", logPath))
+	applog.Info("logging to file", applog.BuildMetadata("log_path", logPath))
 
 	// Create WebSocket bridge first
-	applog.Info("connecting to gateway", applog.M("url", gatewayURL))
+	applog.Info("connecting to gateway", applog.BuildMetadata("url", gatewayURL))
 	wsBridge := tui.NewWSBridge(gatewayURL)
 
 	// Create TUI model with the bridge as command sender
@@ -207,7 +207,7 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
 	}
 	defer wsBridge.Stop()
 
-	applog.Info("tui startup complete", applog.M("gateway", gatewayURL))
+	applog.Info("tui startup complete", applog.BuildMetadata("gateway", gatewayURL))
 
 	// Run TUI
 	if _, err := p.Run(); err != nil {

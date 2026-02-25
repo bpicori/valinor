@@ -117,7 +117,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	}
 
 	if err := stream.Err(); err != nil {
-		applog.Error("openai stream error", applog.M("error", err))
+		applog.Error("openai stream error", applog.BuildMetadata("error", err))
 		return nil, err
 	}
 

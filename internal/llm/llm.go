@@ -83,7 +83,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		iterations++
 
-		applog.Debug("llm iteration start", applog.M("iteration", iterations, "provider", l.provider.Name()))
+		applog.Debug("llm iteration start", applog.BuildMetadata("iteration", iterations, "provider", l.provider.Name()))
 
 		// Convert to provider-agnostic messages
 		providerMessages := l.toProviderMessages(messages)
@@ -110,7 +110,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				})
 				return RunResult{Messages: messages}, nil
 			}
-			applog.Error("llm stream error", applog.M("error", err))
+			applog.Error("llm stream error", applog.BuildMetadata("error", err))
 			l.bus.Publish(bus.Event{
 				Type:    bus.EventAgentError,
 				Payload: bus.AgentErrorPayload{Error: err},
@@ -153,7 +153,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 					TotalTokens:      usage.TotalTokens,
 				},
 			})
-			applog.Debug("llm iteration done", applog.M("iteration", iterations))
+			applog.Debug("llm iteration done", applog.BuildMetadata("iteration", iterations))
 			return RunResult{Messages: messages}, nil
 		}
 
@@ -177,7 +177,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			if tc.Arguments != "" {
 				args = json.RawMessage(tc.Arguments)
 			}
-			applog.Debug("llm tool call start", applog.M("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
+			applog.Debug("llm tool call start", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
 			l.bus.Publish(bus.Event{
 				Type: bus.EventAgentThinking,
 				Payload: bus.ThinkingPayload{
@@ -197,7 +197,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			if !ok {
 				toolResult = "error: tool not found"
 			}
-			applog.Debug("llm tool call done", applog.M("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
+			applog.Debug("llm tool call done", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
 			l.bus.Publish(bus.Event{
 				Type: bus.EventAgentToolCallDone,
 				Payload: bus.ToolCallDonePayload{

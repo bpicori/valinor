@@ -36,7 +36,7 @@ func runWithRedKeepIO(ctx context.Context, req redkeep.RunRequest, stdin io.Read
 	})
 	if err != nil {
 		cmd := strings.Join(req.Command, " ")
-		applog.Error("sandbox redkeep failed", applog.M("command", cmd, "work_dir", req.WorkDir, "error", err))
+		applog.Error("sandbox redkeep failed", applog.BuildMetadata("command", cmd, "work_dir", req.WorkDir, "error", err))
 		return Result{}, err
 	}
 

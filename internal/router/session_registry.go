@@ -11,10 +11,10 @@ import (
 
 // SessionBinding holds the mapping between a client identity and their session.
 type SessionBinding struct {
-	Identity   ClientIdentity
-	Session    *session.Session
-	SessionID  string
-	PublicKey  string // session:<client_type>:<short_id>
+	Identity  ClientIdentity
+	Session   *session.Session
+	SessionID string
+	PublicKey string // session:<client_type>:<short_id>
 }
 
 // SessionRegistry manages identity-to-session mappings in-memory.
@@ -42,7 +42,7 @@ func (r *SessionRegistry) Register(identity ClientIdentity, sess *session.Sessio
 	// Check if binding already exists
 	if existing, ok := r.bindings[key]; ok {
 		applog.Debug("session registry: reusing existing binding",
-			applog.M("identity_key", key, "session_id", existing.SessionID))
+			applog.BuildMetadata("identity_key", key, "session_id", existing.SessionID))
 		return existing
 	}
 
@@ -58,7 +58,7 @@ func (r *SessionRegistry) Register(identity ClientIdentity, sess *session.Sessio
 	r.bindings[key] = binding
 
 	applog.Info("session registry: new binding created",
-		applog.M("identity_key", key,
+		applog.BuildMetadata("identity_key", key,
 			"session_id", meta.ID,
 			"public_key", binding.PublicKey,
 			"provider", meta.Provider,
@@ -68,7 +68,6 @@ func (r *SessionRegistry) Register(identity ClientIdentity, sess *session.Sessio
 }
 
 // Get retrieves a binding by identity key.
-// Returns nil if no binding exists.
 func (r *SessionRegistry) Get(identity ClientIdentity) *SessionBinding {
 	key := identity.Key()
 
@@ -79,7 +78,6 @@ func (r *SessionRegistry) Get(identity ClientIdentity) *SessionBinding {
 }
 
 // GetByKey retrieves a binding by the raw identity key string.
-// Returns nil if no binding exists.
 func (r *SessionRegistry) GetByKey(key string) *SessionBinding {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -98,7 +96,7 @@ func (r *SessionRegistry) Remove(identity ClientIdentity) bool {
 	if binding, ok := r.bindings[key]; ok {
 		delete(r.bindings, key)
 		applog.Info("session registry: binding removed",
-			applog.M("identity_key", key, "session_id", binding.SessionID))
+			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 		return true
 	}
 
@@ -106,7 +104,6 @@ func (r *SessionRegistry) Remove(identity ClientIdentity) bool {
 }
 
 // RemoveBySessionID removes all bindings associated with a given session ID.
-// This is useful when a session is deleted.
 func (r *SessionRegistry) RemoveBySessionID(sessionID string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -116,7 +113,7 @@ func (r *SessionRegistry) RemoveBySessionID(sessionID string) int {
 		if binding.SessionID == sessionID {
 			delete(r.bindings, key)
 			applog.Info("session registry: binding removed (session deleted)",
-				applog.M("identity_key", key, "session_id", sessionID))
+				applog.BuildMetadata("identity_key", key, "session_id", sessionID))
 			removed++
 		}
 	}
@@ -145,7 +142,7 @@ func (r *SessionRegistry) Count() int {
 	return len(r.bindings)
 }
 
-// ValidateClientIdentity checks if a client identity is valid.
+// ValidateClientIdentity checks if a client identity is valid 
 // Returns an error if the identity is invalid.
 func ValidateClientIdentity(identity ClientIdentity) error {
 	if identity.Type == "" {
