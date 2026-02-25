@@ -4,25 +4,38 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
+// rendererCache stores glamour.TermRenderer instances keyed by width.
+// This avoids the expensive allocation of creating a new renderer on every call.
+var rendererCache sync.Map // map[int]*glamour.TermRenderer
+
 // renderMarkdown converts a markdown string to styled ANSI terminal output.
 // Uses glamour with "dark" style and word-wrapping to the given width.
+// The renderer is cached per width to avoid repeated allocations.
 func renderMarkdown(content string, width int) string {
 	if content == "" {
 		return ""
 	}
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStylePath("dark"),
-		glamour.WithWordWrap(width),
-	)
-	if err != nil {
-		return content // fallback to raw text
+
+	r, ok := rendererCache.Load(width)
+	if !ok {
+		newR, err := glamour.NewTermRenderer(
+			glamour.WithStylePath("dark"),
+			glamour.WithWordWrap(width),
+		)
+		if err != nil {
+			return content // fallback to raw text
+		}
+		r, _ = rendererCache.LoadOrStore(width, newR)
 	}
+
+	renderer := r.(*glamour.TermRenderer)
 	out, err := renderer.Render(content)
 	if err != nil {
 		return content
