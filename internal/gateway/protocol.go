@@ -80,7 +80,7 @@ func CreateEnvelope(event router.Event, requestID string) *WireEnvelope {
 
 	return &WireEnvelope{
 		Kind:      KindEvent,
-		Type:      event.Type,
+		Type:      string(event.Type),
 		RequestID: requestID,
 		Timestamp: time.Now().UnixMilli(),
 		Payload:   payload,

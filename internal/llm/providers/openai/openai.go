@@ -5,6 +5,7 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/event"
 	"valinor/internal/llm"
 
 	"github.com/openai/openai-go/v3"
@@ -102,15 +103,15 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 			delta := chunk.Choices[0].Delta
 			if delta.Content != "" {
 				assistantContent += delta.Content
-				p.bus.Publish(bus.Event{
-					Type:    bus.EventAgentContentDelta,
-					Payload: bus.ContentDeltaPayload{Content: delta.Content},
+				p.bus.Publish(event.Event{
+					Type:    event.AgentContentDelta,
+					Payload: event.ContentDeltaPayload{Content: delta.Content},
 				})
 			}
 			if delta.Refusal != "" {
-				p.bus.Publish(bus.Event{
-					Type:    bus.EventAgentRefusal,
-					Payload: bus.RefusalPayload{Content: delta.Refusal},
+				p.bus.Publish(event.Event{
+					Type:    event.AgentRefusal,
+					Payload: event.RefusalPayload{Content: delta.Refusal},
 				})
 			}
 		}

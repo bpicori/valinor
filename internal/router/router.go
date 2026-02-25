@@ -8,6 +8,7 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/event"
 	"valinor/internal/session"
 )
 
@@ -73,18 +74,18 @@ func (r *Router) Start(ctx context.Context) {
 
 	// Subscribe to all agent events from the bus
 	r.busSub = r.bus.Subscribe(
-		bus.EventAgentContentDelta,
-		bus.EventAgentContentFull,
-		bus.EventAgentThinking,
-		bus.EventAgentStepTokens,
-		bus.EventContextTokens,
-		bus.EventAgentRefusal,
-		bus.EventAgentToolCallStart,
-		bus.EventAgentToolCallDone,
-		bus.EventAgentDone,
-		bus.EventAgentError,
-		bus.EventAgentCancelled,
-		bus.EventProviderModelsResult,
+		event.AgentContentDelta,
+		event.AgentContentFull,
+		event.AgentThinking,
+		event.AgentStepTokens,
+		event.ContextTokens,
+		event.AgentRefusal,
+		event.AgentToolCallStart,
+		event.AgentToolCallDone,
+		event.AgentDone,
+		event.AgentError,
+		event.AgentCancelled,
+		event.ProviderModelsResult,
 	)
 
 	// Start the event forwarding goroutine
@@ -154,7 +155,7 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 
 		// Send session attached event
 		consumer.SendEvent(Event{
-			Type: EventSessionAttached,
+			Type: event.SessionAttached,
 			Payload: SessionAttachedPayload{
 				SessionKey: binding.PublicKey,
 				Provider:   binding.Session.Meta().Provider,
@@ -190,7 +191,7 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 
 	// Send session attached event
 	consumer.SendEvent(Event{
-		Type: EventSessionAttached,
+		Type: event.SessionAttached,
 		Payload: SessionAttachedPayload{
 			SessionKey: binding.PublicKey,
 			Provider:   binding.Session.Meta().Provider,
@@ -257,57 +258,13 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 	return nil
 }
 
-// commandToBusEvent converts a router command to a legacy bus event.
-func (r *Router) commandToBusEvent(cmd Command) bus.Event {
-	switch cmd.Type {
-	case CommandUserMessage:
-		if p, ok := cmd.Payload.(UserMessagePayload); ok {
-			return bus.Event{
-				Type:    bus.EventUserMessage,
-				Payload: bus.UserMessagePayload{Content: p.Content},
-			}
-		}
-	case CommandNewConversation:
-		return bus.Event{
-			Type: bus.EventNewConversation,
-		}
-	case CommandChangeProviderModel:
-		if p, ok := cmd.Payload.(ChangeProviderModelPayload); ok {
-			return bus.Event{
-				Type: bus.EventChangeProviderModel,
-				Payload: bus.ChangeProviderModelPayload{
-					Provider: p.Provider,
-					Model:    p.Model,
-				},
-			}
-		}
-	case CommandCreateNewSession:
-		if p, ok := cmd.Payload.(CreateNewSessionPayload); ok {
-			return bus.Event{
-				Type: bus.EventCreateNewSession,
-				Payload: bus.CreateNewSessionPayload{
-					Provider: p.Provider,
-					Model:    p.Model,
-				},
-			}
-		}
-	case CommandRequestProviderModels:
-		if p, ok := cmd.Payload.(RequestProviderModelsPayload); ok {
-			return bus.Event{
-				Type: bus.EventRequestProviderModels,
-				Payload: bus.RequestProviderModelsPayload{
-					Provider: p.Provider,
-				},
-			}
-		}
-	case CommandCancelAgentRun:
-		return bus.Event{
-			Type: bus.EventCancelAgentRun,
-		}
+// commandToBusEvent converts a router command to a bus event.
+// Since both router and bus now use the unified event package, this is a simple mapping.
+func (r *Router) commandToBusEvent(cmd Command) event.Event {
+	return event.Event{
+		Type:    event.EventType(cmd.Type),
+		Payload: cmd.Payload,
 	}
-
-	// Default empty event (should not reach here in practice)
-	return bus.Event{}
 }
 
 // getOrCreateSessionForIdentity gets an existing session from the identity map or creates a new one.
@@ -361,8 +318,8 @@ func (r *Router) eventForwardingLoop() {
 }
 
 // forwardEventToClients converts a bus event and sends to all connected clients.
-func (r *Router) forwardEventToClients(be bus.Event) {
-	// Convert to router event
+func (r *Router) forwardEventToClients(be event.Event) {
+	// Convert to router event (now a no-op since both use event.Event)
 	routerEvent := FromBusEvent(be)
 	if routerEvent.Type == "" {
 		// Unknown event type, skip

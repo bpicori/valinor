@@ -13,6 +13,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"valinor/internal/applog"
+	"valinor/internal/event"
 	"valinor/internal/gateway"
 	"valinor/internal/router"
 )
@@ -412,111 +413,11 @@ func (b *WSBridge) isClosed() bool {
 }
 
 // ParseWSEvent parses a wsEventMsg into a router Event.
+// Delegates to the shared event package to eliminate duplication.
 func ParseWSEvent(msg wsEventMsg) (router.Event, error) {
-	event := router.Event{Type: msg.Type}
-
-	switch msg.Type {
-	case router.EventAgentContentDelta:
-		var p router.ContentDeltaPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentContentFull:
-		var p router.ContentFullPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentThinking:
-		var p router.ThinkingPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentStepTokens:
-		var p router.StepTokenUsagePayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventContextTokens:
-		var p router.ContextTokensPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventProviderModelsResult:
-		var p router.ProviderModelsResultPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventNewConversation:
-		// No payload for new conversation
-		event.Payload = nil
-
-	case router.EventChangeProviderModel:
-		var p router.ChangeProviderModelPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentRefusal:
-		var p router.RefusalPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentToolCallStart:
-		var p router.ToolCallStartPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentToolCallDone:
-		var p router.ToolCallDonePayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentDone:
-		var p router.AgentDonePayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentError:
-		var p router.AgentErrorPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	case router.EventAgentCancelled:
-		event.Payload = router.AgentCancelledPayload{}
-
-	case router.EventSessionAttached:
-		var p router.SessionAttachedPayload
-		if err := json.Unmarshal(msg.Payload, &p); err != nil {
-			return event, err
-		}
-		event.Payload = p
-
-	default:
-		return event, fmt.Errorf("unknown event type: %s", msg.Type)
+	ev, err := event.ParseEvent(msg.Type, msg.Payload)
+	if err != nil {
+		return router.Event{}, err
 	}
-
-	return event, nil
+	return ev, nil
 }

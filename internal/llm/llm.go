@@ -9,6 +9,7 @@ import (
 	"valinor/internal/applog"
 	"valinor/internal/bus"
 	agentcontext "valinor/internal/context"
+	"valinor/internal/event"
 )
 
 const (
@@ -63,9 +64,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.Canceled) {
 				applog.Info("llm run cancelled by user", nil)
-				l.bus.Publish(bus.Event{
-					Type:    bus.EventAgentCancelled,
-					Payload: bus.AgentCancelledPayload{},
+				l.bus.Publish(event.Event{
+					Type:    event.AgentCancelled,
+					Payload: event.AgentCancelledPayload{},
 				})
 				return RunResult{Messages: messages}, nil
 			}
@@ -73,9 +74,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 
 		if iterations >= l.maxIterations {
-			l.bus.Publish(bus.Event{
-				Type: bus.EventAgentError,
-				Payload: bus.AgentErrorPayload{
+			l.bus.Publish(event.Event{
+				Type: event.AgentError,
+				Payload: event.AgentErrorPayload{
 					Error: fmt.Errorf("max agent iterations (%d) reached; stopping to prevent runaway loop", l.maxIterations),
 				},
 			})
@@ -104,25 +105,25 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			// Handle user cancellation gracefully
 			if errors.Is(err, context.Canceled) {
 				applog.Info("llm stream cancelled by user", nil)
-				l.bus.Publish(bus.Event{
-					Type:    bus.EventAgentCancelled,
-					Payload: bus.AgentCancelledPayload{},
+				l.bus.Publish(event.Event{
+					Type:    event.AgentCancelled,
+					Payload: event.AgentCancelledPayload{},
 				})
 				return RunResult{Messages: messages}, nil
 			}
 			applog.Error("llm stream error", applog.BuildMetadata("error", err))
-			l.bus.Publish(bus.Event{
-				Type:    bus.EventAgentError,
-				Payload: bus.AgentErrorPayload{Error: err},
+			l.bus.Publish(event.Event{
+				Type:    event.AgentError,
+				Payload: event.AgentErrorPayload{Error: err},
 			})
 			return RunResult{}, err
 		}
 
 		// Update usage stats
 		usage = result.Usage
-		l.bus.Publish(bus.Event{
-			Type: bus.EventAgentStepTokens,
-			Payload: bus.StepTokenUsagePayload{
+		l.bus.Publish(event.Event{
+			Type: event.AgentStepTokens,
+			Payload: event.StepTokenUsagePayload{
 				Step:             iterations,
 				PromptTokens:     usage.PromptTokens,
 				CompletionTokens: usage.CompletionTokens,
@@ -132,9 +133,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 
 		// Publish full content if present
 		if result.Message.Content != "" {
-			l.bus.Publish(bus.Event{
-				Type:    bus.EventAgentContentFull,
-				Payload: bus.ContentFullPayload{Content: result.Message.Content},
+			l.bus.Publish(event.Event{
+				Type:    event.AgentContentFull,
+				Payload: event.ContentFullPayload{Content: result.Message.Content},
 			})
 		}
 
@@ -145,9 +146,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Role:    agentcontext.RoleAssistant,
 				Content: result.Message.Content,
 			})
-			l.bus.Publish(bus.Event{
-				Type: bus.EventAgentDone,
-				Payload: bus.AgentDonePayload{
+			l.bus.Publish(event.Event{
+				Type: event.AgentDone,
+				Payload: event.AgentDonePayload{
 					PromptTokens:     usage.PromptTokens,
 					CompletionTokens: usage.CompletionTokens,
 					TotalTokens:      usage.TotalTokens,
@@ -178,16 +179,16 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				args = json.RawMessage(tc.Arguments)
 			}
 			applog.Debug("llm tool call start", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
-			l.bus.Publish(bus.Event{
-				Type: bus.EventAgentThinking,
-				Payload: bus.ThinkingPayload{
+			l.bus.Publish(event.Event{
+				Type: event.AgentThinking,
+				Payload: event.ThinkingPayload{
 					Step:    iterations,
 					Content: "executing tool: " + tc.Name,
 				},
 			})
-			l.bus.Publish(bus.Event{
-				Type: bus.EventAgentToolCallStart,
-				Payload: bus.ToolCallStartPayload{
+			l.bus.Publish(event.Event{
+				Type: event.AgentToolCallStart,
+				Payload: event.ToolCallStartPayload{
 					ToolCallID: tc.ID,
 					ToolName:   tc.Name,
 					ToolArgs:   string(args),
@@ -198,9 +199,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				toolResult = "error: tool not found"
 			}
 			applog.Debug("llm tool call done", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
-			l.bus.Publish(bus.Event{
-				Type: bus.EventAgentToolCallDone,
-				Payload: bus.ToolCallDonePayload{
+			l.bus.Publish(event.Event{
+				Type: event.AgentToolCallDone,
+				Payload: event.ToolCallDonePayload{
 					ToolCallID: tc.ID,
 					ToolName:   tc.Name,
 					ToolResult: toolResult,

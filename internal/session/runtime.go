@@ -8,6 +8,7 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/bus"
+	"valinor/internal/event"
 	"valinor/internal/tokens"
 )
 
@@ -65,12 +66,12 @@ func (r *Runtime) Start() {
 	r.runtimeCtx, r.runtimeCancel = context.WithCancel(r.ctx)
 
 	r.subCommand = r.bus.Subscribe(
-		bus.EventUserMessage,
-		bus.EventNewConversation,
-		bus.EventChangeProviderModel,
-		bus.EventCreateNewSession,
-		bus.EventRequestProviderModels,
-		bus.EventCancelAgentRun,
+		event.UserMessage,
+		event.NewConversation,
+		event.ChangeProviderModel,
+		event.CreateNewSession,
+		event.RequestProviderModels,
+		event.CancelAgentRun,
 	)
 	r.startActiveSessionLocked()
 	r.publishActiveContextTokens()
@@ -97,38 +98,38 @@ func (r *Runtime) runCommandHandlerLoop() {
 	}
 }
 
-func (r *Runtime) handleCommandEvent(ev bus.Event) {
+func (r *Runtime) handleCommandEvent(ev event.Event) {
 	switch ev.Type {
-	case bus.EventUserMessage:
-		payload, ok := ev.Payload.(bus.UserMessagePayload)
+	case event.UserMessage:
+		payload, ok := ev.Payload.(event.UserMessagePayload)
 		if !ok {
 			return
 		}
 		if err := r.handleUserMessage(payload.Content); err != nil {
 			applog.Error("session runtime user message command failed", applog.BuildMetadata("error", err))
 		}
-	case bus.EventNewConversation:
+	case event.NewConversation:
 		r.handleNewConversation()
-	case bus.EventChangeProviderModel:
-		payload, ok := ev.Payload.(bus.ChangeProviderModelPayload)
+	case event.ChangeProviderModel:
+		payload, ok := ev.Payload.(event.ChangeProviderModelPayload)
 		if !ok {
 			return
 		}
 		if err := r.handleChangeProviderModel(payload.Provider, payload.Model); err != nil {
 			applog.Error("session runtime change provider/model command failed", applog.BuildMetadata("provider", payload.Provider, "model", payload.Model, "error", err))
 		}
-	case bus.EventCreateNewSession:
-		payload, ok := ev.Payload.(bus.CreateNewSessionPayload)
+	case event.CreateNewSession:
+		payload, ok := ev.Payload.(event.CreateNewSessionPayload)
 		if !ok {
 			return
 		}
 		if _, err := r.HandleCreateSessionRequest(payload.Provider, payload.Model); err != nil {
 			applog.Error("session runtime create-session command failed", applog.BuildMetadata("provider", payload.Provider, "model", payload.Model, "error", err))
 		}
-	case bus.EventCancelAgentRun:
+	case event.CancelAgentRun:
 		r.cancelCurrentRun()
-	case bus.EventRequestProviderModels:
-		payload, ok := ev.Payload.(bus.RequestProviderModelsPayload)
+	case event.RequestProviderModels:
+		payload, ok := ev.Payload.(event.RequestProviderModelsPayload)
 		if !ok {
 			return
 		}
@@ -170,9 +171,9 @@ func (r *Runtime) handleUserMessage(content string) error {
 		if err := active.HandleUserMessage(runCtx, content); err != nil {
 			if runCtx.Err() == context.Canceled {
 				applog.Info("session runtime user message cancelled", nil)
-				r.bus.Publish(bus.Event{
-					Type:    bus.EventAgentCancelled,
-					Payload: bus.AgentCancelledPayload{},
+				r.bus.Publish(event.Event{
+					Type:    event.AgentCancelled,
+					Payload: event.AgentCancelledPayload{},
 				})
 				return
 			}
@@ -235,22 +236,22 @@ func (r *Runtime) handleRequestProviderModels(provider string) {
 		defer cancel()
 
 		models, err := manager.ListProviderModels(ctx, provider)
-		payload := bus.ProviderModelsResultPayload{
+		payload := event.ProviderModelsResultPayload{
 			Provider: provider,
-			Models:   make([]bus.ProviderModel, 0, len(models)),
+			Models:   make([]event.ProviderModel, 0, len(models)),
 		}
 		if err != nil {
 			payload.Error = err.Error()
 		} else {
 			for _, model := range models {
-				payload.Models = append(payload.Models, bus.ProviderModel{
+				payload.Models = append(payload.Models, event.ProviderModel{
 					ID:          model.ID,
 					DisplayName: model.DisplayName,
 				})
 			}
 		}
-		r.bus.Publish(bus.Event{
-			Type:    bus.EventProviderModelsResult,
+		r.bus.Publish(event.Event{
+			Type:    event.ProviderModelsResult,
 			Payload: payload,
 		})
 	})
@@ -388,9 +389,9 @@ func (r *Runtime) publishActiveContextTokens() {
 	}
 	messages := r.active.agentContext.Messages()
 	promptTokens := tokens.EstimatePromptTokens(messages)
-	r.bus.Publish(bus.Event{
-		Type: bus.EventContextTokens,
-		Payload: bus.ContextTokensPayload{
+	r.bus.Publish(event.Event{
+		Type: event.ContextTokens,
+		Payload: event.ContextTokensPayload{
 			PromptTokens: promptTokens,
 			Estimated:    true,
 		},

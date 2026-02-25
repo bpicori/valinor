@@ -4,6 +4,13 @@ import (
 	"sync"
 
 	"valinor/internal/applog"
+	"valinor/internal/event"
+)
+
+// Event and EventType are aliases to the centralized event package types.
+type (
+	Event     = event.Event
+	EventType = event.EventType
 )
 
 // Subscription receives events from the bus.
@@ -26,14 +33,14 @@ func New() *Bus {
 	return &Bus{}
 }
 
-// DEFAULT_BUF_SIZE is the channel buffer size for all subscriptions.
-const DEFAULT_BUF_SIZE = 64
+// defaultBufSize is the channel buffer size for all subscriptions.
+const defaultBufSize = 64
 
 // Subscribe creates a subscription. Events are filtered to the given types.
 // If no types are given, all events are delivered.
 func (b *Bus) Subscribe(types ...EventType) *Subscription {
 	sub := &Subscription{
-		ch: make(chan Event, DEFAULT_BUF_SIZE),
+		ch: make(chan Event, defaultBufSize),
 	}
 	if len(types) > 0 {
 		sub.filter = make(map[EventType]bool, len(types))

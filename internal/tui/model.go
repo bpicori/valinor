@@ -7,6 +7,7 @@ import (
 
 	"valinor/internal/applog"
 	"valinor/internal/config"
+	"valinor/internal/event"
 	"valinor/internal/router"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -491,39 +492,39 @@ func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
 
 func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 	// Parse the WebSocket event into a router Event
-	event, err := ParseWSEvent(msg)
+	ev, err := ParseWSEvent(msg)
 	if err != nil {
 		applog.Warning("tui failed to parse ws event", applog.BuildMetadata("error", err, "type", msg.Type))
 		return m, nil
 	}
 
-	switch event.Type {
-	case router.EventSessionAttached:
-		payload, ok := event.Payload.(router.SessionAttachedPayload)
+	switch ev.Type {
+	case event.EventType(router.EventSessionAttached):
+		payload, ok := ev.Payload.(router.SessionAttachedPayload)
 		if !ok {
 			return m, nil
 		}
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
 		return m, nil
-	case router.EventNewConversation:
+	case event.EventType(router.EventNewConversation):
 		return m, m.handleNewConversation()
-	case router.EventChangeProviderModel:
-		payload, ok := event.Payload.(router.ChangeProviderModelPayload)
+	case event.EventType(router.EventChangeProviderModel):
+		payload, ok := ev.Payload.(router.ChangeProviderModelPayload)
 		if !ok {
 			return m, nil
 		}
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
 		return m, nil
-	case router.EventProviderModelsResult:
-		payload, ok := event.Payload.(router.ProviderModelsResultPayload)
+	case event.EventType(router.EventProviderModelsResult):
+		payload, ok := ev.Payload.(router.ProviderModelsResultPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleProviderModelsResult(payload)
-	case router.EventContextTokens:
-		payload, ok := event.Payload.(router.ContextTokensPayload)
+	case event.EventType(router.EventContextTokens):
+		payload, ok := ev.Payload.(router.ContextTokensPayload)
 		if !ok {
 			return m, nil
 		}
@@ -537,50 +538,50 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch event.Type {
-	case router.EventAgentContentDelta:
-		payload, ok := event.Payload.(router.ContentDeltaPayload)
+	switch ev.Type {
+	case event.EventType(router.EventAgentContentDelta):
+		payload, ok := ev.Payload.(router.ContentDeltaPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleContentDelta(last, payload)
-	case router.EventAgentContentFull:
-		payload, ok := event.Payload.(router.ContentFullPayload)
+	case event.EventType(router.EventAgentContentFull):
+		payload, ok := ev.Payload.(router.ContentFullPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleContentFull(last, payload)
-	case router.EventAgentRefusal:
-		payload, ok := event.Payload.(router.RefusalPayload)
+	case event.EventType(router.EventAgentRefusal):
+		payload, ok := ev.Payload.(router.RefusalPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleRefusal(last, payload)
-	case router.EventAgentToolCallStart:
-		payload, ok := event.Payload.(router.ToolCallStartPayload)
+	case event.EventType(router.EventAgentToolCallStart):
+		payload, ok := ev.Payload.(router.ToolCallStartPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleToolCallStart(last, payload)
-	case router.EventAgentToolCallDone:
-		payload, ok := event.Payload.(router.ToolCallDonePayload)
+	case event.EventType(router.EventAgentToolCallDone):
+		payload, ok := ev.Payload.(router.ToolCallDonePayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleToolCallDone(last, payload)
-	case router.EventAgentDone:
-		payload, ok := event.Payload.(router.AgentDonePayload)
+	case event.EventType(router.EventAgentDone):
+		payload, ok := ev.Payload.(router.AgentDonePayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleAgentDone(last, payload)
-	case router.EventAgentError:
-		payload, ok := event.Payload.(router.AgentErrorPayload)
+	case event.EventType(router.EventAgentError):
+		payload, ok := ev.Payload.(router.AgentErrorPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleAgentError(last, payload)
-	case router.EventAgentCancelled:
+	case event.EventType(router.EventAgentCancelled):
 		return m, m.handleAgentCancelled(last)
 	default:
 		return m, nil
@@ -722,7 +723,9 @@ func (m *Model) handleAgentDone(last *chatMessage, payload router.AgentDonePaylo
 func (m *Model) handleAgentError(last *chatMessage, payload router.AgentErrorPayload) tea.Cmd {
 	applog.Error("tui agent error", applog.BuildMetadata("error", payload.Error))
 	last.Streaming = false
-	last.Error = payload.Error
+	if payload.Error != nil {
+		last.Error = payload.Error.Error()
+	}
 	m.state = stateReady
 	m.rebuildViewportContent()
 	return nil
