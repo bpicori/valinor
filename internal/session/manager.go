@@ -213,13 +213,9 @@ func (m *Manager) List() ([]Metadata, error) {
 	}
 
 	// Sort by UpdatedAt descending
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[j].UpdatedAt.After(list[i].UpdatedAt) {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[j].UpdatedAt.Before(list[i].UpdatedAt)
+	})
 	applog.Debug("session list success", applog.BuildMetadata("count", len(list)))
 	return list, nil
 }
