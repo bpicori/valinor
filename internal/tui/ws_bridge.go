@@ -312,7 +312,13 @@ func (b *WSBridge) reconnect() error {
 			return nil
 		}
 
-		time.Sleep(backoff)
+		// Wait for backoff duration, but allow cancellation
+		select {
+		case <-b.ctx.Done():
+			return fmt.Errorf("reconnect cancelled: %w", b.ctx.Err())
+		case <-time.After(backoff):
+			// Continue to next attempt
+		}
 
 		backoff *= 2
 		if backoff > maxBackoff {

@@ -144,8 +144,6 @@ type Model struct {
 	modelPickerErr    string
 	state             appState
 	messages          []chatMessage
-	totalUsage        Usage
-	lastUsage         Usage
 	contextPrompt     int64
 	contextEstimated  bool
 	width             int
@@ -277,7 +275,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool) {
 		return m, nil, false, false
 	}
 	if key.Matches(msg, keymap.ChangeModel) {
-		return m.openModelPicker(), nil, true, false
+		return m.openProviderPicker(), nil, true, false
 	}
 	if !key.Matches(msg, keymap.Submit) {
 		return m, nil, false, false
@@ -327,11 +325,6 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 		}
 	}
 	return m, cmd, true, false
-}
-
-// openModelPicker switches to the model picker state.
-func (m Model) openModelPicker() Model {
-	return m.openProviderPicker()
 }
 
 func (m Model) openProviderPicker() Model {
@@ -427,11 +420,11 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	parts := strings.Fields(strings.TrimPrefix(input, "/model"))
 	if len(parts) == 0 {
-		return m.openModelPicker(), nil, true, false
+		return m.openProviderPicker(), nil, true, false
 	}
 	provider := strings.TrimSpace(parts[0])
 	if provider == "" {
-		return m.openModelPicker(), nil, true, false
+		return m.openProviderPicker(), nil, true, false
 	}
 	pc, ok := m.config.Providers[provider]
 	if !ok {
@@ -719,14 +712,6 @@ func (m *Model) handleToolCallDone(last *chatMessage, payload router.ToolCallDon
 func (m *Model) handleAgentDone(last *chatMessage, payload router.AgentDonePayload) tea.Cmd {
 	last.Streaming = false
 	last.Rendered = renderMarkdown(last.Content, m.width-4)
-	m.lastUsage = Usage{
-		PromptTokens:     payload.PromptTokens,
-		CompletionTokens: payload.CompletionTokens,
-		TotalTokens:      payload.TotalTokens,
-	}
-	m.totalUsage.PromptTokens += payload.PromptTokens
-	m.totalUsage.CompletionTokens += payload.CompletionTokens
-	m.totalUsage.TotalTokens += payload.TotalTokens
 	m.contextPrompt = payload.PromptTokens
 	m.contextEstimated = false
 	m.state = stateReady

@@ -2,12 +2,7 @@
 // between clients (TUI, web, etc.) and the session core.
 package router
 
-import (
-	"encoding/json"
-	"time"
-
-	"valinor/internal/bus"
-)
+import "valinor/internal/bus"
 
 // Protocol constants.
 const (
@@ -48,24 +43,6 @@ func (ci ClientIdentity) SessionKey(sessionID string) string {
 	}
 	return "session:" + ci.Type + ":" + sessionID
 }
-
-// Envelope is the top-level wire format for all messages.
-type Envelope struct {
-	Kind      string          `json:"kind"`       // "command", "event", "handshake"
-	Type      string          `json:"type"`       // specific message type
-	RequestID string          `json:"request_id"` // optional correlation ID
-	Timestamp time.Time       `json:"timestamp"`
-	Payload   json.RawMessage `json:"payload"` // typed JSON payload
-}
-
-// CommandKind identifies command envelopes.
-const CommandKind = "command"
-
-// EventKind identifies event envelopes.
-const EventKind = "event"
-
-// HandshakeKind identifies handshake envelopes.
-const HandshakeKind = "handshake"
 
 // Command types (client -> router).
 const (
@@ -245,107 +222,6 @@ type Event struct {
 	Payload any // typed payload based on Type
 }
 
-// ToBusEvent converts a router event to the legacy bus event format.
-func (e Event) ToBusEvent() bus.Event {
-	// Map router event types to bus event types
-	var busType bus.EventType
-	var payload any
-
-	switch e.Type {
-	case EventAgentContentDelta:
-		busType = bus.EventAgentContentDelta
-		if p, ok := e.Payload.(ContentDeltaPayload); ok {
-			payload = bus.ContentDeltaPayload{Content: p.Content}
-		}
-	case EventAgentContentFull:
-		busType = bus.EventAgentContentFull
-		if p, ok := e.Payload.(ContentFullPayload); ok {
-			payload = bus.ContentFullPayload{Content: p.Content}
-		}
-	case EventAgentThinking:
-		busType = bus.EventAgentThinking
-		if p, ok := e.Payload.(ThinkingPayload); ok {
-			payload = bus.ThinkingPayload{Step: p.Step, Content: p.Content}
-		}
-	case EventAgentStepTokens:
-		busType = bus.EventAgentStepTokens
-		if p, ok := e.Payload.(StepTokenUsagePayload); ok {
-			payload = bus.StepTokenUsagePayload{
-				Step:             p.Step,
-				PromptTokens:     p.PromptTokens,
-				CompletionTokens: p.CompletionTokens,
-				TotalTokens:      p.TotalTokens,
-			}
-		}
-	case EventContextTokens:
-		busType = bus.EventContextTokens
-		if p, ok := e.Payload.(ContextTokensPayload); ok {
-			payload = bus.ContextTokensPayload{
-				PromptTokens: p.PromptTokens,
-				Estimated:    p.Estimated,
-			}
-		}
-	case EventAgentRefusal:
-		busType = bus.EventAgentRefusal
-		if p, ok := e.Payload.(RefusalPayload); ok {
-			payload = bus.RefusalPayload{Content: p.Content}
-		}
-	case EventAgentToolCallStart:
-		busType = bus.EventAgentToolCallStart
-		if p, ok := e.Payload.(ToolCallStartPayload); ok {
-			payload = bus.ToolCallStartPayload{
-				ToolCallID: p.ToolCallID,
-				ToolName:   p.ToolName,
-				ToolArgs:   p.ToolArgs,
-			}
-		}
-	case EventAgentToolCallDone:
-		busType = bus.EventAgentToolCallDone
-		if p, ok := e.Payload.(ToolCallDonePayload); ok {
-			payload = bus.ToolCallDonePayload{
-				ToolCallID: p.ToolCallID,
-				ToolName:   p.ToolName,
-				ToolResult: p.ToolResult,
-			}
-		}
-	case EventAgentDone:
-		busType = bus.EventAgentDone
-		if p, ok := e.Payload.(AgentDonePayload); ok {
-			payload = bus.AgentDonePayload{
-				PromptTokens:     p.PromptTokens,
-				CompletionTokens: p.CompletionTokens,
-				TotalTokens:      p.TotalTokens,
-			}
-		}
-	case EventAgentError:
-		busType = bus.EventAgentError
-		if p, ok := e.Payload.(AgentErrorPayload); ok {
-			payload = bus.AgentErrorPayload{Error: stringError(p.Error)}
-		}
-	case EventAgentCancelled:
-		busType = bus.EventAgentCancelled
-		payload = bus.AgentCancelledPayload{}
-	case EventProviderModelsResult:
-		busType = bus.EventProviderModelsResult
-		if p, ok := e.Payload.(ProviderModelsResultPayload); ok {
-			models := make([]bus.ProviderModel, 0, len(p.Models))
-			for _, model := range p.Models {
-				models = append(models, bus.ProviderModel{
-					ID:          model.ID,
-					DisplayName: model.DisplayName,
-				})
-			}
-			payload = bus.ProviderModelsResultPayload{
-				Provider: p.Provider,
-				Models:   models,
-				Error:    p.Error,
-			}
-		}
-	}
-
-	return bus.Event{Type: busType, Payload: payload}
-}
-
 // FromBusEvent converts a legacy bus event to a router event.
 func FromBusEvent(be bus.Event) Event {
 	e := Event{}
@@ -443,66 +319,4 @@ func FromBusEvent(be bus.Event) Event {
 	}
 
 	return e
-}
-
-// CommandFromBusEvent creates a Command from a legacy bus event (for migration).
-func CommandFromBusEvent(be bus.Event, identity ClientIdentity) Command {
-	cmd := Command{
-		Identity: identity,
-		Payload:  be.Payload,
-	}
-
-	switch be.Type {
-	case bus.EventUserMessage:
-		cmd.Type = CommandUserMessage
-		if p, ok := be.Payload.(bus.UserMessagePayload); ok {
-			cmd.Payload = UserMessagePayload{Content: p.Content}
-		}
-	case bus.EventNewConversation:
-		cmd.Type = CommandNewConversation
-	case bus.EventChangeProviderModel:
-		cmd.Type = CommandChangeProviderModel
-		if p, ok := be.Payload.(bus.ChangeProviderModelPayload); ok {
-			cmd.Payload = ChangeProviderModelPayload{
-				Provider: p.Provider,
-				Model:    p.Model,
-			}
-		}
-	case bus.EventCreateNewSession:
-		cmd.Type = CommandCreateNewSession
-		if p, ok := be.Payload.(bus.CreateNewSessionPayload); ok {
-			cmd.Payload = CreateNewSessionPayload{
-				Provider: p.Provider,
-				Model:    p.Model,
-			}
-		}
-	case bus.EventRequestProviderModels:
-		cmd.Type = CommandRequestProviderModels
-		if p, ok := be.Payload.(bus.RequestProviderModelsPayload); ok {
-			cmd.Payload = RequestProviderModelsPayload{
-				Provider: p.Provider,
-			}
-		}
-	case bus.EventCancelAgentRun:
-		cmd.Type = CommandCancelAgentRun
-	}
-
-	return cmd
-}
-
-// stringError creates an error from a string (for wire protocol -> bus conversion).
-func stringError(s string) error {
-	if s == "" {
-		return nil
-	}
-	return &simpleError{msg: s}
-}
-
-// simpleError is a basic error implementation for reconstructed errors.
-type simpleError struct {
-	msg string
-}
-
-func (e *simpleError) Error() string {
-	return e.msg
 }

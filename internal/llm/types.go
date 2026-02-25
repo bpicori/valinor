@@ -24,12 +24,6 @@ type Tool struct {
 	Exec func(json.RawMessage) (string, error)
 }
 
-// AvailableTool describes a tool exposed to the model.
-type AvailableTool struct {
-	Name        string
-	Description string
-}
-
 // MessageRole represents the role of a message in a conversation.
 type MessageRole string
 

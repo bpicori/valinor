@@ -45,26 +45,6 @@ func buildToolDef(name, description string, parameters map[string]any) llm.ToolD
 	}
 }
 
-// AvailableTools returns the deterministic list of tool metadata.
-func AvailableTools() []llm.AvailableTool {
-	defs := []llm.ToolDefinition{
-		readFileDef(),
-		writeFileDef(),
-		editFileDef(),
-		listFilesDef(),
-		grepDef(),
-		runCommandDef(),
-	}
-	out := make([]llm.AvailableTool, 0, len(defs))
-	for _, def := range defs {
-		out = append(out, llm.AvailableTool{
-			Name:        def.Name,
-			Description: def.Description,
-		})
-	}
-	return out
-}
-
 // BuildTools returns tool definitions for the given runtime.
 func BuildTools(rt *sandbox.Runtime) []llm.Tool {
 	return []llm.Tool{
