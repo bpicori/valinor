@@ -121,6 +121,50 @@ func (m *Model) rebuildViewportContent() {
 	m.viewport.GotoBottom()
 }
 
+// appendStreamingContent efficiently updates the viewport during streaming.
+// Instead of rebuilding all messages, it re-renders only the last streaming message.
+func (m *Model) appendStreamingContent() {
+	if !m.ready {
+		return
+	}
+
+	width := m.contentWidth
+	if width < 10 {
+		width = 80
+	}
+
+	// Find the content up to (but not including) the last message
+	// We'll rebuild just the last assistant message with the new content
+	var previousContent string
+	if len(m.messages) > 1 {
+		var b strings.Builder
+		for i := 0; i < len(m.messages)-1; i++ {
+			msg := m.messages[i]
+			switch msg.Role {
+			case roleUser:
+				b.WriteString(renderUserMessageBlock(msg, width))
+				b.WriteString("\n")
+			case roleAssistant:
+				b.WriteString(renderAssistantMessageBlock(msg, width))
+				b.WriteString("\n")
+			}
+		}
+		previousContent = b.String()
+	}
+
+	// Render the last message (which should be the streaming assistant message)
+	if last, ok := m.lastMessage(); ok {
+		var b strings.Builder
+		if previousContent != "" {
+			b.WriteString(previousContent)
+		}
+		b.WriteString(renderAssistantMessageBlock(*last, width))
+		b.WriteString("\n")
+		m.viewport.SetContent(b.String())
+	}
+	m.viewport.GotoBottom()
+}
+
 func renderUserMessageBlock(msg chatMessage, width int) string {
 	contentStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
 	body := userPrefixStyle.Render("> ") + contentStyle.Render(msg.Content)

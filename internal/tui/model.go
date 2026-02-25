@@ -671,7 +671,7 @@ func (m *Model) lastMessage() (*chatMessage, bool) {
 
 func (m *Model) handleContentDelta(last *chatMessage, payload router.ContentDeltaPayload) tea.Cmd {
 	last.Content += payload.Content
-	m.rebuildViewportContent()
+	m.appendStreamingContent()
 	return nil
 }
 
