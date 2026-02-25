@@ -65,9 +65,14 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	systemMessages := ExtractSystemMessages(params.Messages)
 
 	// Convert messages to Anthropic format
+	// Anthropic requires a positive max_tokens value; default to 16384 if unset
+	maxTokens := int64(params.MaxTokens)
+	if maxTokens <= 0 {
+		maxTokens = 16384
+	}
 	antParams := anthropic.MessageNewParams{
 		Model:     anthropic.Model(params.Model),
-		MaxTokens: int64(params.MaxTokens),
+		MaxTokens: maxTokens,
 		Messages:  ToAnthropicMessages(params.Messages),
 		System:    systemMessages,
 	}
