@@ -108,7 +108,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 	if len(sessions) > 0 {
 		latestSession := sessions[0]
-		sess, err = sm.Resume(context.Background(), latestSession.ID, sessionOpts)
+		sess, err = sm.Resume(ctx, latestSession.ID, sessionOpts)
 		if err != nil {
 			applog.Warning("resume latest session failed", applog.BuildMetadata("session_id", latestSession.ID, "error", err))
 		} else {
@@ -116,7 +116,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		}
 	}
 	if sess == nil {
-		sess, err = sm.Create(context.Background(), sessionOpts)
+		sess, err = sm.Create(ctx, sessionOpts)
 		if err != nil {
 			return fmt.Errorf("create session: %w", err)
 		}
