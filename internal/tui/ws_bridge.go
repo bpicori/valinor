@@ -68,12 +68,16 @@ type connectionStatusMsg struct {
 }
 
 // NewWSBridge creates a new WebSocket bridge for TUI.
-func NewWSBridge(gatewayURL string) *WSBridge {
+// If identity is empty, "default" will be used.
+func NewWSBridge(gatewayURL, identity string) *WSBridge {
+	if identity == "" {
+		identity = "default"
+	}
 	return &WSBridge{
 		gatewayURL: gatewayURL,
 		identity: router.ClientIdentity{
 			Type:     router.ClientTypeTUI,
-			Identity: "default", // Fixed identity for v1 as per plan
+			Identity: identity,
 		},
 		outgoing: make(chan *gateway.WireEnvelope, gateway.OutgoingQueueSize),
 	}

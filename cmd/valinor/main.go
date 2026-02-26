@@ -24,16 +24,17 @@ func main() {
 	var (
 		mode       = flag.String("mode", "tui", "Run mode: 'gateway' or 'tui'")
 		gatewayURL = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui mode, defaults to config)")
+		identity   = flag.String("identity", "default", "Client identity for session routing (tui mode)")
 	)
 	flag.Parse()
 
-	if err := run(*mode, *gatewayURL); err != nil {
+	if err := run(*mode, *gatewayURL, *identity); err != nil {
 		applog.Error("valinor exit error", applog.BuildMetadata("error", err))
 		os.Exit(1)
 	}
 }
 
-func run(mode, gatewayURL string) error {
+func run(mode, gatewayURL, identity string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -57,7 +58,7 @@ func run(mode, gatewayURL string) error {
 	case "gateway":
 		return runGateway(ctx, cfg)
 	case "tui":
-		return runTUI(ctx, cfg, gatewayURL)
+		return runTUI(ctx, cfg, gatewayURL, identity)
 	default:
 		return fmt.Errorf("invalid mode '%s': must be 'gateway' or 'tui'", mode)
 	}
@@ -142,7 +143,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 }
 
 // runTUI starts the TUI client connecting to a gateway.
-func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
+func runTUI(ctx context.Context, cfg config.Config, gatewayURL, identity string) error {
 	// Use config URL if not provided via flag
 	if gatewayURL == "" {
 		gatewayURL = cfg.GatewayWebSocketURL()
@@ -167,8 +168,8 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL string) error {
 	applog.Info("logging to file", applog.BuildMetadata("log_path", logPath))
 
 	// Create WebSocket bridge first
-	applog.Info("connecting to gateway", applog.BuildMetadata("url", gatewayURL))
-	wsBridge := tui.NewWSBridge(gatewayURL)
+	applog.Info("connecting to gateway", applog.BuildMetadata("url", gatewayURL, "identity", identity))
+	wsBridge := tui.NewWSBridge(gatewayURL, identity)
 
 	// Create TUI model with the bridge as command sender
 	model := tui.New(wsBridge, cfg, cfg.DefaultProvider, "")

@@ -385,6 +385,13 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 			RequestID: requestID,
 		})
 		return nil
+	case event.RequestProviderModels:
+		p, ok := payload.(event.RequestProviderModelsPayload)
+		if !ok {
+			return fmt.Errorf("invalid payload for request_provider_models")
+		}
+		r.handleRequestProviderModels(p.Provider, sessionID, requestID)
+		return nil
 	default:
 		return fmt.Errorf("unknown command type: %s", cmdType)
 	}
