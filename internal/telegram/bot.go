@@ -33,7 +33,7 @@ type Bot struct {
 	dispatcher *Dispatcher
 	poller     *Poller
 	sequencer  *Sequencer
-	bridge     *Bridge
+	bridges    map[string]*Bridge
 	renderer   *Renderer
 
 	// Per-chat state management (replaces old chatStates map)
@@ -42,6 +42,7 @@ type Bot struct {
 	// Request tracking for routing gateway events to chats
 	requestChats map[string]ChatIdentity
 	requestMu    sync.RWMutex
+	bridgesMu    sync.RWMutex
 
 	// Lifecycle
 	ctx    context.Context
@@ -77,6 +78,7 @@ func NewBot(cfg Config) (*Bot, error) {
 		config:       cfg,
 		stateStore:   NewChatStateStore(),
 		requestChats: make(map[string]ChatIdentity),
+		bridges:      make(map[string]*Bridge),
 	}, nil
 }
 
@@ -113,15 +115,6 @@ func (b *Bot) Start(ctx context.Context) error {
 	// This is key: both commands AND events go through the same sequential path
 	b.sequencer = NewSequencer(b.processWorkItem)
 
-	// Initialize bridge with gateway event handler
-	// Events are routed through the sequencer for per-chat serialization
-	b.bridge = NewBridge(b.config.GatewayURL, "telegram", b.handleGatewayEvent)
-
-	// Start bridge first (we need to be connected before handling commands)
-	if err := b.bridge.Start(b.ctx); err != nil {
-		return fmt.Errorf("start bridge: %w", err)
-	}
-
 	// Initialize poller
 	b.poller = NewPoller(b.client, b.store, b.handleUpdate)
 	if b.config.PollTimeout > 0 {
@@ -151,9 +144,7 @@ func (b *Bot) Stop() {
 	if b.poller != nil {
 		b.poller.Stop()
 	}
-	if b.bridge != nil {
-		b.bridge.Stop()
-	}
+	b.stopAllBridges()
 	if b.sequencer != nil {
 		b.sequencer.Stop()
 	}
@@ -200,10 +191,16 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) error {
 // handleGatewayEvent is called by the bridge when a gateway event is received.
 // The event is converted to a work item and routed through the sequencer
 // to ensure per-chat serialization (matching TUI's single-threaded Update() flow).
-func (b *Bot) handleGatewayEvent(ev router.Event) {
-	// Get chat identity from request tracking
+func (b *Bot) handleGatewayEvent(sourceIdentity ChatIdentity, ev router.Event) {
+	// Get chat identity from request tracking, or from session setup events
 	identity, ok := b.getChatForRequest(ev.RequestID)
 	if !ok {
+		// For events without request correlation (for example SessionAttached),
+		// use the bridge-bound chat identity.
+		identity = sourceIdentity
+	}
+
+	if identity.ChatID == 0 {
 		applog.Warning("telegram bot: received event for unknown request",
 			applog.BuildMetadata("request_id", ev.RequestID, "event_type", ev.Type))
 		return
@@ -254,6 +251,11 @@ func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
 
 	// Get or create chat state (like TUI's model initialization)
 	state := b.stateStore.GetOrCreate(cmd.Identity)
+	bridge, err := b.getOrCreateBridge(cmd.Identity)
+	if err != nil {
+		return fmt.Errorf("get bridge for chat: %w", err)
+	}
+	b.hydrateStateFromBridge(state, bridge)
 
 	// Track this request for response routing
 	b.trackRequest(cmd.RequestID, cmd.Identity)
@@ -261,17 +263,23 @@ func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
 	// For control commands (cancel), send immediately without state checks
 	// This maintains the fast-path for cancellation
 	if cmd.IsControlCommand {
-		if !b.bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
+		if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
 			return fmt.Errorf("failed to send control command")
 		}
 		return nil
+	}
+
+	// Handle local status command (doesn't go to gateway)
+	if cmd.Type == "status" {
+		result := b.renderer.RenderStatus(state.SessionKey, state.ProviderName, state.ModelName)
+		return b.sendTelegramMessage(cmd.Identity, state, result)
 	}
 
 	// TUI-like state guarding: check if we can start a new request
 	if !state.CanStartNewRequest() {
 		// Send a notice that we're busy
 		notice := &RenderResult{
-			Text:      "⏳ Please wait for the current response to complete.",
+			Text:      "⏳ Please wait for the current response to complete\\.",
 			ParseMode: "MarkdownV2",
 		}
 		return b.sendTelegramMessage(cmd.Identity, state, notice)
@@ -284,7 +292,7 @@ func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
 	}
 
 	// Send command to gateway
-	if !b.bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
+	if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
 		return fmt.Errorf("failed to send command")
 	}
 
@@ -298,14 +306,19 @@ func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
 
 // processEvent handles gateway event work items.
 // Similar to TUI's handleWSEventMsg - state-guarded event processing.
-func (b *Bot) processEvent(ctx context.Context, item *WorkItem) error {
+func (b *Bot) processEvent(_ context.Context, item *WorkItem) error {
 	ev := &item.Event
 
-	// Get chat identity from request tracking
+	// Get chat identity from request tracking, or fall back to work item identity
+	// Work item identity is populated for events that don't have request IDs (like session setup)
 	identity, ok := b.getChatForRequest(ev.RequestID)
 	if !ok {
-		// Event arrived after request was cleaned up - ignore
-		return nil
+		// Try work item identity (set during event routing for session setup events)
+		if item.Identity.ChatID == 0 {
+			// No identity available - ignore
+			return nil
+		}
+		identity = item.Identity
 	}
 
 	// Get chat state
@@ -395,6 +408,19 @@ func (b *Bot) processEvent(ctx context.Context, item *WorkItem) error {
 		// Handle cancellation like TUI's handleAgentCancelled
 		state.FinalizeStreaming()
 		b.cleanupRequest(ev.RequestID)
+
+	case event.EventType(router.EventSessionAttached):
+		// Store session info for later /status command
+		if payload, ok := ev.Payload.(router.SessionAttachedPayload); ok {
+			state.UpdateSessionInfo(payload.SessionKey, payload.Provider, payload.Model)
+		}
+
+	case event.EventType(router.EventChangeProviderModel):
+		// Update provider/model in state
+		if payload, ok := ev.Payload.(router.ChangeProviderModelPayload); ok {
+			state.ProviderName = payload.Provider
+			state.ModelName = payload.Model
+		}
 	}
 
 	// Render the event to a Telegram message.
@@ -441,6 +467,72 @@ func (b *Bot) cleanupRequest(requestID string) {
 	b.requestMu.Lock()
 	defer b.requestMu.Unlock()
 	delete(b.requestChats, requestID)
+}
+
+// getOrCreateBridge returns a started bridge bound to the specific chat identity.
+func (b *Bot) getOrCreateBridge(identity ChatIdentity) (*Bridge, error) {
+	identityKey := identity.ToClientIdentity()
+
+	b.bridgesMu.RLock()
+	bridge := b.bridges[identityKey]
+	b.bridgesMu.RUnlock()
+	if bridge != nil {
+		return bridge, nil
+	}
+
+	b.bridgesMu.Lock()
+	defer b.bridgesMu.Unlock()
+
+	// Double-check under write lock.
+	if existing := b.bridges[identityKey]; existing != nil {
+		return existing, nil
+	}
+
+	chatBridge := NewBridge(
+		b.config.GatewayURL,
+		identityKey,
+		func(ev router.Event) {
+			b.handleGatewayEvent(identity, ev)
+		},
+	)
+	if err := chatBridge.Start(b.ctx); err != nil {
+		return nil, fmt.Errorf("start bridge for %s: %w", identityKey, err)
+	}
+
+	b.bridges[identityKey] = chatBridge
+	return chatBridge, nil
+}
+
+// stopAllBridges stops and clears all per-chat bridges.
+func (b *Bot) stopAllBridges() {
+	b.bridgesMu.Lock()
+	bridges := make([]*Bridge, 0, len(b.bridges))
+	for key, bridge := range b.bridges {
+		bridges = append(bridges, bridge)
+		delete(b.bridges, key)
+	}
+	b.bridgesMu.Unlock()
+
+	for _, bridge := range bridges {
+		bridge.Stop()
+	}
+}
+
+// hydrateStateFromBridge seeds chat state from bridge handshake data.
+func (b *Bot) hydrateStateFromBridge(state *ChatState, bridge *Bridge) {
+	sessionKey, provider, model, ok := bridge.SessionInfo()
+	if !ok {
+		return
+	}
+	if state.SessionKey == "" {
+		state.SessionKey = sessionKey
+	}
+	if state.ProviderName == "" {
+		state.ProviderName = provider
+	}
+	if state.ModelName == "" {
+		state.ModelName = model
+	}
 }
 
 // sendTypingAction updates the chat with Telegram's typing indicator.
@@ -560,9 +652,14 @@ func (b *Bot) GetStats() BotStats {
 		stats.TotalQueued = b.sequencer.TotalQueued()
 	}
 
-	if b.bridge != nil {
-		stats.Connected = b.bridge.IsConnected()
+	b.bridgesMu.RLock()
+	for _, bridge := range b.bridges {
+		if bridge.IsConnected() {
+			stats.Connected = true
+			break
+		}
 	}
+	b.bridgesMu.RUnlock()
 
 	if b.poller != nil {
 		stats.Polling = b.poller.IsRunning()

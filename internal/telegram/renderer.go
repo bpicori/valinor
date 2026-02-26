@@ -54,7 +54,7 @@ func (r *Renderer) RenderEvent(ev router.Event) *RenderResult {
 	case event.AgentError:
 		return r.renderError(ev.Payload)
 	case event.AgentCancelled:
-		return r.renderCancelled(ev.Payload)
+		return r.renderCancelled()
 	case event.AgentToolCallStart:
 		// Tool lifecycle events are noisy for Telegram users; keep them internal only.
 		return nil
@@ -182,7 +182,7 @@ func (r *Renderer) renderError(payload interface{}) *RenderResult {
 
 // renderCancelled renders a cancellation message.
 // This edits the streaming message to show it was cancelled.
-func (r *Renderer) renderCancelled(payload interface{}) *RenderResult {
+func (r *Renderer) renderCancelled() *RenderResult {
 	return &RenderResult{
 		Text:      "🛑 _Cancelled_",
 		ParseMode: "MarkdownV2",
@@ -197,7 +197,7 @@ func (r *Renderer) renderToolCallStart(payload interface{}) *RenderResult {
 		return nil
 	}
 
-	text := EscapeMarkdownf("🔧 *Using tool:* `%s`", p.ToolName)
+	text := EscapeMarkdownf("🔧 *Using tool:* %s", p.ToolName)
 
 	return &RenderResult{
 		Text:      text,
@@ -212,7 +212,7 @@ func (r *Renderer) renderToolCallDone(payload interface{}) *RenderResult {
 		return nil
 	}
 
-	text := EscapeMarkdownf("✅ *Tool finished:* `%s`", p.ToolName)
+	text := EscapeMarkdownf("✅ *Tool finished:* %s", p.ToolName)
 
 	return &RenderResult{
 		Text:      text,
@@ -229,8 +229,9 @@ func (r *Renderer) renderSessionAttached(payload interface{}) *RenderResult {
 
 	var sb strings.Builder
 	sb.WriteString("📎 *Session attached*\n")
-	sb.WriteString(EscapeMarkdownf("• Provider: `%s`\n", p.Provider))
-	sb.WriteString(EscapeMarkdownf("• Model: `%s`", p.Model))
+	sb.WriteString(EscapeMarkdownf("• Session: %s\n", p.SessionKey))
+	sb.WriteString(EscapeMarkdownf("• Provider: %s\n", p.Provider))
+	sb.WriteString(EscapeMarkdownf("• Model: %s", p.Model))
 
 	return &RenderResult{
 		Text:      sb.String(),
@@ -245,7 +246,7 @@ func (r *Renderer) renderModelChanged(payload interface{}) *RenderResult {
 		return nil
 	}
 
-	text := EscapeMarkdownf("🔄 *Switched to* `%s` / `%s`", p.Provider, p.Model)
+	text := EscapeMarkdownf("🔄 *Switched to* %s / %s", p.Provider, p.Model)
 
 	return &RenderResult{
 		Text:      text,
@@ -307,4 +308,29 @@ func EscapeMarkdownf(format string, args ...interface{}) string {
 		}
 	}
 	return fmt.Sprintf(text, args...)
+}
+
+// RenderStatus renders the current session status for the /status command.
+func (r *Renderer) RenderStatus(sessionKey, provider, model string) *RenderResult {
+	var sb strings.Builder
+	sb.WriteString("ℹ️ *Current Status*\n")
+
+	if sessionKey != "" {
+		sb.WriteString(EscapeMarkdownf("• Session: %s\n", sessionKey))
+	} else {
+		sb.WriteString("• Session: _not attached_\n")
+	}
+
+	if provider != "" {
+		sb.WriteString(EscapeMarkdownf("• Provider: %s\n", provider))
+	}
+
+	if model != "" {
+		sb.WriteString(EscapeMarkdownf("• Model: %s", model))
+	}
+
+	return &RenderResult{
+		Text:      sb.String(),
+		ParseMode: "MarkdownV2",
+	}
 }

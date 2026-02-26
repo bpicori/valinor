@@ -143,7 +143,7 @@ func (d *Dispatcher) parseCommand(identity ChatIdentity, msg *Message, updateID 
 		cmdLower := strings.ToLower(cmd)
 
 		switch cmdLower {
-		case "new", "start":
+		case "new", "clear":
 			return &Command{
 				Identity:  identity,
 				RequestID: requestID,
@@ -151,7 +151,7 @@ func (d *Dispatcher) parseCommand(identity ChatIdentity, msg *Message, updateID 
 				RawText:   msg.Text,
 			}, nil
 
-		case "cancel", "stop":
+		case "cancel":
 			return &Command{
 				Identity:         identity,
 				RequestID:        requestID,
@@ -186,30 +186,12 @@ func (d *Dispatcher) parseCommand(identity ChatIdentity, msg *Message, updateID 
 				RawText: msg.Text,
 			}, nil
 
-		case "session":
-			// /session provider model - requires args
-			parts := strings.Fields(args)
-			if len(parts) >= 2 {
-				return &Command{
-					Identity:  identity,
-					RequestID: requestID,
-					Type:      router.CommandCreateNewSession,
-					Payload: router.CreateNewSessionPayload{
-						Provider: parts[0],
-						Model:    strings.Join(parts[1:], " "),
-					},
-					RawText: msg.Text,
-				}, nil
-			}
-			// Invalid session command - treat as regular message explaining usage
+		case "status":
 			return &Command{
 				Identity:  identity,
 				RequestID: requestID,
-				Type:      router.CommandUserMessage,
-				Payload: router.UserMessagePayload{
-					Content: "To create a new session, use: /session <provider> <model>",
-				},
-				RawText: msg.Text,
+				Type:      "status", // Internal command type, not sent to router
+				RawText:   msg.Text,
 			}, nil
 
 		default:

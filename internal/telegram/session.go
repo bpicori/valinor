@@ -32,6 +32,11 @@ type ChatState struct {
 	// Tool calls tracking (similar to TUI's chatMessage.ToolCalls)
 	ActiveToolCalls []ToolCallInfo
 
+	// Session info (mirrors TUI's sessionKey, providerName, modelName)
+	SessionKey   string
+	ProviderName string
+	ModelName    string
+
 	// Final state
 	Usage PromptTokenUsage
 }
@@ -146,6 +151,13 @@ func (cs *ChatState) MarkToolCallDone(toolCallID, result string) {
 // UpdateUsage updates token usage statistics.
 func (cs *ChatState) UpdateUsage(usage PromptTokenUsage) {
 	cs.Usage = usage
+}
+
+// UpdateSessionInfo updates the session key, provider, and model.
+func (cs *ChatState) UpdateSessionInfo(sessionKey, provider, model string) {
+	cs.SessionKey = sessionKey
+	cs.ProviderName = provider
+	cs.ModelName = model
 }
 
 // ChatStateStore manages chat states for all conversations.

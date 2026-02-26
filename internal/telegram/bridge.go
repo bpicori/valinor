@@ -50,6 +50,9 @@ type Bridge struct {
 	handshaked bool
 	closed     bool
 	closeOnce  sync.Once
+	sessionKey string
+	provider   string
+	model      string
 
 	// Lifecycle
 	ctx    context.Context
@@ -111,6 +114,16 @@ func (b *Bridge) IsConnected() bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.connected && b.handshaked
+}
+
+// SessionInfo returns the handshake session metadata if available.
+func (b *Bridge) SessionInfo() (sessionKey, provider, model string, ok bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if !b.connected || !b.handshaked || b.sessionKey == "" {
+		return "", "", "", false
+	}
+	return b.sessionKey, b.provider, b.model, true
 }
 
 // IsClosed returns true if the bridge has been closed.
@@ -234,6 +247,9 @@ func (b *Bridge) connect() error {
 	b.mu.Lock()
 	b.connected = true
 	b.handshaked = true
+	b.sessionKey = ackPayload.SessionKey
+	b.provider = ackPayload.Provider
+	b.model = ackPayload.Model
 	b.mu.Unlock()
 
 	applog.Info("telegram bridge: connected",
