@@ -59,8 +59,6 @@ type Config struct {
 	StorageDir string
 	// PollTimeout is the long-polling timeout in seconds (default: 30)
 	PollTimeout int
-	// Allowlist is the list of allowed usernames (empty = allow all)
-	Allowlist []string
 	// RequireMention requires bot mention in groups (default: false)
 	RequireMention bool
 }
@@ -105,7 +103,6 @@ func (b *Bot) Start(ctx context.Context) error {
 
 	// Initialize dispatcher
 	b.dispatcher = NewDispatcher(me.Username)
-	b.dispatcher.SetAllowlist(b.config.Allowlist)
 	b.dispatcher.SetRequireMention(b.config.RequireMention)
 
 	// Initialize renderer
@@ -177,7 +174,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) error {
 		return fmt.Errorf("dispatch update %d: %w", update.UpdateID, err)
 	}
 	if cmd == nil {
-		// Update was filtered out (allowlist, no message, etc.)
+		// Update was filtered out (no message, etc.)
 		return nil
 	}
 

@@ -215,8 +215,7 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("resolve valinor dir: %w", err)
 	}
 
-	// Initialize logger with file transport only (bot has no TUI)
-	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile})
+	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile, applog.TransportStdout})
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
@@ -231,19 +230,12 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 	gatewayURL := cfg.GatewayWebSocketURL()
 	applog.Info("connecting to gateway", applog.BuildMetadata("url", gatewayURL))
 
-	// Resolve storage directory
-	storageDir := cfg.Telegram.BotToken
-	if storageDir == "" {
-		storageDir = valinorDir
-	}
-
 	// Create bot configuration
 	botCfg := telegram.Config{
 		BotToken:       cfg.Telegram.BotToken,
 		GatewayURL:     gatewayURL,
-		StorageDir:     storageDir,
+		StorageDir:     valinorDir,
 		PollTimeout:    cfg.Telegram.PollTimeout,
-		Allowlist:      cfg.Telegram.Allowlist,
 		RequireMention: cfg.Telegram.RequireMention,
 	}
 

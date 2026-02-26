@@ -28,8 +28,6 @@ type Command struct {
 
 // Dispatcher parses Telegram updates and converts them to router commands.
 type Dispatcher struct {
-	// Allowlist contains allowed usernames (if set, only these users can interact)
-	Allowlist map[string]bool
 	// RequireMention in groups requires the bot to be mentioned
 	RequireMention bool
 	// BotUsername is the bot's username for mention checking
@@ -39,18 +37,8 @@ type Dispatcher struct {
 // NewDispatcher creates a new update dispatcher.
 func NewDispatcher(botUsername string) *Dispatcher {
 	return &Dispatcher{
-		Allowlist:      make(map[string]bool),
 		BotUsername:    botUsername,
 		RequireMention: false,
-	}
-}
-
-// SetAllowlist configures the username allowlist. Empty allowlist means all users allowed.
-func (d *Dispatcher) SetAllowlist(usernames []string) {
-	d.Allowlist = make(map[string]bool)
-	for _, u := range usernames {
-		// Store lowercase for case-insensitive comparison
-		d.Allowlist[strings.ToLower(u)] = true
 	}
 }
 
@@ -66,13 +54,6 @@ func (d *Dispatcher) Dispatch(ctx context.Context, update Update) (*Command, err
 	msg := d.extractMessage(update)
 	if msg == nil {
 		return nil, nil // No message to process
-	}
-
-	// Check allowlist
-	if !d.isAllowed(msg.From) {
-		applog.Debug("telegram dispatcher: user not in allowlist",
-			applog.BuildMetadata("user_id", msg.From.ID, "username", msg.From.Username))
-		return nil, nil
 	}
 
 	// Check mention requirement in groups
@@ -105,24 +86,6 @@ func (d *Dispatcher) extractMessage(update Update) *Message {
 	}
 	// Callback queries don't have direct messages, handled separately
 	return nil
-}
-
-// isAllowed checks if a user is in the allowlist.
-func (d *Dispatcher) isAllowed(user *User) bool {
-	if user == nil {
-		return false
-	}
-	// Empty allowlist means all users allowed
-	if len(d.Allowlist) == 0 {
-		return true
-	}
-	// Check by username (case-insensitive)
-	if user.Username != "" {
-		if d.Allowlist[strings.ToLower(user.Username)] {
-			return true
-		}
-	}
-	return false
 }
 
 // isGroupChat returns true if the chat is a group or supergroup.

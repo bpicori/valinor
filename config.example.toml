@@ -49,4 +49,3 @@ max_agent_iterations = 20
 # retry_base_delay = 1           # Base retry delay (seconds)
 # retry_max_delay = 30           # Maximum retry delay (seconds)
 # require_mention = false        # Require @bot mention in groups
-# allowlist = ["username1", "username2"]  # Restrict to specific usernames (empty = allow all)
