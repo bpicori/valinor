@@ -173,7 +173,7 @@ func (b *Bridge) connect() error {
 	}
 
 	// Connect with timeout
-	dialCtx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+	dialCtx, cancel := context.WithTimeout(b.ctx, dialTimeout)
 	defer cancel()
 
 	dialer := websocket.Dialer{

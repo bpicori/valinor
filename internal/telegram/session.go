@@ -2,6 +2,7 @@
 package telegram
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -23,8 +24,8 @@ type ChatState struct {
 	// Request tracking for response routing
 	CurrentRequestID string
 
-	// Content accumulation during streaming (for potential recovery)
-	StreamingContent string
+	// Content accumulation during streaming using strings.Builder for O(n) efficiency.
+	streamingBuf strings.Builder
 
 	// Typing action pacing to avoid Telegram 429 rate limits.
 	NextTypingActionAt time.Time
@@ -67,7 +68,7 @@ func (cs *ChatState) CanStartNewRequest() bool {
 func (cs *ChatState) StartStreaming(requestID string) {
 	cs.IsStreaming = true
 	cs.CurrentRequestID = requestID
-	cs.StreamingContent = ""
+	cs.streamingBuf.Reset()
 	cs.ActiveToolCalls = nil
 	cs.NextTypingActionAt = time.Time{}
 }
@@ -76,7 +77,7 @@ func (cs *ChatState) StartStreaming(requestID string) {
 func (cs *ChatState) FinalizeStreaming() {
 	cs.IsStreaming = false
 	cs.CurrentRequestID = ""
-	cs.StreamingContent = ""
+	cs.streamingBuf.Reset()
 	cs.ActiveToolCalls = nil
 	cs.StreamingMessageID = 0
 	cs.NextTypingActionAt = time.Time{}
@@ -84,12 +85,18 @@ func (cs *ChatState) FinalizeStreaming() {
 
 // AppendContent adds delta content during streaming.
 func (cs *ChatState) AppendContent(delta string) {
-	cs.StreamingContent += delta
+	cs.streamingBuf.WriteString(delta)
+}
+
+// GetStreamingContent returns the accumulated streaming content.
+func (cs *ChatState) GetStreamingContent() string {
+	return cs.streamingBuf.String()
 }
 
 // SetStreamingContent replaces the accumulated streaming content.
 func (cs *ChatState) SetStreamingContent(content string) {
-	cs.StreamingContent = content
+	cs.streamingBuf.Reset()
+	cs.streamingBuf.WriteString(content)
 }
 
 // CanSendTypingAction returns true if typing can be sent now.
@@ -117,19 +124,9 @@ func (cs *ChatState) GetStreamingMessageID() int64 {
 	return cs.StreamingMessageID
 }
 
-// ClearStreamingMessageID clears the streaming message ID.
-func (cs *ChatState) ClearStreamingMessageID() {
-	cs.StreamingMessageID = 0
-}
-
 // UpdateLastMessageID updates the last message ID.
 func (cs *ChatState) UpdateLastMessageID(id int64) {
 	cs.LastMessageID = id
-}
-
-// SetToolCalls sets the active tool calls.
-func (cs *ChatState) SetToolCalls(calls []ToolCallInfo) {
-	cs.ActiveToolCalls = calls
 }
 
 // AddToolCall adds a new tool call.
@@ -197,20 +194,6 @@ func (store *ChatStateStore) GetOrCreate(identity ChatIdentity) *ChatState {
 	}
 	store.states[key] = state
 	return state
-}
-
-// Get returns the chat state if it exists, nil otherwise.
-func (store *ChatStateStore) Get(identity ChatIdentity) *ChatState {
-	store.mu.RLock()
-	defer store.mu.RUnlock()
-	return store.states[identity.SequentialKey()]
-}
-
-// Remove deletes a chat state from the store.
-func (store *ChatStateStore) Remove(identity ChatIdentity) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	delete(store.states, identity.SequentialKey())
 }
 
 // WorkItem represents a unit of work to be processed sequentially per chat.

@@ -12,6 +12,28 @@ import (
 // MaxTelegramMessageLength is Telegram's maximum message length.
 const MaxTelegramMessageLength = 4096
 
+// Pre-allocated replacer for MarkdownV2 escaping to avoid repeated allocations.
+var mdReplacer = strings.NewReplacer(
+	"_", "\\_",
+	"*", "\\*",
+	"[", "\\[",
+	"]", "\\]",
+	"(", "\\(",
+	")", "\\)",
+	"~", "\\~",
+	"`", "\\`",
+	">", "\\>",
+	"#", "\\#",
+	"+", "\\+",
+	"-", "\\-",
+	"=", "\\=",
+	"|", "\\|",
+	"{", "\\{",
+	"}", "\\}",
+	".", "\\.",
+	"!", "\\!",
+)
+
 // RenderResult contains the rendered Telegram message.
 type RenderResult struct {
 	Text        string
@@ -26,16 +48,11 @@ type RenderResult struct {
 
 // Renderer converts gateway events to Telegram message formats.
 // This is stateless - all mutable state lives in ChatState.
-type Renderer struct {
-	// EnableMarkdown enables Markdown parsing in outgoing messages
-	EnableMarkdown bool
-}
+type Renderer struct{}
 
 // NewRenderer creates a new stateless event renderer.
 func NewRenderer() *Renderer {
-	return &Renderer{
-		EnableMarkdown: true,
-	}
+	return &Renderer{}
 }
 
 // RenderEvent converts a router event to a Telegram message.
@@ -190,36 +207,6 @@ func (r *Renderer) renderCancelled() *RenderResult {
 	}
 }
 
-// renderToolCallStart renders a tool call start indicator.
-func (r *Renderer) renderToolCallStart(payload interface{}) *RenderResult {
-	p, ok := payload.(router.ToolCallStartPayload)
-	if !ok {
-		return nil
-	}
-
-	text := EscapeMarkdownf("🔧 *Using tool:* %s", p.ToolName)
-
-	return &RenderResult{
-		Text:      text,
-		ParseMode: "MarkdownV2",
-	}
-}
-
-// renderToolCallDone renders a tool call completion indicator.
-func (r *Renderer) renderToolCallDone(payload interface{}) *RenderResult {
-	p, ok := payload.(router.ToolCallDonePayload)
-	if !ok {
-		return nil
-	}
-
-	text := EscapeMarkdownf("✅ *Tool finished:* %s", p.ToolName)
-
-	return &RenderResult{
-		Text:      text,
-		ParseMode: "MarkdownV2",
-	}
-}
-
 // renderSessionAttached renders a session attachment notification.
 func (r *Renderer) renderSessionAttached(payload interface{}) *RenderResult {
 	p, ok := payload.(router.SessionAttachedPayload)
@@ -274,28 +261,7 @@ func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 
 // EscapeMarkdown escapes text for Telegram's MarkdownV2 format.
 func EscapeMarkdown(text string) string {
-	// Characters that need escaping in MarkdownV2: _ * [ ] ( ) ~ ` > # + - = | { } . !
-	replacer := strings.NewReplacer(
-		"_", "\\_",
-		"*", "\\*",
-		"[", "\\[",
-		"]", "\\]",
-		"(", "\\(",
-		")", "\\)",
-		"~", "\\~",
-		"`", "\\`",
-		">", "\\>",
-		"#", "\\#",
-		"+", "\\+",
-		"-", "\\-",
-		"=", "\\=",
-		"|", "\\|",
-		"{", "\\{",
-		"}", "\\}",
-		".", "\\.",
-		"!", "\\!",
-	)
-	return replacer.Replace(text)
+	return mdReplacer.Replace(text)
 }
 
 // EscapeMarkdownf escapes formatted text for MarkdownV2.

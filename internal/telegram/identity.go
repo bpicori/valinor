@@ -13,8 +13,8 @@ import (
 //   - Group/Forum topic: telegram:{chatId}:topic:{threadId}
 //   - Control lane for cancel/stop commands: telegram:{chatId}:control
 const (
-	// KeyPrefixDM is the prefix for direct message sequential keys.
-	KeyPrefixDM = "telegram"
+	// KeyPrefix is the prefix for all sequential keys (DMs, groups, channels, forum topics).
+	KeyPrefix = "telegram"
 	// KeySegmentTopic is the segment identifier for topic/thread IDs.
 	KeySegmentTopic = "topic"
 	// KeySegmentControl is the segment identifier for control lane keys.
@@ -67,15 +67,15 @@ func (ci ChatIdentity) ToClientIdentity() string {
 // This is used as the worker queue key to ensure ordered message handling.
 func (ci ChatIdentity) SequentialKey() string {
 	if ci.ThreadID != nil {
-		return fmt.Sprintf("%s:%d:%s:%d", KeyPrefixDM, ci.ChatID, KeySegmentTopic, *ci.ThreadID)
+		return fmt.Sprintf("%s:%d:%s:%d", KeyPrefix, ci.ChatID, KeySegmentTopic, *ci.ThreadID)
 	}
-	return fmt.Sprintf("%s:%d", KeyPrefixDM, ci.ChatID)
+	return fmt.Sprintf("%s:%d", KeyPrefix, ci.ChatID)
 }
 
 // ControlLaneKey returns the control lane key for cancel/stop commands.
 // Control commands use a separate lane to avoid blocking behind regular messages.
 func (ci ChatIdentity) ControlLaneKey() string {
-	return fmt.Sprintf("%s:%d:%s", KeyPrefixDM, ci.ChatID, KeySegmentControl)
+	return fmt.Sprintf("%s:%d:%s", KeyPrefix, ci.ChatID, KeySegmentControl)
 }
 
 // ParseChatIdentity parses a client identity string into ChatIdentity.

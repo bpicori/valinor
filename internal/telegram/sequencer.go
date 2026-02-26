@@ -200,13 +200,16 @@ func (s *Sequencer) GetStats() SequencerStats {
 	defer s.mu.RUnlock()
 
 	depths := make(map[string]int, len(s.queues))
+	total := 0
 	for key, queue := range s.queues {
-		depths[key] = len(queue)
+		depth := len(queue)
+		depths[key] = depth
+		total += depth
 	}
 
 	return SequencerStats{
 		ActiveKeys:  len(s.queues),
-		TotalQueued: s.TotalQueued(),
+		TotalQueued: total,
 		QueueDepths: depths,
 	}
 }

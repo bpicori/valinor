@@ -3,6 +3,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -141,7 +142,7 @@ func (p *Poller) pollLoop() {
 
 		if err != nil {
 			// Check if this is a context cancellation (graceful shutdown)
-			if err == context.Canceled {
+			if errors.Is(err, context.Canceled) {
 				return
 			}
 

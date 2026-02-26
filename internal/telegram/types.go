@@ -41,26 +41,6 @@ func (m *Message) IsCommand() bool {
 	return false
 }
 
-// Command extracts the command text (without the leading /).
-func (m *Message) Command() string {
-	if !m.IsCommand() {
-		return ""
-	}
-	entity := m.Entities[0]
-	cmd := m.Text[entity.Offset : entity.Offset+entity.Length]
-	// Remove leading /
-	if len(cmd) > 0 && cmd[0] == '/' {
-		cmd = cmd[1:]
-	}
-	// Remove @botname suffix if present
-	for i, c := range cmd {
-		if c == '@' {
-			return cmd[:i]
-		}
-	}
-	return cmd
-}
-
 // CommandWithArgs returns the command and arguments separately.
 func (m *Message) CommandWithArgs() (cmd, args string) {
 	if !m.IsCommand() {

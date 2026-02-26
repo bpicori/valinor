@@ -22,17 +22,19 @@ const (
 
 // Client is a minimal Telegram Bot API HTTP client.
 type Client struct {
-	token      string
-	httpClient *http.Client
-	endpoint   string
+	token          string
+	httpClient     *http.Client
+	longPollClient *http.Client
+	endpoint       string
 }
 
 // NewClient creates a new Telegram Bot API client.
 func NewClient(token string) *Client {
 	return &Client{
-		token:      token,
-		httpClient: &http.Client{Timeout: DefaultRequestTimeout},
-		endpoint:   DefaultAPIEndpoint + token + "/",
+		token:          token,
+		httpClient:     &http.Client{Timeout: DefaultRequestTimeout},
+		longPollClient: &http.Client{Timeout: 100 * time.Second}, // Max 90s poll + buffer
+		endpoint:       DefaultAPIEndpoint + token + "/",
 	}
 }
 
@@ -83,11 +85,6 @@ func (c *Client) apiCall(ctx context.Context, method string, payload interface{}
 // GetUpdates fetches updates from Telegram using long polling.
 // The timeout parameter specifies the maximum time for long polling (0-90 seconds).
 func (c *Client) GetUpdates(ctx context.Context, req GetUpdatesRequest) ([]Update, error) {
-	// Use a separate HTTP client with longer timeout for long polling
-	pollClient := &http.Client{
-		Timeout: time.Duration(req.Timeout+10) * time.Second, // Buffer for network latency
-	}
-
 	url := c.endpoint + "getUpdates"
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -100,7 +97,7 @@ func (c *Client) GetUpdates(ctx context.Context, req GetUpdatesRequest) ([]Updat
 	}
 	pollReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := pollClient.Do(pollReq)
+	resp, err := c.longPollClient.Do(pollReq)
 	if err != nil {
 		return nil, fmt.Errorf("execute poll: %w", err)
 	}
