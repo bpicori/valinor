@@ -12,6 +12,14 @@ import (
 	"valinor/internal/session"
 )
 
+// SessionRoutingContext tracks the session context for event routing.
+// This is used internally by the router to route events to the correct session
+// without modifying the event.Event schema.
+type SessionRoutingContext struct {
+	SessionID   string
+	IdentityKey string
+}
+
 // ClientEventConsumer is the interface for sending events to a specific client.
 // The gateway implements this to forward events to connected WebSocket clients.
 type ClientEventConsumer interface {
@@ -35,6 +43,9 @@ type Router struct {
 	mu              sync.RWMutex
 	clientConsumers map[string]ClientEventConsumer // key: identity key
 
+	// sessionConsumers maps sessionID to the set of consumers bound to that session.
+	sessionConsumers map[string]map[string]ClientEventConsumer // sessionID -> (identityKey -> consumer)
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -51,13 +62,14 @@ func NewRouter(
 	identityMap *session.IdentityMapStore,
 ) *Router {
 	return &Router{
-		bus:             b,
-		runtime:         runtime,
-		manager:         manager,
-		sessionOpts:     sessionOpts,
-		identityMap:     identityMap,
-		registry:        NewSessionRegistry(),
-		clientConsumers: make(map[string]ClientEventConsumer),
+		bus:              b,
+		runtime:          runtime,
+		manager:          manager,
+		sessionOpts:      sessionOpts,
+		identityMap:      identityMap,
+		registry:         NewSessionRegistry(),
+		clientConsumers:  make(map[string]ClientEventConsumer),
+		sessionConsumers: make(map[string]map[string]ClientEventConsumer),
 	}
 }
 
@@ -151,6 +163,11 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 		r.mu.Lock()
 		oldConsumer = r.clientConsumers[key]
 		r.clientConsumers[key] = consumer
+		// Update session-consumer mapping
+		if oldConsumer != nil {
+			r.removeSessionConsumerLocked(binding.SessionID, key)
+		}
+		r.addSessionConsumerLocked(binding.SessionID, key, consumer)
 		r.mu.Unlock()
 		if oldConsumer != nil && oldConsumer != consumer {
 			oldConsumer.Close()
@@ -195,9 +212,10 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 		}
 	}
 
-	// Store the consumer
+	// Store the consumer and update session-consumer mapping
 	r.mu.Lock()
 	r.clientConsumers[key] = consumer
+	r.addSessionConsumerLocked(binding.SessionID, key, consumer)
 	r.mu.Unlock()
 
 	// Send session attached event
@@ -235,6 +253,11 @@ func (r *Router) UnsubscribeClient(identity ClientIdentity, consumer ClientEvent
 			return
 		}
 		delete(r.clientConsumers, key)
+
+		// Remove from sessionConsumers mapping
+		if binding := r.registry.GetByKey(key); binding != nil {
+			r.removeSessionConsumerLocked(binding.SessionID, key)
+		}
 	}
 	r.mu.Unlock()
 
@@ -242,7 +265,60 @@ func (r *Router) UnsubscribeClient(identity ClientIdentity, consumer ClientEvent
 		applog.BuildMetadata("identity_key", key))
 }
 
+// addSessionConsumerLocked adds a consumer to the session-consumer mapping.
+// Must be called with r.mu held.
+func (r *Router) addSessionConsumerLocked(sessionID, identityKey string, consumer ClientEventConsumer) {
+	if r.sessionConsumers[sessionID] == nil {
+		r.sessionConsumers[sessionID] = make(map[string]ClientEventConsumer)
+	}
+	r.sessionConsumers[sessionID][identityKey] = consumer
+}
+
+// removeSessionConsumerLocked removes a consumer from the session-consumer mapping.
+// Must be called with r.mu held.
+func (r *Router) removeSessionConsumerLocked(sessionID, identityKey string) {
+	if consumers, ok := r.sessionConsumers[sessionID]; ok {
+		delete(consumers, identityKey)
+		if len(consumers) == 0 {
+			delete(r.sessionConsumers, sessionID)
+		}
+	}
+}
+
+// getSessionConsumers returns the consumers bound to a given session.
+// Returns nil if no consumers are bound to the session.
+func (r *Router) getSessionConsumers(sessionID string) []ClientEventConsumer {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	consumers, ok := r.sessionConsumers[sessionID]
+	if !ok || len(consumers) == 0 {
+		return nil
+	}
+
+	result := make([]ClientEventConsumer, 0, len(consumers))
+	for _, consumer := range consumers {
+		result = append(result, consumer)
+	}
+	return result
+}
+
+// getSessionRoutingContext returns the routing context for a given identity.
+// This resolves identity -> binding -> sessionID for targeted routing.
+func (r *Router) getSessionRoutingContext(identity ClientIdentity) *SessionRoutingContext {
+	key := identity.Key()
+	binding := r.registry.GetByKey(key)
+	if binding == nil {
+		return nil
+	}
+	return &SessionRoutingContext{
+		SessionID:   binding.SessionID,
+		IdentityKey: key,
+	}
+}
+
 // HandleCommand processes a command from a client.
+// It resolves identity -> binding -> sessionID and dispatches with session context.
 func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 	// Validate we have a valid identity
 	if err := ValidateClientIdentity(cmd.Identity); err != nil {
@@ -257,10 +333,16 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		return fmt.Errorf("no session found for identity %s", key)
 	}
 
-	applog.Debug("router: handling command",
+	// Resolve session routing context for targeted routing
+	routingCtx := r.getSessionRoutingContext(cmd.Identity)
+	if routingCtx == nil {
+		return fmt.Errorf("failed to resolve routing context for identity %s", key)
+	}
+
+	applog.Debug("router: handling command with session context",
 		applog.BuildMetadata("identity_key", key,
 			"command_type", cmd.Type,
-			"session_id", binding.SessionID))
+			"session_id", routingCtx.SessionID))
 
 	// Handle session-creation directly so identity mapping tracks the switched session.
 	if cmd.Type == CommandCreateNewSession {
@@ -308,7 +390,10 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 	}
 
 	// Convert router command to bus event and publish
-	busEvent := r.commandToBusEvent(cmd)
+	// TODO: When per-session workers are implemented, dispatch to the specific
+	// session worker using routingCtx.SessionID instead of broadcasting to the bus.
+	// For now, commands flow through the shared bus to the single runtime.
+	busEvent := r.commandToBusEvent(cmd, routingCtx)
 	r.bus.Publish(busEvent)
 
 	return nil
@@ -316,7 +401,11 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 
 // commandToBusEvent converts a router command to a bus event.
 // Since both router and bus now use the unified event package, this is a simple mapping.
-func (r *Router) commandToBusEvent(cmd Command) event.Event {
+// The routingCtx provides session routing context without modifying the event schema.
+func (r *Router) commandToBusEvent(cmd Command, routingCtx *SessionRoutingContext) event.Event {
+	// TODO: When per-session workers are implemented, use routingCtx.SessionID
+	// to route the command to the correct worker.
+	_ = routingCtx // Currently unused but will be used for targeted routing
 	return event.Event{
 		Type:    event.EventType(cmd.Type),
 		Payload: cmd.Payload,
@@ -368,13 +457,18 @@ func (r *Router) eventForwardingLoop() {
 				applog.Debug("router: event channel closed", nil)
 				return
 			}
-			r.forwardEventToClients(ev)
+			// TODO: When per-session workers are implemented, extract sessionID from event
+			// and use targeted delivery. For now, broadcast to all clients (legacy behavior).
+			sessionID := "" // Will be populated when per-session workers emit session-tagged events
+			r.forwardEventToClients(ev, sessionID)
 		}
 	}
 }
 
-// forwardEventToClients converts a bus event and sends to all connected clients.
-func (r *Router) forwardEventToClients(be event.Event) {
+// forwardEventToClients converts a bus event and sends to connected clients.
+// When sessionID is empty, broadcasts to all clients (legacy behavior).
+// When sessionID is set, sends only to consumers bound to that session.
+func (r *Router) forwardEventToClients(be event.Event, sessionID string) {
 	// Convert to router event (now a no-op since both use event.Event)
 	routerEvent := FromBusEvent(be)
 	if routerEvent.Type == "" {
@@ -382,21 +476,44 @@ func (r *Router) forwardEventToClients(be event.Event) {
 		return
 	}
 
-	r.mu.RLock()
-	consumers := make([]ClientEventConsumer, 0, len(r.clientConsumers))
-	for _, consumer := range r.clientConsumers {
-		consumers = append(consumers, consumer)
-	}
-	r.mu.RUnlock()
+	var consumers []ClientEventConsumer
 
-	// Send to all clients (non-blocking)
+	if sessionID != "" {
+		// Targeted delivery: send only to consumers bound to this session
+		consumers = r.getSessionConsumers(sessionID)
+		if len(consumers) == 0 {
+			applog.Debug("router: no consumers bound to session for event",
+				applog.BuildMetadata("event_type", routerEvent.Type, "session_id", sessionID))
+			return
+		}
+	} else {
+		// Broadcast: send to all connected clients (legacy behavior for events without session context)
+		r.mu.RLock()
+		consumers = make([]ClientEventConsumer, 0, len(r.clientConsumers))
+		for _, consumer := range r.clientConsumers {
+			consumers = append(consumers, consumer)
+		}
+		r.mu.RUnlock()
+	}
+
+	// Send to clients (non-blocking)
 	for _, consumer := range consumers {
 		sent := consumer.SendEvent(routerEvent)
 		if !sent {
 			applog.Warning("router: event dropped (client buffer full)",
-				applog.BuildMetadata("event_type", routerEvent.Type))
+				applog.BuildMetadata("event_type", routerEvent.Type, "session_id", sessionID))
 		}
 	}
+}
+
+// forwardEventToSession forwards an event to all consumers bound to a specific session.
+// This is used for session-targeted event delivery.
+func (r *Router) forwardEventToSession(be event.Event, sessionID string) {
+	if sessionID == "" {
+		applog.Debug("router: cannot forward event without sessionID", nil)
+		return
+	}
+	r.forwardEventToClients(be, sessionID)
 }
 
 // GetBinding retrieves the session binding for an identity (for testing/debugging).
