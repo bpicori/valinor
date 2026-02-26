@@ -28,6 +28,9 @@ run-tui: build
 run-tui-remote: build
 	./$(BINARY) -mode=tui -gateway-url=ws://$(REMOTE_GATEWAY)/ws
 
+run-telegram: build
+	./$(BINARY) -mode=telegram
+
 test:
 	go test ./...
 

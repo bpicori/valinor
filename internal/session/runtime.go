@@ -25,6 +25,7 @@ type sessionWorker struct {
 	runCancel     context.CancelFunc
 	runInProgress bool
 	closed        bool
+	runGeneration uint64 // Incremented on each new run to prevent stale clears
 }
 
 // newSessionWorker creates a new worker for the given session.
@@ -36,6 +37,7 @@ func newSessionWorker(sess *Session) *sessionWorker {
 
 // handleUserMessage processes a user message for this session.
 // It manages its own run cancellation state independently.
+// Uses run generation counter to prevent older runs from clearing newer run state.
 func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string, content string, bus *bus.Bus) error {
 	w.mu.Lock()
 	if w.closed {
@@ -48,6 +50,10 @@ func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string,
 		w.runCancel()
 	}
 
+	// Increment generation for this new run
+	w.runGeneration++
+	myGeneration := w.runGeneration
+
 	runCtx, runCancel := context.WithCancel(ctx)
 	w.runCancel = runCancel
 	w.runInProgress = true
@@ -56,10 +62,13 @@ func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string,
 	// Execute the run
 	err := w.session.HandleUserMessage(runCtx, requestID, content)
 
-	// Clear run state
+	// Clear run state only if this is still the current generation
+	// This prevents older (cancelled) runs from clearing a newer run's state
 	w.mu.Lock()
-	w.runCancel = nil
-	w.runInProgress = false
+	if w.runGeneration == myGeneration {
+		w.runCancel = nil
+		w.runInProgress = false
+	}
 	w.mu.Unlock()
 
 	if err != nil {

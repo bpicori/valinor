@@ -14,6 +14,7 @@ import (
 	"valinor/internal/gateway"
 	"valinor/internal/router"
 	"valinor/internal/session"
+	"valinor/internal/telegram"
 	"valinor/internal/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -22,8 +23,8 @@ import (
 func main() {
 	// Define command-line flags
 	var (
-		mode       = flag.String("mode", "tui", "Run mode: 'gateway' or 'tui'")
-		gatewayURL = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui mode, defaults to config)")
+		mode       = flag.String("mode", "tui", "Run mode: 'gateway', 'tui', or 'telegram'")
+		gatewayURL = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui/telegram mode, defaults to config)")
 		identity   = flag.String("identity", "default", "Client identity for session routing (tui mode)")
 	)
 	flag.Parse()
@@ -59,8 +60,10 @@ func run(mode, gatewayURL, identity string) error {
 		return runGateway(ctx, cfg)
 	case "tui":
 		return runTUI(ctx, cfg, gatewayURL, identity)
+	case "telegram":
+		return runTelegram(ctx, cfg)
 	default:
-		return fmt.Errorf("invalid mode '%s': must be 'gateway' or 'tui'", mode)
+		return fmt.Errorf("invalid mode '%s': must be 'gateway', 'tui', or 'telegram'", mode)
 	}
 }
 
@@ -193,5 +196,73 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL, identity string)
 		return err
 	}
 
+	return nil
+}
+
+// runTelegram starts the Telegram bot mode connecting to a gateway.
+func runTelegram(ctx context.Context, cfg config.Config) error {
+	// Validate Telegram is enabled and configured
+	if !cfg.Telegram.Enabled {
+		return fmt.Errorf("telegram mode requires telegram.enabled = true in config")
+	}
+	if cfg.Telegram.BotToken == "" {
+		return fmt.Errorf("telegram mode requires telegram.bot_token in config")
+	}
+
+	// Resolve directories
+	valinorDir, err := cfg.ResolveValinorDir()
+	if err != nil {
+		return fmt.Errorf("resolve valinor dir: %w", err)
+	}
+
+	// Initialize logger with file transport only (bot has no TUI)
+	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile})
+	if err != nil {
+		return fmt.Errorf("init logger: %w", err)
+	}
+	defer closeLogger()
+
+	// Set log prefix for Telegram mode
+	applog.SetPrefix("TELEGRAM")
+	applog.Info("starting valinor in telegram mode", nil)
+	applog.Info("logging to file", applog.BuildMetadata("log_path", logPath))
+
+	// Build gateway URL from config if not already set
+	gatewayURL := cfg.GatewayWebSocketURL()
+	applog.Info("connecting to gateway", applog.BuildMetadata("url", gatewayURL))
+
+	// Resolve storage directory
+	storageDir := cfg.Telegram.BotToken
+	if storageDir == "" {
+		storageDir = valinorDir
+	}
+
+	// Create bot configuration
+	botCfg := telegram.Config{
+		BotToken:       cfg.Telegram.BotToken,
+		GatewayURL:     gatewayURL,
+		StorageDir:     storageDir,
+		PollTimeout:    cfg.Telegram.PollTimeout,
+		Allowlist:      cfg.Telegram.Allowlist,
+		RequireMention: cfg.Telegram.RequireMention,
+	}
+
+	// Create and start bot
+	bot, err := telegram.NewBot(botCfg)
+	if err != nil {
+		return fmt.Errorf("create telegram bot: %w", err)
+	}
+
+	if err := bot.Start(ctx); err != nil {
+		return fmt.Errorf("start telegram bot: %w", err)
+	}
+	defer bot.Stop()
+
+	applog.Info("telegram bot started successfully", nil)
+
+	// Wait for context cancellation (shutdown signal)
+	<-ctx.Done()
+
+	applog.Info("telegram bot shutting down", nil)
 	return nil
 }
