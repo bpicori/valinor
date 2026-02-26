@@ -45,13 +45,17 @@ func NewSession(meta Metadata, store Store, ag *llm.LLM, systemPrompt string, in
 }
 
 // HandleUserMessage appends and processes a user message through the active agent.
-func (s *Session) HandleUserMessage(ctx context.Context, content string) error {
+func (s *Session) HandleUserMessage(ctx context.Context, requestID string, content string) error {
 	s.mu.Lock()
 	s.agentContext.AppendUserMessage(content)
 	runMessages := s.agentContext.Messages()
 	s.mu.Unlock()
 
-	result, err := s.agent.Run(ctx, llm.RunRequest{Messages: runMessages})
+	result, err := s.agent.Run(ctx, llm.RunRequest{
+		Messages:  runMessages,
+		SessionID: s.meta.ID,
+		RequestID: requestID,
+	})
 	if err != nil {
 		return fmt.Errorf("agent run: %w", err)
 	}

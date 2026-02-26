@@ -101,9 +101,8 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}
 
-	// Start session runtime without an initial active session.
-	// The first connecting client will create/resume and attach one.
-	runtime := session.NewRuntime(ctx, sm, sessionOpts, nil, b, nil)
+	// Start session runtime with a worker registry.
+	runtime := session.NewRuntime(ctx, sm, sessionOpts, b)
 	runtime.Start()
 	defer runtime.Close()
 

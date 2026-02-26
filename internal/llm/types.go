@@ -101,7 +101,9 @@ type Provider interface {
 
 // RunRequest configures a single run invocation.
 type RunRequest struct {
-	Messages []agentcontext.Message
+	Messages  []agentcontext.Message
+	SessionID string // Optional: identifies the session for event routing.
+	RequestID string // Optional: correlation ID for request tracing.
 }
 
 // RunResult returns the updated messages after the loop.

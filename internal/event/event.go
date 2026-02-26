@@ -43,8 +43,10 @@ const (
 // Event is a unified event with typed payload.
 // Used by bus, router, and gateway without conversion.
 type Event struct {
-	Type    EventType
-	Payload any // Typed payload based on Type.
+	Type      EventType
+	Payload   any    // Typed payload based on Type.
+	SessionID string // Optional: identifies the session that produced this event.
+	RequestID string // Optional: correlation ID for request tracing.
 }
 
 // PayloadFactory creates a new payload instance for a given event type.

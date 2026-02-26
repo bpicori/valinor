@@ -351,23 +351,28 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 			return fmt.Errorf("invalid create_new_session payload")
 		}
 
-		newSessionID, err := r.runtime.HandleCreateSessionRequest(payload.Provider, payload.Model)
+		newSessionID, newSession, err := r.runtime.HandleCreateSessionRequest(
+			routingCtx.SessionID, payload.Provider, payload.Model)
 		if err != nil {
 			return err
 		}
 
-		activeSession, err := r.runtime.ActiveSession()
-		if err != nil {
-			return fmt.Errorf("fetch active session after switch: %w", err)
-		}
-		updatedBinding, updated := r.registry.UpdateSession(cmd.Identity, activeSession)
+		// Update the binding to point to the new session
+		updatedBinding, updated := r.registry.UpdateSession(cmd.Identity, newSession)
 		if !updated {
 			applog.Warning("router: failed to update binding after session switch",
 				applog.BuildMetadata("identity_key", key, "session_id", newSessionID))
 		} else {
-			r.mu.RLock()
+			// Update session-consumer mapping
+			r.mu.Lock()
 			consumer := r.clientConsumers[key]
-			r.mu.RUnlock()
+			if consumer != nil {
+				// Remove old session mapping and add new one
+				r.removeSessionConsumerLocked(routingCtx.SessionID, key)
+				r.addSessionConsumerLocked(newSessionID, key, consumer)
+			}
+			r.mu.Unlock()
+
 			if consumer != nil {
 				consumer.SendEvent(Event{
 					Type: event.SessionAttached,
@@ -386,26 +391,24 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 			}
 		}
 
+		applog.Info("router: session switched",
+			applog.BuildMetadata("identity_key", key, "old_session_id", routingCtx.SessionID, "new_session_id", newSessionID))
 		return nil
 	}
 
-	// Convert router command to bus event and publish
-	// TODO: When per-session workers are implemented, dispatch to the specific
-	// session worker using routingCtx.SessionID instead of broadcasting to the bus.
-	// For now, commands flow through the shared bus to the single runtime.
-	busEvent := r.commandToBusEvent(cmd, routingCtx)
-	r.bus.Publish(busEvent)
+	// Dispatch to the specific session worker using routingCtx.SessionID
+	eventType := event.EventType(cmd.Type)
+	if err := r.runtime.HandleCommandForSession(routingCtx.SessionID, cmd.RequestID, eventType, cmd.Payload); err != nil {
+		return fmt.Errorf("handle command for session %s: %w", routingCtx.SessionID, err)
+	}
 
 	return nil
 }
 
 // commandToBusEvent converts a router command to a bus event.
-// Since both router and bus now use the unified event package, this is a simple mapping.
-// The routingCtx provides session routing context without modifying the event schema.
+// This is kept for any future use cases where broadcast behavior is needed.
+// For targeted session commands, use HandleCommandForSession instead.
 func (r *Router) commandToBusEvent(cmd Command, routingCtx *SessionRoutingContext) event.Event {
-	// TODO: When per-session workers are implemented, use routingCtx.SessionID
-	// to route the command to the correct worker.
-	_ = routingCtx // Currently unused but will be used for targeted routing
 	return event.Event{
 		Type:    event.EventType(cmd.Type),
 		Payload: cmd.Payload,
@@ -444,6 +447,7 @@ func (r *Router) getOrCreateSessionForIdentity(ctx context.Context, identity Cli
 }
 
 // eventForwardingLoop forwards bus events to connected clients.
+// Events are delivered only to consumers bound to the session that produced them.
 func (r *Router) eventForwardingLoop() {
 	defer r.wg.Done()
 
@@ -457,10 +461,9 @@ func (r *Router) eventForwardingLoop() {
 				applog.Debug("router: event channel closed", nil)
 				return
 			}
-			// TODO: When per-session workers are implemented, extract sessionID from event
-			// and use targeted delivery. For now, broadcast to all clients (legacy behavior).
-			sessionID := "" // Will be populated when per-session workers emit session-tagged events
-			r.forwardEventToClients(ev, sessionID)
+			// Use sessionID from event for targeted delivery.
+			// Events with empty SessionID are broadcast to all clients (system-level events).
+			r.forwardEventToClients(ev, ev.SessionID)
 		}
 	}
 }

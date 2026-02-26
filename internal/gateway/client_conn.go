@@ -28,6 +28,7 @@ type ClientConnection struct {
 	outgoing  chan *WireEnvelope // bounded outgoing message queue
 	closed    bool
 	closeOnce sync.Once
+	lastReqID string             // last request ID for correlation
 
 	// Context for cancellation
 	ctx    context.Context
@@ -209,6 +210,11 @@ func (c *ClientConnection) handleCommand(env *WireEnvelope) {
 		return
 	}
 
+	// Store request ID for correlation with response events
+	c.mu.Lock()
+	c.lastReqID = env.RequestID
+	c.mu.Unlock()
+
 	// Parse command
 	cmd, err := ParseCommand(env, identity)
 	if err != nil {
@@ -227,7 +233,7 @@ func (c *ClientConnection) handleCommand(env *WireEnvelope) {
 	}
 
 	applog.Debug("gateway: command handled",
-		applog.BuildMetadata("command_type", cmd.Type, "identity", identity.Key()))
+		applog.BuildMetadata("command_type", cmd.Type, "identity", identity.Key(), "request_id", env.RequestID))
 }
 
 // writeLoop sends messages from the outgoing queue to the WebSocket.
@@ -272,8 +278,17 @@ func (c *ClientConnection) writeEnvelope(env *WireEnvelope) error {
 
 // SendEvent implements router.ClientEventConsumer.
 // Returns true if event was queued, false if queue was full (event dropped).
+// The event's RequestID is used for correlation if present; otherwise the last received request ID is used.
 func (c *ClientConnection) SendEvent(event router.Event) bool {
-	env := CreateEnvelope(event, "")
+	// Use event's request ID if present, otherwise fall back to last received request ID
+	requestID := event.RequestID
+	if requestID == "" {
+		c.mu.RLock()
+		requestID = c.lastReqID
+		c.mu.RUnlock()
+	}
+
+	env := CreateEnvelope(event, requestID)
 
 	select {
 	case c.outgoing <- env:

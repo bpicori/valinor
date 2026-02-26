@@ -165,6 +165,37 @@ func (r *SessionRegistry) Count() int {
 	return len(r.bindings)
 }
 
+// GetBySessionID returns all bindings associated with a given session ID.
+// This is useful for multi-transport scenarios where multiple identities
+// (e.g., tui:user1 and telegram:user1) may share the same session.
+func (r *SessionRegistry) GetBySessionID(sessionID string) []*SessionBinding {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []*SessionBinding
+	for _, binding := range r.bindings {
+		if binding.SessionID == sessionID {
+			result = append(result, binding)
+		}
+	}
+	return result
+}
+
+// GetByClientType returns all bindings for a specific client type (transport).
+// This allows querying all sessions for a given transport like "tui" or "telegram".
+func (r *SessionRegistry) GetByClientType(clientType string) []*SessionBinding {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var result []*SessionBinding
+	for _, binding := range r.bindings {
+		if binding.Identity.Type == clientType {
+			result = append(result, binding)
+		}
+	}
+	return result
+}
+
 // ValidateClientIdentity checks if a client identity is valid 
 // Returns an error if the identity is invalid.
 func ValidateClientIdentity(identity ClientIdentity) error {

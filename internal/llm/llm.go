@@ -59,27 +59,31 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	var usage Usage
 	iterations := 0
 
+	// Helper to create events with session context
+	newEvent := func(eventType event.EventType, payload any) event.Event {
+		return event.Event{
+			Type:      eventType,
+			Payload:   payload,
+			SessionID: req.SessionID,
+			RequestID: req.RequestID,
+		}
+	}
+
 	for {
 		// Check for cancellation before each iteration
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.Canceled) {
 				applog.Info("llm run cancelled by user", nil)
-				l.bus.Publish(event.Event{
-					Type:    event.AgentCancelled,
-					Payload: event.AgentCancelledPayload{},
-				})
+				l.bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
 				return RunResult{Messages: messages}, nil
 			}
 			return RunResult{}, err
 		}
 
 		if iterations >= l.maxIterations {
-			l.bus.Publish(event.Event{
-				Type: event.AgentError,
-				Payload: event.AgentErrorPayload{
-					Error: fmt.Errorf("max agent iterations (%d) reached; stopping to prevent runaway loop", l.maxIterations),
-				},
-			})
+			l.bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{
+				Error: fmt.Errorf("max agent iterations (%d) reached; stopping to prevent runaway loop", l.maxIterations),
+			}))
 			return RunResult{}, fmt.Errorf("max agent iterations (%d) reached", l.maxIterations)
 		}
 		iterations++
@@ -102,16 +106,10 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Model:    l.model,
 			OnDelta: func(delta StreamDelta) {
 				if delta.Content != "" {
-					l.bus.Publish(event.Event{
-						Type:    event.AgentContentDelta,
-						Payload: event.ContentDeltaPayload{Content: delta.Content},
-					})
+					l.bus.Publish(newEvent(event.AgentContentDelta, event.ContentDeltaPayload{Content: delta.Content}))
 				}
 				if delta.Refusal != "" {
-					l.bus.Publish(event.Event{
-						Type:    event.AgentRefusal,
-						Payload: event.RefusalPayload{Content: delta.Refusal},
-					})
+					l.bus.Publish(newEvent(event.AgentRefusal, event.RefusalPayload{Content: delta.Refusal}))
 				}
 			},
 		})
@@ -119,38 +117,26 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			// Handle user cancellation gracefully
 			if errors.Is(err, context.Canceled) {
 				applog.Info("llm stream cancelled by user", nil)
-				l.bus.Publish(event.Event{
-					Type:    event.AgentCancelled,
-					Payload: event.AgentCancelledPayload{},
-				})
+				l.bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
 				return RunResult{Messages: messages}, nil
 			}
 			applog.Error("llm stream error", applog.BuildMetadata("error", err))
-			l.bus.Publish(event.Event{
-				Type:    event.AgentError,
-				Payload: event.AgentErrorPayload{Error: err},
-			})
+			l.bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{Error: err}))
 			return RunResult{}, err
 		}
 
 		// Update usage stats
 		usage = result.Usage
-		l.bus.Publish(event.Event{
-			Type: event.AgentStepTokens,
-			Payload: event.StepTokenUsagePayload{
-				Step:             iterations,
-				PromptTokens:     usage.PromptTokens,
-				CompletionTokens: usage.CompletionTokens,
-				TotalTokens:      usage.TotalTokens,
-			},
-		})
+		l.bus.Publish(newEvent(event.AgentStepTokens, event.StepTokenUsagePayload{
+			Step:             iterations,
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			TotalTokens:      usage.TotalTokens,
+		}))
 
 		// Publish full content if present
 		if result.Message.Content != "" {
-			l.bus.Publish(event.Event{
-				Type:    event.AgentContentFull,
-				Payload: event.ContentFullPayload{Content: result.Message.Content},
-			})
+			l.bus.Publish(newEvent(event.AgentContentFull, event.ContentFullPayload{Content: result.Message.Content}))
 		}
 
 		// Handle result message
@@ -160,14 +146,11 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Role:    agentcontext.RoleAssistant,
 				Content: result.Message.Content,
 			})
-			l.bus.Publish(event.Event{
-				Type: event.AgentDone,
-				Payload: event.AgentDonePayload{
-					PromptTokens:     usage.PromptTokens,
-					CompletionTokens: usage.CompletionTokens,
-					TotalTokens:      usage.TotalTokens,
-				},
-			})
+			l.bus.Publish(newEvent(event.AgentDone, event.AgentDonePayload{
+				PromptTokens:     usage.PromptTokens,
+				CompletionTokens: usage.CompletionTokens,
+				TotalTokens:      usage.TotalTokens,
+			}))
 			applog.Debug("llm iteration done", applog.BuildMetadata("iteration", iterations))
 			return RunResult{Messages: messages}, nil
 		}
@@ -193,34 +176,25 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				args = json.RawMessage(tc.Arguments)
 			}
 			applog.Debug("llm tool call start", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
-			l.bus.Publish(event.Event{
-				Type: event.AgentThinking,
-				Payload: event.ThinkingPayload{
-					Step:    iterations,
-					Content: "executing tool: " + tc.Name,
-				},
-			})
-			l.bus.Publish(event.Event{
-				Type: event.AgentToolCallStart,
-				Payload: event.ToolCallStartPayload{
-					ToolCallID: tc.ID,
-					ToolName:   tc.Name,
-					ToolArgs:   string(args),
-				},
-			})
+			l.bus.Publish(newEvent(event.AgentThinking, event.ThinkingPayload{
+				Step:    iterations,
+				Content: "executing tool: " + tc.Name,
+			}))
+			l.bus.Publish(newEvent(event.AgentToolCallStart, event.ToolCallStartPayload{
+				ToolCallID: tc.ID,
+				ToolName:   tc.Name,
+				ToolArgs:   string(args),
+			}))
 			toolResult, ok := l.executeTool(tc.Name, args)
 			if !ok {
 				toolResult = "error: tool not found"
 			}
 			applog.Debug("llm tool call done", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
-			l.bus.Publish(event.Event{
-				Type: event.AgentToolCallDone,
-				Payload: event.ToolCallDonePayload{
-					ToolCallID: tc.ID,
-					ToolName:   tc.Name,
-					ToolResult: toolResult,
-				},
-			})
+			l.bus.Publish(newEvent(event.AgentToolCallDone, event.ToolCallDonePayload{
+				ToolCallID: tc.ID,
+				ToolName:   tc.Name,
+				ToolResult: toolResult,
+			}))
 			messages = append(messages, agentcontext.Message{
 				Role:       agentcontext.RoleTool,
 				ToolCallID: tc.ID,
