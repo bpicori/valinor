@@ -8,16 +8,17 @@ import (
 	"valinor/internal/applog"
 )
 
-// WorkFunc is the function type for processing a command.
-type WorkFunc func(ctx context.Context, cmd *Command) error
+// WorkItemFunc is the function type for processing a work item.
+type WorkItemFunc func(ctx context.Context, item *WorkItem) error
 
-// Sequencer ensures ordered processing of messages within each chat.
+// Sequencer ensures ordered processing of work items within each chat.
 // Each chat key (including control lanes) gets its own sequential worker queue.
+// This mirrors TUI's single-threaded Update() loop but adapted for multi-chat.
 type Sequencer struct {
-	workFn WorkFunc
+	workFn WorkItemFunc
 
 	// queues maps sequential keys to their work queues
-	queues map[string]chan *Command
+	queues map[string]chan *WorkItem
 	// cancelFuncs maps sequential keys to their context cancel functions
 	cancelFuncs map[string]context.CancelFunc
 	// wg tracks active workers per key
@@ -29,11 +30,11 @@ type Sequencer struct {
 }
 
 // NewSequencer creates a new per-chat sequencer.
-func NewSequencer(workFn WorkFunc) *Sequencer {
+func NewSequencer(workFn WorkItemFunc) *Sequencer {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Sequencer{
 		workFn:      workFn,
-		queues:      make(map[string]chan *Command),
+		queues:      make(map[string]chan *WorkItem),
 		cancelFuncs: make(map[string]context.CancelFunc),
 		wg:          make(map[string]*sync.WaitGroup),
 		ctx:         ctx,
@@ -65,11 +66,10 @@ func (s *Sequencer) Stop() {
 	applog.Info("telegram sequencer: stopped", nil)
 }
 
-// Submit queues a command for sequential processing by its sequential key.
-// The command is processed in order with other commands sharing the same key.
-func (s *Sequencer) Submit(cmd *Command) bool {
-	key := cmd.GetSequentialKey()
-
+// Submit queues a work item for sequential processing by its sequential key.
+// The work item is processed in order with other items sharing the same key.
+// This allows both commands and gateway events to be serialized per chat.
+func (s *Sequencer) Submit(item *WorkItem, key string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -84,7 +84,7 @@ func (s *Sequencer) Submit(cmd *Command) bool {
 	queue, ok := s.queues[key]
 	if !ok {
 		// Create new worker queue for this key
-		queue = make(chan *Command, 64)
+		queue = make(chan *WorkItem, 64)
 		s.queues[key] = queue
 
 		// Create per-key context
@@ -100,19 +100,20 @@ func (s *Sequencer) Submit(cmd *Command) bool {
 		go s.worker(keyCtx, key, queue, wg)
 	}
 
-	// Try to queue the command (non-blocking)
+	// Try to queue the work item (non-blocking)
 	select {
-	case queue <- cmd:
+	case queue <- item:
 		return true
 	default:
-		applog.Warning("telegram sequencer: queue full, dropping command",
-			applog.BuildMetadata("key", key, "request_id", cmd.RequestID))
+		applog.Warning("telegram sequencer: queue full, dropping work item",
+			applog.BuildMetadata("key", key, "request_id", item.RequestID))
 		return false
 	}
 }
 
-// worker processes commands for a single sequential key in order.
-func (s *Sequencer) worker(ctx context.Context, key string, queue chan *Command, wg *sync.WaitGroup) {
+// worker processes work items for a single sequential key in order.
+// This is the per-chat equivalent of TUI's Update() loop.
+func (s *Sequencer) worker(ctx context.Context, key string, queue chan *WorkItem, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer s.cleanupWorker(key)
 
@@ -124,15 +125,15 @@ func (s *Sequencer) worker(ctx context.Context, key string, queue chan *Command,
 			applog.Debug("telegram sequencer: worker exiting", applog.BuildMetadata("key", key))
 			return
 
-		case cmd, ok := <-queue:
+		case item, ok := <-queue:
 			if !ok {
 				return
 			}
 
-			// Process the command
-			if err := s.workFn(ctx, cmd); err != nil {
+			// Process the work item
+			if err := s.workFn(ctx, item); err != nil {
 				applog.Error("telegram sequencer: work function error",
-					applog.BuildMetadata("key", key, "error", err, "request_id", cmd.RequestID))
+					applog.BuildMetadata("key", key, "error", err, "request_id", item.RequestID))
 			}
 		}
 	}
@@ -173,7 +174,7 @@ func (s *Sequencer) ActiveKeys() int {
 	return len(s.queues)
 }
 
-// TotalQueued returns the total number of queued commands across all keys.
+// TotalQueued returns the total number of queued work items across all keys.
 // Useful for metrics and monitoring.
 func (s *Sequencer) TotalQueued() int {
 	s.mu.RLock()
@@ -189,7 +190,7 @@ func (s *Sequencer) TotalQueued() int {
 // SequencerStats contains telemetry metrics for the sequencer.
 type SequencerStats struct {
 	ActiveKeys  int            // Number of active sequential keys
-	TotalQueued int            // Total commands queued across all keys
+	TotalQueued int            // Total work items queued across all keys
 	QueueDepths map[string]int // Per-key queue depths
 }
 

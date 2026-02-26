@@ -6,32 +6,40 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"valinor/internal/applog"
 	"valinor/internal/event"
 	"valinor/internal/router"
 )
 
+const (
+	typingActionInterval      = 4 * time.Second
+	typingActionErrorCooldown = 2 * time.Second
+	defaultTypingRetryAfter   = 3 * time.Second
+)
+
 // Bot is the main Telegram bot orchestrator.
 // It coordinates the poller, dispatcher, sequencer, bridge, and renderer.
+// Flow architecture mirrors TUI: all work items (commands + events) flow through
+// per-chat sequential processing for state consistency.
 type Bot struct {
 	// Configuration
 	config Config
 
 	// Components
-	client    *Client
-	store     *OffsetStore
+	client     *Client
+	store      *OffsetStore
 	dispatcher *Dispatcher
-	poller    *Poller
-	sequencer *Sequencer
-	bridge    *Bridge
-	renderer  *Renderer
+	poller     *Poller
+	sequencer  *Sequencer
+	bridge     *Bridge
+	renderer   *Renderer
 
-	// Per-chat state tracking
-	chatStates map[string]*ChatState
-	chatMu     sync.RWMutex
+	// Per-chat state management (replaces old chatStates map)
+	stateStore *ChatStateStore
 
-	// Request tracking for response routing
+	// Request tracking for routing gateway events to chats
 	requestChats map[string]ChatIdentity
 	requestMu    sync.RWMutex
 
@@ -40,13 +48,6 @@ type Bot struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 	ready  atomic.Bool
-}
-
-// ChatState tracks the state for a single chat conversation.
-type ChatState struct {
-	Identity       ChatIdentity
-	LastMessageID  int64
-	IsStreaming    bool
 }
 
 // Config holds the Telegram bot configuration.
@@ -74,7 +75,7 @@ func NewBot(cfg Config) (*Bot, error) {
 
 	return &Bot{
 		config:       cfg,
-		chatStates:   make(map[string]*ChatState),
+		stateStore:   NewChatStateStore(),
 		requestChats: make(map[string]ChatIdentity),
 	}, nil
 }
@@ -105,13 +106,15 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.dispatcher = NewDispatcher(me.Username)
 	b.dispatcher.SetRequireMention(b.config.RequireMention)
 
-	// Initialize renderer
+	// Initialize stateless renderer
 	b.renderer = NewRenderer()
 
-	// Initialize sequencer
-	b.sequencer = NewSequencer(b.handleCommand)
+	// Initialize sequencer with unified work processor
+	// This is key: both commands AND events go through the same sequential path
+	b.sequencer = NewSequencer(b.processWorkItem)
 
-	// Initialize bridge
+	// Initialize bridge with gateway event handler
+	// Events are routed through the sequencer for per-chat serialization
 	b.bridge = NewBridge(b.config.GatewayURL, "telegram", b.handleGatewayEvent)
 
 	// Start bridge first (we need to be connected before handling commands)
@@ -166,7 +169,7 @@ func (b *Bot) IsReady() bool {
 	return b.ready.Load()
 }
 
-// handleUpdate is called by the poller for each received update.
+// handleUpdate is called by the poller for each received Telegram update.
 func (b *Bot) handleUpdate(ctx context.Context, update Update) error {
 	// Dispatch the update to get a command
 	cmd, err := b.dispatcher.Dispatch(ctx, update)
@@ -178,23 +181,85 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) error {
 		return nil
 	}
 
+	// Create work item for the command
+	item := &WorkItem{
+		Type:      WorkItemCommand,
+		Command:   cmd,
+		RequestID: cmd.RequestID,
+	}
+
 	// Submit to sequencer for ordered processing
-	if !b.sequencer.Submit(cmd) {
-		return fmt.Errorf("sequencer queue full for %s", cmd.GetSequentialKey())
+	key := cmd.GetSequentialKey()
+	if !b.sequencer.Submit(item, key) {
+		return fmt.Errorf("sequencer queue full for %s", key)
 	}
 
 	return nil
 }
 
-// handleCommand is called by the sequencer for each command (sequential per chat).
-func (b *Bot) handleCommand(ctx context.Context, cmd *Command) error {
-	// Initialize or get chat state
-	state := b.getOrCreateChatState(cmd.Identity)
+// handleGatewayEvent is called by the bridge when a gateway event is received.
+// The event is converted to a work item and routed through the sequencer
+// to ensure per-chat serialization (matching TUI's single-threaded Update() flow).
+func (b *Bot) handleGatewayEvent(ev router.Event) {
+	// Get chat identity from request tracking
+	identity, ok := b.getChatForRequest(ev.RequestID)
+	if !ok {
+		applog.Warning("telegram bot: received event for unknown request",
+			applog.BuildMetadata("request_id", ev.RequestID, "event_type", ev.Type))
+		return
+	}
+
+	// Create work item for the event
+	item := &WorkItem{
+		Type:      WorkItemEvent,
+		Event:     ev,
+		RequestID: ev.RequestID,
+		Identity:  identity,
+	}
+
+	// Determine sequential key (control lane for final events if we want priority)
+	// For now, use regular sequential key to preserve order
+	key := identity.SequentialKey()
+
+	// Submit to sequencer for ordered processing alongside commands
+	// This is the key change: events now flow through the same sequential path
+	if !b.sequencer.Submit(item, key) {
+		applog.Warning("telegram bot: event dropped, sequencer queue full",
+			applog.BuildMetadata("request_id", ev.RequestID, "key", key))
+	}
+
+	// Note: Final event cleanup happens in processWorkItem to ensure proper sequencing
+}
+
+// processWorkItem is the unified work processor called by the sequencer.
+// This mirrors TUI's Update() - all state changes happen sequentially per chat.
+func (b *Bot) processWorkItem(ctx context.Context, item *WorkItem) error {
+	switch item.Type {
+	case WorkItemCommand:
+		return b.processCommand(ctx, item)
+	case WorkItemEvent:
+		return b.processEvent(ctx, item)
+	default:
+		return fmt.Errorf("unknown work item type: %v", item.Type)
+	}
+}
+
+// processCommand handles command work items.
+// Similar to TUI's command handling in handleKeyMsg/handleSubmit.
+func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
+	cmd := item.Command
+	if cmd == nil {
+		return fmt.Errorf("nil command in work item")
+	}
+
+	// Get or create chat state (like TUI's model initialization)
+	state := b.stateStore.GetOrCreate(cmd.Identity)
 
 	// Track this request for response routing
 	b.trackRequest(cmd.RequestID, cmd.Identity)
 
-	// For control commands (cancel), send immediately
+	// For control commands (cancel), send immediately without state checks
+	// This maintains the fast-path for cancellation
 	if cmd.IsControlCommand {
 		if !b.bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
 			return fmt.Errorf("failed to send control command")
@@ -202,10 +267,20 @@ func (b *Bot) handleCommand(ctx context.Context, cmd *Command) error {
 		return nil
 	}
 
-	// For new conversation, clear streaming state
+	// TUI-like state guarding: check if we can start a new request
+	if !state.CanStartNewRequest() {
+		// Send a notice that we're busy
+		notice := &RenderResult{
+			Text:      "⏳ Please wait for the current response to complete.",
+			ParseMode: "MarkdownV2",
+		}
+		return b.sendTelegramMessage(cmd.Identity, state, notice)
+	}
+
+	// Handle new conversation command
 	if cmd.Type == router.CommandNewConversation {
-		state.IsStreaming = false
-		b.renderer.ClearStreamingMessageID()
+		// Reset streaming state (like TUI's handleNewConversation)
+		state.FinalizeStreaming()
 	}
 
 	// Send command to gateway
@@ -213,12 +288,137 @@ func (b *Bot) handleCommand(ctx context.Context, cmd *Command) error {
 		return fmt.Errorf("failed to send command")
 	}
 
-	// Mark as streaming for content deltas
+	// Mark as streaming for user messages
 	if cmd.Type == router.CommandUserMessage {
-		state.IsStreaming = true
+		state.StartStreaming(cmd.RequestID)
 	}
 
 	return nil
+}
+
+// processEvent handles gateway event work items.
+// Similar to TUI's handleWSEventMsg - state-guarded event processing.
+func (b *Bot) processEvent(ctx context.Context, item *WorkItem) error {
+	ev := &item.Event
+
+	// Get chat identity from request tracking
+	identity, ok := b.getChatForRequest(ev.RequestID)
+	if !ok {
+		// Event arrived after request was cleaned up - ignore
+		return nil
+	}
+
+	// Get chat state
+	state := b.stateStore.GetOrCreate(identity)
+
+	// TUI-like state guarding: ignore events if not in streaming state
+	// (except for session setup events which are always processed)
+	switch ev.Type {
+	case event.EventType(router.EventSessionAttached),
+		event.EventType(router.EventNewConversation),
+		event.EventType(router.EventChangeProviderModel):
+		// Always process these events regardless of streaming state
+	default:
+		// For streaming-related events, check if we're in the right state
+		if !state.IsStreaming && ev.RequestID != state.CurrentRequestID {
+			// Event for a completed or unknown request - ignore
+			return nil
+		}
+	}
+
+	// Handle state transitions based on event type (TUI-like state machine)
+	switch ev.Type {
+	case event.EventType(router.EventAgentContentDelta):
+		// Accumulate streamed content but only show Telegram typing action.
+		if payload, ok := ev.Payload.(router.ContentDeltaPayload); ok {
+			state.AppendContent(payload.Content)
+		}
+		if err := b.sendTypingAction(identity, state); err != nil {
+			applog.Warning("telegram bot: send typing action failed",
+				applog.BuildMetadata("error", err, "chat_id", identity.ChatID))
+		}
+		return nil
+
+	case event.EventType(router.EventAgentContentFull):
+		// Full content events replace the current accumulated text.
+		if payload, ok := ev.Payload.(router.ContentFullPayload); ok {
+			state.SetStreamingContent(payload.Content)
+		}
+		if err := b.sendTypingAction(identity, state); err != nil {
+			applog.Warning("telegram bot: send typing action failed",
+				applog.BuildMetadata("error", err, "chat_id", identity.ChatID))
+		}
+		return nil
+
+	case event.EventType(router.EventAgentToolCallStart):
+		// Track tool call like TUI
+		if payload, ok := ev.Payload.(router.ToolCallStartPayload); ok {
+			state.AddToolCall(ToolCallInfo{
+				ID:   payload.ToolCallID,
+				Name: payload.ToolName,
+				Args: payload.ToolArgs,
+			})
+		}
+
+	case event.EventType(router.EventAgentToolCallDone):
+		// Mark tool call done
+		if payload, ok := ev.Payload.(router.ToolCallDonePayload); ok {
+			state.MarkToolCallDone(payload.ToolCallID, payload.ToolResult)
+		}
+
+	case event.EventType(router.EventAgentDone):
+		// Send a single final message with the accumulated content.
+		if payload, ok := ev.Payload.(router.AgentDonePayload); ok {
+			state.UpdateUsage(PromptTokenUsage{
+				PromptTokens:     payload.PromptTokens,
+				CompletionTokens: payload.CompletionTokens,
+				TotalTokens:      payload.TotalTokens,
+			})
+		}
+
+		finalResult := b.renderer.RenderFinalContent(state.StreamingContent)
+		state.FinalizeStreaming()
+		b.cleanupRequest(ev.RequestID)
+		if finalResult != nil {
+			if err := b.sendTelegramMessage(identity, state, finalResult); err != nil {
+				return fmt.Errorf("send final message: %w", err)
+			}
+			return nil
+		}
+
+	case event.EventType(router.EventAgentError):
+		// Handle error like TUI's handleAgentError
+		state.FinalizeStreaming()
+		b.cleanupRequest(ev.RequestID)
+
+	case event.EventType(router.EventAgentCancelled):
+		// Handle cancellation like TUI's handleAgentCancelled
+		state.FinalizeStreaming()
+		b.cleanupRequest(ev.RequestID)
+	}
+
+	// Render the event to a Telegram message.
+	result := b.renderer.RenderEvent(*ev)
+	if result == nil {
+		return nil
+	}
+
+	// Send the message via Telegram API
+	if err := b.sendTelegramMessage(identity, state, result); err != nil {
+		return fmt.Errorf("send message: %w", err)
+	}
+
+	return nil
+}
+
+// isFinalEvent returns true if this event type indicates the end of a request.
+func isFinalEvent(evType event.EventType) bool {
+	switch evType {
+	case event.AgentDone, event.AgentError, event.AgentCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 // trackRequest maps a request ID to a chat identity for response routing.
@@ -243,62 +443,63 @@ func (b *Bot) cleanupRequest(requestID string) {
 	delete(b.requestChats, requestID)
 }
 
-// handleGatewayEvent is called by the bridge when an event is received.
-func (b *Bot) handleGatewayEvent(ev router.Event) {
-	// Render the event to a Telegram message
-	result := b.renderer.RenderEvent(ev)
-	if result == nil {
-		// Event doesn't need a message (e.g., step tokens)
-		return
+// sendTypingAction updates the chat with Telegram's typing indicator.
+// It uses per-chat pacing/backoff to avoid Telegram 429 rate limits.
+func (b *Bot) sendTypingAction(identity ChatIdentity, state *ChatState) error {
+	now := time.Now()
+	if !state.CanSendTypingAction(now) {
+		return nil
 	}
 
-	// Get chat identity from request tracking
-	identity, ok := b.getChatForRequest(ev.RequestID)
-	if !ok {
-		applog.Warning("telegram bot: received event for unknown request",
-			applog.BuildMetadata("request_id", ev.RequestID, "event_type", ev.Type))
-		return
+	req := SendChatActionRequest{
+		ChatID: identity.ChatID,
+		Action: "typing",
+	}
+	if identity.ThreadID != nil {
+		req.MessageThreadID = identity.ThreadID
 	}
 
-	// Send the message via Telegram API
-	if err := b.sendTelegramMessage(identity, result); err != nil {
-		applog.Error("telegram bot: failed to send message",
-			applog.BuildMetadata("error", err, "chat_id", identity.ChatID))
+	if err := b.client.SendChatAction(b.ctx, req); err != nil {
+		retryAfter := typingActionErrorCooldown
+		if apiErr, ok := err.(*APIResponse); ok && apiErr.ErrorCode == 429 {
+			retryAfter = defaultTypingRetryAfter
+			if apiErr.Parameters != nil && apiErr.Parameters.RetryAfter > 0 {
+				retryAfter = time.Duration(apiErr.Parameters.RetryAfter) * time.Second
+			}
+		}
+		state.BackoffTypingAction(now, retryAfter)
+		return err
 	}
 
-	// If this was a final event (done, error, cancelled), clear streaming state and cleanup
-	switch ev.Type {
-	case event.AgentDone, event.AgentError, event.AgentCancelled:
-		b.renderer.ClearStreamingMessageID()
-		b.cleanupRequest(ev.RequestID)
-	}
+	state.MarkTypingActionSent(now, typingActionInterval)
+	return nil
 }
 
 // sendTelegramMessage sends a message via the Telegram API.
 // Supports both sending new messages and editing existing ones for streaming updates.
-func (b *Bot) sendTelegramMessage(identity ChatIdentity, result *RenderResult) error {
-	state := b.getOrCreateChatState(identity)
-
+// This now uses ChatState for determining edit vs new message (TUI-like lastMessage pattern).
+func (b *Bot) sendTelegramMessage(identity ChatIdentity, state *ChatState, result *RenderResult) error {
 	// Determine if we should edit or send a new message
-	if result.EditMessageID != 0 && state.LastMessageID != 0 {
-		// Edit existing message
+	// TUI-like pattern: edit the streaming message if we're in streaming mode
+	shouldEdit := result.IsStreaming && state.GetStreamingMessageID() != 0
+
+	if shouldEdit {
+		// Edit existing streaming message
 		req := EditMessageTextRequest{
-			ChatID:    identity.ChatID,
-			MessageID: result.EditMessageID,
-			Text:      result.Text,
-			ParseMode: result.ParseMode,
+			ChatID:      identity.ChatID,
+			MessageID:   state.GetStreamingMessageID(),
+			Text:        result.Text,
+			ParseMode:   result.ParseMode,
 			ReplyMarkup: result.ReplyMarkup,
 		}
 
 		// Handle thread ID for forum topics
 		if identity.ThreadID != nil {
-			// Telegram API doesn't support editing messages in threads differently,
-			// but we include it in logging for debugging
 			applog.Debug("telegram bot: editing message in thread",
-				applog.BuildMetadata("chat_id", identity.ChatID, "thread_id", *identity.ThreadID, "message_id", result.EditMessageID))
+				applog.BuildMetadata("chat_id", identity.ChatID, "thread_id", *identity.ThreadID, "message_id", state.GetStreamingMessageID()))
 		}
 
-		msg, err := b.client.EditMessageText(b.ctx, req)
+		_, err := b.client.EditMessageText(b.ctx, req)
 		if err != nil {
 			// If editing fails (e.g., message too old), fall back to sending new message
 			applog.Warning("telegram bot: edit failed, sending new message",
@@ -306,8 +507,6 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, result *RenderResult) e
 			return b.sendNewMessage(identity, state, result)
 		}
 
-		// Update last message ID (editing preserves it)
-		state.LastMessageID = msg.MessageID
 		return nil
 	}
 
@@ -316,7 +515,7 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, result *RenderResult) e
 }
 
 // sendNewMessage sends a new Telegram message.
-// Only sets this as the streaming message if it's the first message during a streaming session.
+// Sets the streaming message ID if this is the first message during streaming.
 func (b *Bot) sendNewMessage(identity ChatIdentity, state *ChatState, result *RenderResult) error {
 	req := SendMessageRequest{
 		ChatID:      identity.ChatID,
@@ -336,37 +535,18 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, state *ChatState, result *Re
 	}
 
 	// Update state with new message ID
-	state.LastMessageID = msg.MessageID
+	state.UpdateLastMessageID(msg.MessageID)
 
-	// Only set as streaming message ID if we don't already have one.
-	// This ensures tool call indicators and other status messages don't
-	// replace the main AI response message being streamed.
-	if state.IsStreaming && b.renderer.GetStreamingMessageID() == 0 {
-		b.renderer.SetStreamingMessageID(msg.MessageID)
+	// Set as streaming message ID if we're in streaming mode and don't have one yet
+	// This ensures subsequent deltas edit this message (TUI-like pattern)
+	if result.IsStreaming && state.GetStreamingMessageID() == 0 {
+		state.SetStreamingMessageID(msg.MessageID)
 	}
 
 	applog.Debug("telegram bot: message sent",
 		applog.BuildMetadata("chat_id", identity.ChatID, "message_id", msg.MessageID))
 
 	return nil
-}
-
-// getOrCreateChatState gets or initializes state for a chat.
-func (b *Bot) getOrCreateChatState(identity ChatIdentity) *ChatState {
-	key := identity.SequentialKey()
-
-	b.chatMu.Lock()
-	defer b.chatMu.Unlock()
-
-	if state, ok := b.chatStates[key]; ok {
-		return state
-	}
-
-	state := &ChatState{
-		Identity: identity,
-	}
-	b.chatStates[key] = state
-	return state
 }
 
 // GetStats returns bot statistics for monitoring.

@@ -14,21 +14,24 @@ const MaxTelegramMessageLength = 4096
 
 // RenderResult contains the rendered Telegram message.
 type RenderResult struct {
-	Text            string
-	ParseMode       string
-	ReplyMarkup     *InlineKeyboardMarkup
-	EditMessageID   int64 // Set to non-zero to edit instead of sending new message
+	Text        string
+	ParseMode   string
+	ReplyMarkup *InlineKeyboardMarkup
+	// IsStreaming indicates this is a streaming delta that should edit
+	// the existing streaming message if one exists
+	IsStreaming bool
+	// IsFinal indicates this is a terminal event (done/error/cancelled)
+	IsFinal bool
 }
 
 // Renderer converts gateway events to Telegram message formats.
+// This is stateless - all mutable state lives in ChatState.
 type Renderer struct {
 	// EnableMarkdown enables Markdown parsing in outgoing messages
 	EnableMarkdown bool
-	// streamingMessageID tracks the current streaming message for delta updates
-	streamingMessageID int64
 }
 
-// NewRenderer creates a new event renderer.
+// NewRenderer creates a new stateless event renderer.
 func NewRenderer() *Renderer {
 	return &Renderer{
 		EnableMarkdown: true,
@@ -37,6 +40,7 @@ func NewRenderer() *Renderer {
 
 // RenderEvent converts a router event to a Telegram message.
 // Returns nil if the event should not result in a message.
+// This is a pure function - all state decisions are made by the caller.
 func (r *Renderer) RenderEvent(ev router.Event) *RenderResult {
 	switch ev.Type {
 	case event.AgentContentDelta:
@@ -52,9 +56,10 @@ func (r *Renderer) RenderEvent(ev router.Event) *RenderResult {
 	case event.AgentCancelled:
 		return r.renderCancelled(ev.Payload)
 	case event.AgentToolCallStart:
-		return r.renderToolCallStart(ev.Payload)
+		// Tool lifecycle events are noisy for Telegram users; keep them internal only.
+		return nil
 	case event.AgentToolCallDone:
-		return r.renderToolCallDone(ev.Payload)
+		return nil
 	case event.SessionAttached:
 		return r.renderSessionAttached(ev.Payload)
 	case event.ChangeModelEvent:
@@ -66,6 +71,7 @@ func (r *Renderer) RenderEvent(ev router.Event) *RenderResult {
 }
 
 // renderContentDelta renders a streaming content delta.
+// This is a streaming update that should edit the existing message.
 func (r *Renderer) renderContentDelta(payload interface{}) *RenderResult {
 	p, ok := payload.(router.ContentDeltaPayload)
 	if !ok {
@@ -79,13 +85,14 @@ func (r *Renderer) renderContentDelta(payload interface{}) *RenderResult {
 	}
 
 	return &RenderResult{
-		Text:          text,
-		ParseMode:     "",
-		EditMessageID: r.streamingMessageID,
+		Text:        text,
+		ParseMode:   "", // No parse mode for deltas (they accumulate raw content)
+		IsStreaming: true,
 	}
 }
 
 // renderContentFull renders a full content replacement.
+// This is also a streaming update that should edit the existing message.
 func (r *Renderer) renderContentFull(payload interface{}) *RenderResult {
 	p, ok := payload.(router.ContentFullPayload)
 	if !ok {
@@ -101,9 +108,9 @@ func (r *Renderer) renderContentFull(payload interface{}) *RenderResult {
 	text = EscapeMarkdown(text)
 
 	return &RenderResult{
-		Text:          text,
-		ParseMode:     "MarkdownV2",
-		EditMessageID: r.streamingMessageID,
+		Text:        text,
+		ParseMode:   "MarkdownV2",
+		IsStreaming: true,
 	}
 }
 
@@ -140,21 +147,23 @@ func (r *Renderer) renderDone(payload interface{}) *RenderResult {
 		sb.WriteString(EscapeMarkdownf("• Completion: %d", p.CompletionTokens))
 	}
 
-	// Send as a new message (no EditMessageID) to preserve the streaming content
+	// Send as a new message (not streaming) to preserve the streaming content
 	return &RenderResult{
-		Text:          sb.String(),
-		ParseMode:     "MarkdownV2",
-		EditMessageID: 0, // New message, don't edit
+		Text:      sb.String(),
+		ParseMode: "MarkdownV2",
+		IsFinal:   true,
 	}
 }
 
 // renderError renders an error message.
+// This edits the streaming message to show the error.
 func (r *Renderer) renderError(payload interface{}) *RenderResult {
 	p, ok := payload.(router.AgentErrorPayload)
 	if !ok {
 		return &RenderResult{
 			Text:      "❌ *Error occurred*",
 			ParseMode: "MarkdownV2",
+			IsFinal:   true,
 		}
 	}
 
@@ -165,18 +174,19 @@ func (r *Renderer) renderError(payload interface{}) *RenderResult {
 	text := "❌ *Error:*\n" + EscapeMarkdown(errMsg)
 
 	return &RenderResult{
-		Text:          text,
-		ParseMode:     "MarkdownV2",
-		EditMessageID: r.streamingMessageID,
+		Text:      text,
+		ParseMode: "MarkdownV2",
+		IsFinal:   true,
 	}
 }
 
 // renderCancelled renders a cancellation message.
+// This edits the streaming message to show it was cancelled.
 func (r *Renderer) renderCancelled(payload interface{}) *RenderResult {
 	return &RenderResult{
-		Text:          "🛑 _Cancelled_",
-		ParseMode:     "MarkdownV2",
-		EditMessageID: r.streamingMessageID,
+		Text:      "🛑 _Cancelled_",
+		ParseMode: "MarkdownV2",
+		IsFinal:   true,
 	}
 }
 
@@ -243,19 +253,22 @@ func (r *Renderer) renderModelChanged(payload interface{}) *RenderResult {
 	}
 }
 
-// SetStreamingMessageID sets the message ID for streaming delta updates.
-func (r *Renderer) SetStreamingMessageID(id int64) {
-	r.streamingMessageID = id
-}
+// RenderFinalContent renders the final assistant content as a single Telegram message.
+func (r *Renderer) RenderFinalContent(content string) *RenderResult {
+	if content == "" {
+		return nil
+	}
 
-// GetStreamingMessageID returns the current streaming message ID.
-func (r *Renderer) GetStreamingMessageID() int64 {
-	return r.streamingMessageID
-}
+	text := content
+	if len(text) > MaxTelegramMessageLength {
+		text = text[:MaxTelegramMessageLength-3] + "..."
+	}
 
-// ClearStreamingMessageID clears the streaming message ID.
-func (r *Renderer) ClearStreamingMessageID() {
-	r.streamingMessageID = 0
+	return &RenderResult{
+		Text:      EscapeMarkdown(text),
+		ParseMode: "MarkdownV2",
+		IsFinal:   true,
+	}
 }
 
 // EscapeMarkdown escapes text for Telegram's MarkdownV2 format.

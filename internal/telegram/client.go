@@ -164,6 +164,18 @@ func (c *Client) EditMessageText(ctx context.Context, req EditMessageTextRequest
 	return &msg, nil
 }
 
+// SendChatAction sends a chat action (e.g., typing) to a chat.
+func (c *Client) SendChatAction(ctx context.Context, req SendChatActionRequest) error {
+	resp, err := c.apiCall(ctx, "sendChatAction", req)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return resp
+	}
+	return nil
+}
+
 // GetMe returns basic information about the bot.
 func (c *Client) GetMe(ctx context.Context) (*User, error) {
 	resp, err := c.apiCall(ctx, "getMe", nil)
