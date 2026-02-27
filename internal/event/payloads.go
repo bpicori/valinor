@@ -20,6 +20,7 @@ type ChangeProviderModelPayload struct {
 type CreateNewSessionPayload struct {
 	Provider string `json:"provider"`
 	Model    string `json:"model"`
+	Force    bool   `json:"force,omitempty"`
 }
 
 // RequestProviderModelsPayload carries provider name to fetch available models for.

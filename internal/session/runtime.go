@@ -396,9 +396,10 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 	}
 }
 
-// HandleCreateSessionRequest creates a new session for the given provider/model.
-// If the provider is unchanged from an existing session, updates the model instead.
-func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string) (string, *Session, error) {
+// HandleCreateSessionRequest creates a session for the given provider/model.
+// When force is false and provider matches the existing session, it may reuse
+// the session and only switch model; when force is true, it always creates a new session.
+func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string, force bool) (string, *Session, error) {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -421,8 +422,8 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string) 
 		return "", nil, err
 	}
 
-	// If we have an existing session with the same provider, just switch the model
-	if existingWorker != nil && existingWorker.session.Meta().Provider == provider {
+	// If we have an existing session with the same provider, optionally reuse it.
+	if !force && existingWorker != nil && existingWorker.session.Meta().Provider == provider {
 		if err := existingWorker.session.SwitchProviderModel(r.runtimeCtx, provider, model); err != nil {
 			return "", nil, err
 		}

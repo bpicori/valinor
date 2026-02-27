@@ -352,7 +352,7 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		}
 
 		newSessionID, newSession, err := r.runtime.HandleCreateSessionRequest(
-			routingCtx.SessionID, payload.Provider, payload.Model)
+			routingCtx.SessionID, payload.Provider, payload.Model, payload.Force)
 		if err != nil {
 			return err
 		}

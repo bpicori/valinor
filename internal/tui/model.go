@@ -24,7 +24,7 @@ type CommandSender interface {
 	SendUserMessage(content string) bool
 	SendNewConversation() bool
 	SendChangeProviderModel(provider, model string) bool
-	SendCreateNewSession(provider, model string) bool
+	SendCreateNewSession(provider, model string, force bool) bool
 	SendRequestProviderModels(provider string) bool
 	SendCancelAgentRun() bool
 }
@@ -341,7 +341,7 @@ func (m Model) handleModelPickerKey(msg tea.KeyMsg) (Model, tea.Cmd, bool, bool)
 		if i, ok := m.modelPicker.SelectedItem().(providerModelItem); ok {
 			if m.sender != nil {
 				if i.Provider != m.providerName {
-					m.sender.SendCreateNewSession(i.Provider, i.Model)
+					m.sender.SendCreateNewSession(i.Provider, i.Model, false)
 				} else {
 					m.sender.SendChangeProviderModel(i.Provider, i.Model)
 				}
@@ -419,7 +419,10 @@ func (m Model) handleSubmit() (Model, tea.Cmd, bool, bool) {
 		return m, nil, true, true
 	}
 	if input == "/new" || input == "/clear" {
-		if m.sender != nil {
+		if input == "/new" && m.sender != nil {
+			m.sender.SendCreateNewSession(m.providerName, m.modelName, true)
+		}
+		if input == "/clear" && m.sender != nil {
 			m.sender.SendNewConversation()
 		}
 		return m, nil, true, false
@@ -470,7 +473,7 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	}
 	if provider != m.providerName {
 		if m.sender != nil {
-			m.sender.SendCreateNewSession(provider, model)
+			m.sender.SendCreateNewSession(provider, model, false)
 		}
 		m.providerName = provider
 		m.modelName = model
@@ -532,6 +535,10 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		payload, ok := ev.Payload.(router.SessionAttachedPayload)
 		if !ok {
 			return m, nil
+		}
+		// A changed session key means the identity switched sessions (e.g. /new).
+		if m.sessionKey != "" && payload.SessionKey != "" && payload.SessionKey != m.sessionKey {
+			m.handleNewConversation()
 		}
 		m.sessionKey = payload.SessionKey
 		m.providerName = payload.Provider

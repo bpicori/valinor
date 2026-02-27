@@ -401,10 +401,11 @@ func (b *WSBridge) SendChangeProviderModel(provider, model string) bool {
 }
 
 // SendCreateNewSession sends a create new session command.
-func (b *WSBridge) SendCreateNewSession(provider, model string) bool {
+func (b *WSBridge) SendCreateNewSession(provider, model string, force bool) bool {
 	return b.SendCommand(router.CommandCreateNewSession, router.CreateNewSessionPayload{
 		Provider: provider,
 		Model:    model,
+		Force:    force,
 	})
 }
 
