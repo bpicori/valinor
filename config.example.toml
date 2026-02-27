@@ -39,3 +39,13 @@ gateway_path = "/ws"
 
 # Agent configuration
 max_agent_iterations = 20
+
+# Telegram Bot configuration (optional)
+# Uncomment to enable Telegram bot mode
+# [telegram]
+# enabled = true
+# bot_token = "YOUR_BOT_TOKEN_FROM_BOTFATHER"
+# poll_timeout = 30              # Long-polling timeout (seconds, max 90)
+# retry_base_delay = 1           # Base retry delay (seconds)
+# retry_max_delay = 30           # Maximum retry delay (seconds)
+# require_mention = false        # Require @bot mention in groups

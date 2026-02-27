@@ -99,11 +99,12 @@ func BuildSystemPrompt(workspaceDir string) (string, error) {
 	return prompt, nil
 }
 
-// LoadSkills scans skills/*.md and returns deterministic metadata for each skill.
+// LoadSkills scans skills/*.md and skills/*/SKILL.md and returns deterministic metadata for each skill.
 // Missing skills directory is treated as empty catalog.
 func LoadSkills(workspaceDir string) ([]Skill, error) {
 	dir := filepath.Join(workspaceDir, SkillsDir)
 	entries, err := os.ReadDir(dir)
+	applog.Debug("context load skills dir read", applog.BuildMetadata("dir", dir, "entries", entries))
 	if err != nil {
 		// Missing skills directory is treated as empty catalog.
 		if os.IsNotExist(err) {
@@ -116,6 +117,11 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 	out := make([]Skill, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
+			// Look for SKILL.md inside nested directories (e.g., skills/weather/SKILL.md)
+			skill := loadNestedSkill(dir, entry.Name())
+			if skill != nil {
+				out = append(out, *skill)
+			}
 			continue
 		}
 		name := entry.Name()
@@ -143,6 +149,32 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		})
 	}
 	return out, nil
+}
+
+// loadNestedSkill attempts to load a SKILL.md file from a nested directory.
+// Returns nil if no valid skill is found.
+func loadNestedSkill(skillsDir, subdir string) *Skill {
+	skillPath := filepath.Join(skillsDir, subdir, "SKILL.md")
+	applog.Debug("context load nested skill checking", applog.BuildMetadata("dir", subdir, "path", skillPath))
+	data, err := os.ReadFile(skillPath)
+	if err != nil {
+		// No SKILL.md in this directory is not an error - just log and skip
+		applog.Debug("context load nested skill no SKILL.md found", applog.BuildMetadata("dir", subdir, "path", skillPath, "error", err))
+		return nil
+	}
+
+	skillName, description, ok := parseSkillHeader(string(data))
+	if !ok {
+		applog.Debug("context load nested skill invalid header", applog.BuildMetadata("dir", subdir))
+		return nil
+	}
+
+	applog.Debug("context load nested skill parsed", applog.BuildMetadata("dir", subdir, "skill_name", skillName, "description", description))
+	return &Skill{
+		Name:        skillName,
+		Description: description,
+		Path:        filepath.ToSlash(filepath.Join(SkillsDir, subdir, "SKILL.md")),
+	}
 }
 
 func composeSystemPrompt(basePrompt, identity string, skills []Skill) string {

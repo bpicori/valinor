@@ -31,6 +31,14 @@ const (
 	DefaultGatewayPath    = "/ws"
 )
 
+// Default Telegram configuration.
+const (
+	DefaultTelegramPollTimeout     = 30
+	DefaultTelegramRetryBaseDelay  = 1  // seconds
+	DefaultTelegramRetryMaxDelay   = 30 // seconds
+	DefaultTelegramRequireMention  = false
+)
+
 // Config holds provider configurations and application paths.
 type Config struct {
 	DefaultProvider    string                    `toml:"default_provider"`
@@ -48,6 +56,25 @@ type Config struct {
 	GatewayHost    string `toml:"gateway_host"`
 	GatewayPort    int    `toml:"gateway_port"`
 	GatewayPath    string `toml:"gateway_path"`
+
+	// Telegram bot configuration.
+	Telegram TelegramConfig `toml:"telegram"`
+}
+
+// TelegramConfig holds Telegram Bot API configuration.
+type TelegramConfig struct {
+	// Enabled enables the Telegram bot mode (default: false).
+	Enabled bool `toml:"enabled"`
+	// BotToken is the Telegram Bot API token from @BotFather (required if enabled).
+	BotToken string `toml:"bot_token"`
+	// PollTimeout is the long-polling timeout in seconds (default: 30, max: 90).
+	PollTimeout int `toml:"poll_timeout"`
+	// RetryBaseDelay is the base delay for exponential backoff in seconds (default: 1).
+	RetryBaseDelay int `toml:"retry_base_delay"`
+	// RetryMaxDelay is the maximum retry delay in seconds (default: 30).
+	RetryMaxDelay int `toml:"retry_max_delay"`
+	// RequireMention requires the bot to be mentioned in group chats (default: false).
+	RequireMention bool `toml:"require_mention"`
 }
 
 // ProviderConfig holds configuration for a specific LLM provider.
@@ -127,6 +154,25 @@ func LoadFromFile(path string) (Config, error) {
 	}
 	if !md.IsDefined("gateway_enabled") {
 		cfg.GatewayEnabled = DefaultGatewayEnabled
+	}
+
+	// Validate and apply Telegram defaults
+	if cfg.Telegram.Enabled {
+		if cfg.Telegram.BotToken == "" {
+			return Config{}, fmt.Errorf("telegram bot_token is required when telegram is enabled")
+		}
+	}
+	if cfg.Telegram.PollTimeout <= 0 {
+		cfg.Telegram.PollTimeout = DefaultTelegramPollTimeout
+	}
+	if cfg.Telegram.PollTimeout > 90 {
+		cfg.Telegram.PollTimeout = 90 // Telegram API maximum
+	}
+	if cfg.Telegram.RetryBaseDelay <= 0 {
+		cfg.Telegram.RetryBaseDelay = DefaultTelegramRetryBaseDelay
+	}
+	if cfg.Telegram.RetryMaxDelay <= 0 {
+		cfg.Telegram.RetryMaxDelay = DefaultTelegramRetryMaxDelay
 	}
 
 	return cfg, nil

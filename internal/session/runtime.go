@@ -56,7 +56,6 @@ func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string,
 	// Execute the run
 	err := w.session.HandleUserMessage(runCtx, requestID, content)
 
-	// Clear run state
 	w.mu.Lock()
 	w.runCancel = nil
 	w.runInProgress = false

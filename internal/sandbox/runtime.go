@@ -1,10 +1,11 @@
 package sandbox
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,9 +17,9 @@ import (
 
 // Runtime holds workspace and execution context for tool calls.
 type Runtime struct {
-	workspaceDir   string
-	executablePath string
-	sem            chan struct{}
+	workspaceDir     string
+	pythonExecutable string
+	sem              chan struct{}
 }
 
 const (
@@ -28,16 +29,30 @@ const (
 
 // NewRuntime creates a runtime configured for a workspace root.
 func NewRuntime(dir string) (*Runtime, error) {
-	execPath, err := os.Executable()
+	resolvedPython, err := resolvePythonExecutable()
 	if err != nil {
-		applog.Error("sandbox runtime exec path failed", applog.BuildMetadata("error", err))
-		return nil, fmt.Errorf("resolve executable path: %w", err)
+		return nil, fmt.Errorf("resolve python executable: %w", err)
 	}
+
+	applog.Info("sandbox runtime initialized",
+		applog.BuildMetadata("workspace", dir, "python_resolved", resolvedPython))
+
 	return &Runtime{
-		workspaceDir:   dir,
-		executablePath: execPath,
-		sem:            make(chan struct{}, defaultMaxConcurrentOps),
+		workspaceDir:     dir,
+		pythonExecutable: resolvedPython,
+		sem:              make(chan struct{}, defaultMaxConcurrentOps),
 	}, nil
+}
+
+func resolvePythonExecutable() (string, error) {
+	candidates := []string{"python3", "python"}
+	for _, candidate := range candidates {
+		path, err := exec.LookPath(candidate)
+		if err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("python executable not found in PATH (tried: python3, python)")
 }
 
 // RunCommand executes a command in red-keep with workspace RW access.
@@ -154,6 +169,36 @@ func (r *Runtime) Grep(pattern string, path string, include string) (string, err
 	return "Tool Error: " + commandFailureMessage(result, "grep failed"), nil
 }
 
+// RunPython executes Python code from the host runtime.
+// mode can be "inline" (code string) or "script" (path to file).
+// For inline mode, code is the Python code to execute.
+// For script mode, code is the path to the script file.
+// args are additional arguments (only used in script mode).
+func (r *Runtime) RunPython(ctx context.Context, workDir string, mode string, code string, args []string, timeout time.Duration) (Result, error) {
+	// Resolve working directory
+	targetWorkDir := r.workspaceDir
+	if workDir != "" && workDir != "." {
+		targetWorkDir = filepath.Join(r.workspaceDir, filepath.FromSlash(workDir))
+	}
+
+	var command []string
+	var stdin io.Reader
+
+	switch mode {
+	case "inline":
+		// Execute code passed as stdin using -c
+		command = []string{r.pythonExecutable, "-c", code}
+	case "script":
+		// Execute script file
+		scriptPath := r.resolveWorkspacePath(code)
+		command = append([]string{r.pythonExecutable, scriptPath}, args...)
+	default:
+		return Result{}, fmt.Errorf("invalid mode: %s (must be 'inline' or 'script')", mode)
+	}
+
+	return r.runHostCommandWithTimeout(ctx, command, targetWorkDir, stdin, nil, timeout)
+}
+
 // WorkspaceDir returns the runtime workspace root.
 func (r *Runtime) WorkspaceDir() string {
 	return r.workspaceDir
@@ -174,6 +219,50 @@ func (r *Runtime) runIO(ctx context.Context, req redkeep.RunRequest, stdin io.Re
 	r.sem <- struct{}{}
 	defer func() { <-r.sem }()
 	return runWithRedKeepIO(ctx, req, stdin, env)
+}
+
+func (r *Runtime) runHostCommandWithTimeout(ctx context.Context, command []string, workDir string, stdin io.Reader, env []string, timeout time.Duration) (Result, error) {
+	if len(command) == 0 {
+		return Result{}, fmt.Errorf("empty command")
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Dir = workDir
+	cmd.Stdin = stdin
+	if len(env) > 0 {
+		cmd.Env = env
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	result := Result{
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
+	}
+	if cmd.ProcessState != nil {
+		result.ExitCode = cmd.ProcessState.ExitCode()
+	}
+
+	if err == nil {
+		return result, nil
+	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return result, fmt.Errorf("command timed out after %s", timeout)
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		// Non-zero exit is represented in ExitCode and stderr/stdout.
+		return result, nil
+	}
+	return result, err
 }
 
 func (r *Runtime) resolveWorkspacePath(path string) string {
