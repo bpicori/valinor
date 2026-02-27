@@ -88,47 +88,19 @@ func (r *Renderer) RenderEvent(ev router.Event) *RenderResult {
 }
 
 // renderContentDelta renders a streaming content delta.
-// This is a streaming update that should edit the existing message.
+// Returns nil to skip message updates - content is accumulated but only final result is sent.
 func (r *Renderer) renderContentDelta(payload interface{}) *RenderResult {
-	p, ok := payload.(router.ContentDeltaPayload)
-	if !ok {
-		return nil
-	}
-
-	// Truncate if too long
-	text := p.Content
-	if len(text) > MaxTelegramMessageLength {
-		text = text[:MaxTelegramMessageLength-3] + "..."
-	}
-
-	return &RenderResult{
-		Text:        text,
-		ParseMode:   "", // No parse mode for deltas (they accumulate raw content)
-		IsStreaming: true,
-	}
+	// Delta chunks accumulate content in ChatState but don't trigger message updates.
+	// Only AgentDone → RenderFinalContent sends the final message.
+	return nil
 }
 
 // renderContentFull renders a full content replacement.
-// This is also a streaming update that should edit the existing message.
+// Returns nil to skip message updates - content is accumulated but only final result is sent.
 func (r *Renderer) renderContentFull(payload interface{}) *RenderResult {
-	p, ok := payload.(router.ContentFullPayload)
-	if !ok {
-		return nil
-	}
-
-	text := p.Content
-	if len(text) > MaxTelegramMessageLength {
-		text = text[:MaxTelegramMessageLength-3] + "..."
-	}
-
-	// Escape markdown characters to avoid formatting errors
-	text = EscapeMarkdown(text)
-
-	return &RenderResult{
-		Text:        text,
-		ParseMode:   "MarkdownV2",
-		IsStreaming: true,
-	}
+	// Full content replacements update ChatState but don't trigger message updates.
+	// Only AgentDone → RenderFinalContent sends the final message.
+	return nil
 }
 
 // renderThinking renders a thinking message.
@@ -139,7 +111,7 @@ func (r *Renderer) renderThinking(payload interface{}) *RenderResult {
 	}
 
 	return &RenderResult{
-		Text:      "🤔 *Thinking...*\n_" + EscapeMarkdown(p.Content) + "_",
+		Text:      "🤔 *Thinking\\.\\.\\.*\n_" + EscapeMarkdown(p.Content) + "_",
 		ParseMode: "MarkdownV2",
 	}
 }

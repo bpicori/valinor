@@ -3,7 +3,11 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,18 +25,114 @@ const (
 // UpdateHandler is called for each received update.
 type UpdateHandler func(ctx context.Context, update Update) error
 
-// PollerStats contains telemetry metrics for the poller.
-type PollerStats struct {
-	PollCycles       uint64    // Total number of poll requests made
-	UpdatesReceived  uint64    // Total updates received from Telegram
-	UpdatesProcessed uint64    // Updates successfully processed
-	LastPollTime     time.Time // Timestamp of last successful poll
+// offsetStore persists and retrieves the last processed update_id.
+// This ensures we don't process the same updates multiple times after restarts.
+type offsetStore struct {
+	path string
+	mu   sync.RWMutex
+	data offsetData
+}
+
+type offsetData struct {
+	LastUpdateID int64 `json:"last_update_id"`
+}
+
+// newOffsetStore creates a new offset store in the specified directory.
+func newOffsetStore(dir string) (*offsetStore, error) {
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return nil, fmt.Errorf("create offset store directory: %w", err)
+	}
+
+	store := &offsetStore{
+		path: filepath.Join(dir, offsetFileName),
+	}
+
+	// Load existing data if present
+	if err := store.load(); err != nil {
+		applog.Warning("telegram offset store: failed to load, starting fresh",
+			applog.BuildMetadata("error", err))
+	}
+
+	return store, nil
+}
+
+// Get returns the last processed update ID.
+// Returns 0 if no offset has been stored.
+func (s *offsetStore) Get() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.data.LastUpdateID
+}
+
+// Set updates the last processed update ID and persists it to disk.
+func (s *offsetStore) Set(updateID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Only update if the new ID is higher
+	if updateID <= s.data.LastUpdateID {
+		return nil
+	}
+
+	s.data.LastUpdateID = updateID
+	return s.saveLocked()
+}
+
+// load reads the offset data from disk.
+func (s *offsetStore) load() error {
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // No existing file is fine
+		}
+		return fmt.Errorf("read offset file: %w", err)
+	}
+
+	var loaded offsetData
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		return fmt.Errorf("parse offset file: %w", err)
+	}
+
+	s.data = loaded
+	return nil
+}
+
+// saveLocked persists the current offset to disk.
+// Must be called with s.mu held.
+func (s *offsetStore) saveLocked() error {
+	data, err := json.Marshal(s.data)
+	if err != nil {
+		return fmt.Errorf("marshal offset data: %w", err)
+	}
+
+	// Write to temp file first, then rename for atomicity
+	tempPath := s.path + ".tmp"
+	if err := os.WriteFile(tempPath, data, 0640); err != nil {
+		return fmt.Errorf("write offset temp file: %w", err)
+	}
+
+	if err := os.Rename(tempPath, s.path); err != nil {
+		os.Remove(tempPath) // Clean up on failure
+		return fmt.Errorf("rename offset file: %w", err)
+	}
+
+	return nil
+}
+
+const offsetFileName = "telegram_offset.json"
+
+// pollerStats contains telemetry metrics for the poller.
+type pollerStats struct {
+	pollCycles       uint64    // Total number of poll requests made
+	updatesReceived  uint64    // Total updates received from Telegram
+	updatesProcessed uint64    // Updates successfully processed
+	lastPollTime     time.Time // Timestamp of last successful poll
 }
 
 // Poller manages the long-polling loop for Telegram updates.
 type Poller struct {
 	client      *Client
-	store       *OffsetStore
+	store       *offsetStore
 	handler     UpdateHandler
 	pollTimeout int
 	limit       int
@@ -45,11 +145,11 @@ type Poller struct {
 	running bool
 
 	// Telemetry
-	stats PollerStats
+	stats pollerStats
 }
 
 // NewPoller creates a new update poller.
-func NewPoller(client *Client, store *OffsetStore, handler UpdateHandler) *Poller {
+func NewPoller(client *Client, store *offsetStore, handler UpdateHandler) *Poller {
 	return &Poller{
 		client:      client,
 		store:       store,
@@ -128,7 +228,7 @@ func (p *Poller) pollLoop() {
 		}
 
 		// Track poll cycle
-		atomic.AddUint64(&p.stats.PollCycles, 1)
+		atomic.AddUint64(&p.stats.pollCycles, 1)
 
 		// Fetch updates with long polling
 		req := GetUpdatesRequest{
@@ -159,11 +259,11 @@ func (p *Poller) pollLoop() {
 
 		// Success - update stats
 		p.mu.Lock()
-		p.stats.LastPollTime = time.Now()
+		p.stats.lastPollTime = time.Now()
 		p.mu.Unlock()
 
 		// Track updates received
-		atomic.AddUint64(&p.stats.UpdatesReceived, uint64(len(updates)))
+		atomic.AddUint64(&p.stats.updatesReceived, uint64(len(updates)))
 
 		// Process updates
 		processed := 0
@@ -190,22 +290,10 @@ func (p *Poller) pollLoop() {
 		}
 
 		// Update stats
-		atomic.AddUint64(&p.stats.UpdatesProcessed, uint64(processed))
+		atomic.AddUint64(&p.stats.updatesProcessed, uint64(processed))
 
 		applog.Debug("telegram poller: processed updates",
 			applog.BuildMetadata("count", len(updates), "next_offset", offset, "processed", processed))
 	}
 }
 
-// GetStats returns a snapshot of poller telemetry metrics.
-func (p *Poller) GetStats() PollerStats {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	return PollerStats{
-		PollCycles:       atomic.LoadUint64(&p.stats.PollCycles),
-		UpdatesReceived:  atomic.LoadUint64(&p.stats.UpdatesReceived),
-		UpdatesProcessed: atomic.LoadUint64(&p.stats.UpdatesProcessed),
-		LastPollTime:     p.stats.LastPollTime,
-	}
-}
