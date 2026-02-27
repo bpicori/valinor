@@ -98,6 +98,7 @@ func (r *Router) Start(ctx context.Context) {
 		event.AgentError,
 		event.AgentCancelled,
 		event.ProviderModelsResult,
+		event.CronJobResult,
 	)
 
 	// Start the event forwarding goroutine
@@ -497,6 +498,10 @@ func (r *Router) forwardEventToClients(be event.Event, sessionID string) {
 			consumers = append(consumers, consumer)
 		}
 		r.mu.RUnlock()
+		if routerEvent.Type == event.CronJobResult {
+			applog.Debug("router: broadcasting cron job result",
+				applog.BuildMetadata("event_type", routerEvent.Type, "consumer_count", len(consumers)))
+		}
 	}
 
 	// Send to clients (non-blocking)

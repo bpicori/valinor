@@ -13,6 +13,7 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/gateway"
 	"valinor/internal/router"
+	"valinor/internal/scheduler"
 	"valinor/internal/session"
 	"valinor/internal/telegram"
 	"valinor/internal/tui"
@@ -127,6 +128,14 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	rtr := router.NewRouter(b, runtime, sm, sessionOpts, identityMap)
 	rtr.Start(ctx)
 	defer rtr.Stop()
+
+	// Start scheduler if enabled
+	if cfg.Scheduler.Enabled {
+		sched := scheduler.New(workspaceDir, sm, sessionOpts, b, cfg.Scheduler)
+		sched.Start(ctx)
+		defer sched.Stop()
+		applog.Info("scheduler enabled", applog.BuildMetadata("interval", cfg.Scheduler.CheckInterval))
+	}
 
 	// Create and start gateway server
 	gwCfg := gateway.Config{

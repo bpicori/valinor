@@ -499,6 +499,13 @@ func (b *Bridge) parseEvent(env gateway.WireEnvelope) (router.Event, error) {
 		}
 		ev.Payload = p
 
+	case event.CronJobResult:
+		var p router.CronJobResultPayload
+		if err := json.Unmarshal(env.Payload, &p); err != nil {
+			return ev, err
+		}
+		ev.Payload = p
+
 	default:
 		// Unknown event type - store raw payload
 		ev.Payload = env.Payload

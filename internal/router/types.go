@@ -128,6 +128,9 @@ type (
 // SessionAttachedPayload is re-exported from event package.
 type SessionAttachedPayload = event.SessionAttachedPayload
 
+// CronJobResultPayload is re-exported from event package.
+type CronJobResultPayload = event.CronJobResultPayload
+
 // Command represents a parsed client command with typed payload.
 type Command struct {
 	Type      string

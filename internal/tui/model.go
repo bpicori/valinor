@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -101,6 +102,7 @@ type messageRole int
 const (
 	roleUser messageRole = iota
 	roleAssistant
+	roleSystem
 )
 
 // chatMessage is a single message in the conversation display.
@@ -573,6 +575,14 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		m.contextPrompt = payload.PromptTokens
 		m.contextEstimated = payload.Estimated
 		return m, nil
+	case event.CronJobResult:
+		payload, ok := ev.Payload.(event.CronJobResultPayload)
+		if !ok {
+			return m, nil
+		}
+		applog.Debug("tui: received cron job result",
+			applog.BuildMetadata("content_length", len(payload.Content), "timestamp", payload.Timestamp))
+		return m, m.handleCronJobResult(payload)
 	}
 
 	last, ok := m.lastMessage()
@@ -702,6 +712,21 @@ func (m *Model) handleNewConversation() tea.Cmd {
 	m.messages = nil
 	m.state = stateReady
 	m.rebuildViewportContent()
+	return nil
+}
+
+func (m *Model) handleCronJobResult(payload event.CronJobResultPayload) tea.Cmd {
+	// Add a system message showing the cron job result
+	msg := chatMessage{
+		Role:      roleSystem,
+		Content:   fmt.Sprintf("[Scheduled Task %s]\n\n%s", payload.Timestamp.Format("15:04"), payload.Content),
+		Rendered:  renderMarkdown(fmt.Sprintf("**Scheduled Task** (%s)\n\n%s", payload.Timestamp.Format("15:04"), payload.Content), m.width-4),
+		Streaming: false,
+	}
+	m.messages = append(m.messages, msg)
+	m.rebuildViewportContent()
+	// Auto-scroll to show the new message
+	m.viewport.GotoBottom()
 	return nil
 }
 

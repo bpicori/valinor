@@ -3,6 +3,7 @@ package event
 import (
 	"encoding/json"
 	"errors"
+	"time"
 )
 
 // UserMessagePayload carries the content of a user chat message.
@@ -133,4 +134,10 @@ type SessionAttachedPayload struct {
 	SessionKey string `json:"session_key"`
 	Provider   string `json:"provider"`
 	Model      string `json:"model"`
+}
+
+// CronJobResultPayload carries the result of a scheduled cron job execution.
+type CronJobResultPayload struct {
+	Content   string    `json:"content"`
+	Timestamp time.Time `json:"timestamp"`
 }

@@ -38,6 +38,9 @@ const (
 	// Session lifecycle events.
 	SessionAttached  EventType = "session_attached"  // Session attached to identity.
 	ChangeModelEvent EventType = "change_model"      // Provider/model changed notification.
+
+	// Scheduled job events.
+	CronJobResult EventType = "cron_job_result" // Scheduled cron job execution result.
 )
 
 // Event is a unified event with typed payload.
@@ -76,6 +79,8 @@ var registry = map[EventType]PayloadFactory{
 
 	SessionAttached:  func() any { return &SessionAttachedPayload{} },
 	ChangeModelEvent: func() any { return &ChangeProviderModelPayload{} },
+
+	CronJobResult: func() any { return &CronJobResultPayload{} },
 }
 
 // RegisterPayloadType allows external packages to register custom payload types.
@@ -148,6 +153,8 @@ func deref(v any) any {
 	case *AgentCancelledPayload:
 		return *ptr
 	case *SessionAttachedPayload:
+		return *ptr
+	case *CronJobResultPayload:
 		return *ptr
 	default:
 		return v

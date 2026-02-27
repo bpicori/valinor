@@ -127,6 +127,9 @@ func (m *Model) rebuildViewportContent() {
 		case roleAssistant:
 			b.WriteString(renderAssistantMessageBlock(msg, width))
 			b.WriteString("\n")
+		case roleSystem:
+			b.WriteString(renderSystemMessageBlock(msg, width))
+			b.WriteString("\n")
 		}
 	}
 	m.viewport.SetContent(b.String())
@@ -159,6 +162,9 @@ func (m *Model) appendStreamingContent() {
 			case roleAssistant:
 				b.WriteString(renderAssistantMessageBlock(msg, width))
 				b.WriteString("\n")
+			case roleSystem:
+				b.WriteString(renderSystemMessageBlock(msg, width))
+				b.WriteString("\n")
 			}
 		}
 		previousContent = b.String()
@@ -185,6 +191,17 @@ func renderUserMessageBlock(msg chatMessage, width int) string {
 
 func renderAssistantMessageBlock(msg chatMessage, width int) string {
 	return assistantMessageBlockStyle.Width(width - 4).Render(renderAssistantBody(msg))
+}
+
+func renderSystemMessageBlock(msg chatMessage, width int) string {
+	systemStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		PaddingLeft(2)
+	body := msg.Content
+	if msg.Rendered != "" {
+		body = msg.Rendered
+	}
+	return assistantMessageBlockStyle.Width(width - 4).Render(systemStyle.Render(body))
 }
 
 func renderAssistantBody(msg chatMessage) string {

@@ -577,6 +577,8 @@ func (b *Bot) handleEvent(ev *router.Event, identity ChatIdentity, state *ChatSt
 		b.handleSessionAttached(ev, state)
 	case event.ChangeModelEvent:
 		b.handleModelChanged(ev, state)
+	case event.CronJobResult:
+		return b.handleCronJobResult(ev, identity)
 	}
 	return nil
 }
@@ -670,6 +672,24 @@ func (b *Bot) handleModelChanged(ev *router.Event, state *ChatState) {
 		state.ProviderName = payload.Provider
 		state.ModelName = payload.Model
 	}
+}
+
+// handleCronJobResult sends scheduled job results to the chat.
+func (b *Bot) handleCronJobResult(ev *router.Event, identity ChatIdentity) error {
+	if payload, ok := ev.Payload.(event.CronJobResultPayload); ok {
+		content := fmt.Sprintf("Scheduled Task (%s)\n\n%s",
+			payload.Timestamp.Format("15:04"),
+			payload.Content)
+		result := &RenderResult{
+			Text:      content,
+			ParseMode: "",
+			IsFinal:   true,
+		}
+		if err := b.sendTelegramMessage(identity, nil, result); err != nil {
+			return fmt.Errorf("send cron job result: %w", err)
+		}
+	}
+	return nil
 }
 
 // renderAndSend renders an event and sends it via Telegram API.

@@ -49,3 +49,9 @@ max_agent_iterations = 20
 # retry_base_delay = 1           # Base retry delay (seconds)
 # retry_max_delay = 30           # Maximum retry delay (seconds)
 # require_mention = false        # Require @bot mention in groups
+
+# Scheduled jobs configuration (optional)
+# Uncomment to enable Cron.md based scheduled jobs
+# [scheduler]
+# enabled = true
+# check_interval = "30m"         # Interval between cron checks (e.g., "30m", "1h")

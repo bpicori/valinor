@@ -33,10 +33,16 @@ const (
 
 // Default Telegram configuration.
 const (
-	DefaultTelegramPollTimeout     = 30
-	DefaultTelegramRetryBaseDelay  = 1  // seconds
-	DefaultTelegramRetryMaxDelay   = 30 // seconds
-	DefaultTelegramRequireMention  = false
+	DefaultTelegramPollTimeout    = 30
+	DefaultTelegramRetryBaseDelay = 1  // seconds
+	DefaultTelegramRetryMaxDelay  = 30 // seconds
+	DefaultTelegramRequireMention = false
+)
+
+// Default scheduler configuration.
+const (
+	DefaultSchedulerEnabled       = false
+	DefaultSchedulerCheckInterval = "30m"
 )
 
 // Config holds provider configurations and application paths.
@@ -59,6 +65,9 @@ type Config struct {
 
 	// Telegram bot configuration.
 	Telegram TelegramConfig `toml:"telegram"`
+
+	// Scheduler configuration for Cron.md based scheduled jobs.
+	Scheduler SchedulerConfig `toml:"scheduler"`
 }
 
 // TelegramConfig holds Telegram Bot API configuration.
@@ -75,6 +84,14 @@ type TelegramConfig struct {
 	RetryMaxDelay int `toml:"retry_max_delay"`
 	// RequireMention requires the bot to be mentioned in group chats (default: false).
 	RequireMention bool `toml:"require_mention"`
+}
+
+// SchedulerConfig holds scheduled job (cron) configuration.
+type SchedulerConfig struct {
+	// Enabled enables the scheduled job runner (default: false).
+	Enabled bool `toml:"enabled"`
+	// CheckInterval is the interval between cron checks (default: "30m").
+	CheckInterval string `toml:"check_interval"`
 }
 
 // ProviderConfig holds configuration for a specific LLM provider.
@@ -173,6 +190,11 @@ func LoadFromFile(path string) (Config, error) {
 	}
 	if cfg.Telegram.RetryMaxDelay <= 0 {
 		cfg.Telegram.RetryMaxDelay = DefaultTelegramRetryMaxDelay
+	}
+
+	// Apply scheduler defaults
+	if cfg.Scheduler.CheckInterval == "" {
+		cfg.Scheduler.CheckInterval = DefaultSchedulerCheckInterval
 	}
 
 	return cfg, nil

@@ -1,4 +1,5 @@
 - [ ] Add cron commands execution
+- [ ] Move config to ~/.valinor/config.toml and not anymore from dev directory
 - [ ] Add memory tool
 - [ ] Add sub agents tool
 - [ ] Add telemetry, logging and metrics
