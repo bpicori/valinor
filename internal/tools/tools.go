@@ -48,11 +48,11 @@ func buildToolDef(name, description string, parameters map[string]any) llm.ToolD
 // BuildTools returns tool definitions for the given runtime.
 func BuildTools(rt *sandbox.Runtime) []llm.Tool {
 	return []llm.Tool{
-		{readFileName, readFileDef(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }},
-		{writeFileName, writeFileDef(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }},
-		{editFileName, editFileDef(), func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }},
-		{listFilesName, listFilesDef(), func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }},
-		{grepName, grepDef(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }},
-		{runCommandName, runCommandDef(), func(a json.RawMessage) (string, error) { return runCommandExec(rt, a) }},
+		{Name: readFileName, Def: readFileDef(), Exec: func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }},
+		{Name: writeFileName, Def: writeFileDef(), Exec: func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }},
+		{Name: editFileName, Def: editFileDef(), Exec: func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }},
+		{Name: listFilesName, Def: listFilesDef(), Exec: func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }},
+		{Name: grepName, Def: grepDef(), Exec: func(a json.RawMessage) (string, error) { return grepExec(rt, a) }},
+		{Name: pythonExecName, Def: pythonExecDef(), Exec: func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }},
 	}
 }

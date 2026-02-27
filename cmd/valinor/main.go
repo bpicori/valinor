@@ -83,6 +83,11 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("resolve workspace dir: %w", err)
 	}
 
+	// Ensure workspace directory exists (required for sandbox operations)
+	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
+		return fmt.Errorf("create workspace directory: %w", err)
+	}
+
 	// Initialize logger with both file and stdout transports
 	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile, applog.TransportStdout})
 	if err != nil {

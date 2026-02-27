@@ -31,12 +31,11 @@ run-tui-remote: build
 run-telegram: build
 	./$(BINARY) -mode=telegram
 
+clean-valinor-dir:
+	rm -rf ~/.valinor
+
 test:
 	go test ./...
-
-clean:
-	rm -f $(BINARY)
-	go clean
 
 deps:
 	go mod download
