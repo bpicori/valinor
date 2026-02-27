@@ -6,10 +6,10 @@ import (
 	"errors"
 	"fmt"
 
-	"valinor/internal/applog"
 	"valinor/internal/bus"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/event"
+	"valinor/internal/logger"
 )
 
 const (
@@ -73,7 +73,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		// Check for cancellation before each iteration
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.Canceled) {
-				applog.Info("llm run cancelled by user", nil)
+				logger.Info("llm run cancelled by user", nil)
 				l.bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
 				return RunResult{Messages: messages}, nil
 			}
@@ -88,7 +88,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 		iterations++
 
-		applog.Debug("llm iteration start", applog.BuildMetadata("iteration", iterations, "provider", l.provider.Name()))
+		logger.Debug("llm iteration start", logger.BuildMetadata("iteration", iterations, "provider", l.provider.Name()))
 
 		// Convert to provider-agnostic messages
 		providerMessages := l.toProviderMessages(messages)
@@ -116,11 +116,11 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if err != nil {
 			// Handle user cancellation gracefully
 			if errors.Is(err, context.Canceled) {
-				applog.Info("llm stream cancelled by user", nil)
+				logger.Info("llm stream cancelled by user", nil)
 				l.bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
 				return RunResult{Messages: messages}, nil
 			}
-			applog.Error("llm stream error", applog.BuildMetadata("error", err))
+			logger.Error("llm stream error", logger.BuildMetadata("error", err))
 			l.bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{Error: err}))
 			return RunResult{}, err
 		}
@@ -151,7 +151,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				CompletionTokens: usage.CompletionTokens,
 				TotalTokens:      usage.TotalTokens,
 			}))
-			applog.Debug("llm iteration done", applog.BuildMetadata("iteration", iterations))
+			logger.Debug("llm iteration done", logger.BuildMetadata("iteration", iterations))
 			return RunResult{Messages: messages}, nil
 		}
 
@@ -175,7 +175,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			if tc.Arguments != "" {
 				args = json.RawMessage(tc.Arguments)
 			}
-			applog.Debug("llm tool call start", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
+			logger.Debug("llm tool call start", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
 			l.bus.Publish(newEvent(event.AgentThinking, event.ThinkingPayload{
 				Step:    iterations,
 				Content: "executing tool: " + tc.Name,
@@ -189,7 +189,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			if !ok {
 				toolResult = "error: tool not found"
 			}
-			applog.Debug("llm tool call done", applog.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
+			logger.Debug("llm tool call done", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
 			l.bus.Publish(newEvent(event.AgentToolCallDone, event.ToolCallDonePayload{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Name,

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 )
 
@@ -93,13 +93,13 @@ func (s *Server) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
-	applog.Info("gateway server starting",
-		applog.BuildMetadata("address", addr, "path", s.Path))
+	logger.Info("gateway server starting",
+		logger.BuildMetadata("address", addr, "path", s.Path))
 
 	// Start server in a goroutine
 	s.wg.Go(func() {
 		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			applog.Error("gateway server error", applog.BuildMetadata("error", err))
+			logger.Error("gateway server error", logger.BuildMetadata("error", err))
 		}
 	})
 
@@ -117,7 +117,7 @@ func (s *Server) Stop() error {
 		return nil
 	}
 
-	applog.Info("gateway server stopping", nil)
+	logger.Info("gateway server stopping", nil)
 
 	// Cancel context to signal shutdown
 	if s.cancel != nil {
@@ -145,14 +145,14 @@ func (s *Server) Stop() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := s.server.Shutdown(shutdownCtx); err != nil {
-			applog.Warning("gateway server shutdown error", applog.BuildMetadata("error", err))
+			logger.Warning("gateway server shutdown error", logger.BuildMetadata("error", err))
 		}
 	}
 
 	// Wait for goroutines to finish
 	s.wg.Wait()
 
-	applog.Info("gateway server stopped", nil)
+	logger.Info("gateway server stopped", nil)
 	return nil
 }
 

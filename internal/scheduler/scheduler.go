@@ -13,10 +13,10 @@ import (
 
 	"github.com/google/uuid"
 
-	"valinor/internal/applog"
 	"valinor/internal/bus"
 	"valinor/internal/config"
 	"valinor/internal/event"
+	"valinor/internal/logger"
 	"valinor/internal/session"
 )
 
@@ -75,7 +75,7 @@ func (s *Scheduler) Start(ctx context.Context) {
 	s.wg.Add(1)
 	go s.runLoop(ctx)
 
-	applog.Info("scheduler started", applog.BuildMetadata("interval", s.interval.String()))
+	logger.Info("scheduler started", logger.BuildMetadata("interval", s.interval.String()))
 }
 
 // Stop gracefully shuts down the scheduler.
@@ -96,7 +96,7 @@ func (s *Scheduler) Stop() {
 	s.running = false
 	s.mu.Unlock()
 
-	applog.Info("scheduler stopped", nil)
+	logger.Info("scheduler stopped", nil)
 }
 
 // runLoop is the main scheduler goroutine that ticks every interval.
@@ -113,7 +113,7 @@ func (s *Scheduler) runLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			applog.Debug("scheduler loop exiting", nil)
+			logger.Debug("scheduler loop exiting", nil)
 			return
 		case <-ticker.C:
 			s.executeTick(ctx)
@@ -123,14 +123,14 @@ func (s *Scheduler) runLoop(ctx context.Context) {
 
 // executeTick performs a single cron check and execution.
 func (s *Scheduler) executeTick(ctx context.Context) {
-	applog.Debug("scheduler tick started", nil)
+	logger.Debug("scheduler tick started", nil)
 
 	// Read Cron.md from workspace
 	cronPath := filepath.Join(s.workspaceDir, "Cron.md")
 	content, err := os.ReadFile(cronPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			applog.Warning("scheduler: failed to read Cron.md", applog.BuildMetadata("path", cronPath, "error", err))
+			logger.Warning("scheduler: failed to read Cron.md", logger.BuildMetadata("path", cronPath, "error", err))
 		}
 		// File doesn't exist or error reading - skip this tick
 		return
@@ -138,14 +138,14 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 
 	// Check if content is empty or just whitespace
 	if len(content) == 0 || len(trimSpace(string(content))) == 0 {
-		applog.Debug("scheduler: Cron.md is empty", nil)
+		logger.Debug("scheduler: Cron.md is empty", nil)
 		return
 	}
 
 	// Create a fresh session for this execution
 	sess, err := s.manager.Create(ctx, s.sessionOpts)
 	if err != nil {
-		applog.Error("scheduler: failed to create session", applog.BuildMetadata("error", err))
+		logger.Error("scheduler: failed to create session", logger.BuildMetadata("error", err))
 		return
 	}
 
@@ -183,7 +183,7 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 	for !done {
 		select {
 		case <-ctx.Done():
-			applog.Debug("scheduler tick cancelled", nil)
+			logger.Debug("scheduler tick cancelled", nil)
 			sess.Close()
 			return
 
@@ -192,7 +192,7 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 			runCompletedAt = time.Now()
 			execErr = err
 			if err != nil {
-				applog.Error("scheduler: session execution error", applog.BuildMetadata("error", err))
+				logger.Error("scheduler: session execution error", logger.BuildMetadata("error", err))
 				done = true
 				break
 			}
@@ -242,20 +242,20 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 
 	// Close the session
 	if err := sess.Close(); err != nil {
-		applog.Warning("scheduler: failed to close session", applog.BuildMetadata("error", err))
+		logger.Warning("scheduler: failed to close session", logger.BuildMetadata("error", err))
 	}
 
 	// If we got no content at all, don't broadcast.
 	// Note: "No jobs due." is still a meaningful scheduler result and should be
 	// broadcast so clients can see that the scheduler fired.
 	if resultContent == "" {
-		applog.Debug("scheduler: empty scheduler result", nil)
+		logger.Debug("scheduler: empty scheduler result", nil)
 		return
 	}
 
 	// Publish CronJobResult event (no session ID = broadcast to all clients)
-	applog.Debug("scheduler: publishing cron job result",
-		applog.BuildMetadata("result_length", len(resultContent)))
+	logger.Debug("scheduler: publishing cron job result",
+		logger.BuildMetadata("result_length", len(resultContent)))
 	s.bus.Publish(event.Event{
 		Type: event.CronJobResult,
 		Payload: event.CronJobResultPayload{
@@ -266,7 +266,7 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 		SessionID: "",
 	})
 
-	applog.Info("scheduler tick completed", applog.BuildMetadata("result_length", len(resultContent)))
+	logger.Info("scheduler tick completed", logger.BuildMetadata("result_length", len(resultContent)))
 }
 
 // trimSpace is a helper that trims whitespace and returns the string.

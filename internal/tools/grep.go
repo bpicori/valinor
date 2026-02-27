@@ -6,8 +6,8 @@ import (
 	"regexp"
 	"strings"
 
-	"valinor/internal/applog"
 	"valinor/internal/llm"
+	"valinor/internal/logger"
 	"valinor/internal/sandbox"
 )
 
@@ -55,7 +55,7 @@ func grepExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {
 
 	_, err := regexp.Compile(p.Pattern)
 	if err != nil {
-		applog.Warning("tool grep invalid regex", applog.BuildMetadata("pattern", p.Pattern, "error", err))
+		logger.Warning("tool grep invalid regex", logger.BuildMetadata("pattern", p.Pattern, "error", err))
 		return "Tool Error: invalid regex: " + err.Error(), nil
 	}
 

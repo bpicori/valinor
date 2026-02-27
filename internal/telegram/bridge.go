@@ -11,9 +11,9 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"valinor/internal/applog"
 	"valinor/internal/event"
 	"valinor/internal/gateway"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 )
 
@@ -90,7 +90,7 @@ func (b *Bridge) Start(ctx context.Context) error {
 // Stop gracefully stops the bridge.
 func (b *Bridge) Stop() {
 	b.closeOnce.Do(func() {
-		applog.Debug("telegram bridge: stopping", nil)
+		logger.Debug("telegram bridge: stopping", nil)
 
 		// Mark as closed first so goroutines know to exit
 		b.mu.Lock()
@@ -105,7 +105,7 @@ func (b *Bridge) Stop() {
 
 		b.wg.Wait()
 
-		applog.Info("telegram bridge: stopped", nil)
+		logger.Info("telegram bridge: stopped", nil)
 	})
 }
 
@@ -141,8 +141,8 @@ func (b *Bridge) SendCommand(cmdType string, payload interface{}, requestID stri
 
 	payloadData, err := json.Marshal(payload)
 	if err != nil {
-		applog.Error("telegram bridge: failed to marshal command payload",
-			applog.BuildMetadata("error", err, "command_type", cmdType))
+		logger.Error("telegram bridge: failed to marshal command payload",
+			logger.BuildMetadata("error", err, "command_type", cmdType))
 		return false
 	}
 
@@ -158,8 +158,8 @@ func (b *Bridge) SendCommand(cmdType string, payload interface{}, requestID stri
 	case b.outgoing <- env:
 		return true
 	default:
-		applog.Warning("telegram bridge: outgoing queue full, command dropped",
-			applog.BuildMetadata("command_type", cmdType))
+		logger.Warning("telegram bridge: outgoing queue full, command dropped",
+			logger.BuildMetadata("command_type", cmdType))
 		return false
 	}
 }
@@ -227,8 +227,8 @@ func (b *Bridge) connect() error {
 			return fmt.Errorf("gateway handshake error (%s): %s", env.Type, env.Error)
 		}
 
-		applog.Debug("telegram bridge: skipping pre-ack frame",
-			applog.BuildMetadata("kind", env.Kind, "type", env.Type))
+		logger.Debug("telegram bridge: skipping pre-ack frame",
+			logger.BuildMetadata("kind", env.Kind, "type", env.Type))
 	}
 	b.conn.SetReadDeadline(time.Time{}) // Clear deadline
 
@@ -252,8 +252,8 @@ func (b *Bridge) connect() error {
 	b.model = ackPayload.Model
 	b.mu.Unlock()
 
-	applog.Info("telegram bridge: connected",
-		applog.BuildMetadata("session_key", ackPayload.SessionKey,
+	logger.Info("telegram bridge: connected",
+		logger.BuildMetadata("session_key", ackPayload.SessionKey,
 			"provider", ackPayload.Provider,
 			"model", ackPayload.Model))
 
@@ -263,7 +263,7 @@ func (b *Bridge) connect() error {
 // readLoop reads messages from the WebSocket and forwards to the event handler.
 func (b *Bridge) readLoop() {
 	defer b.wg.Done()
-	defer applog.Debug("telegram bridge: read loop exited", nil)
+	defer logger.Debug("telegram bridge: read loop exited", nil)
 
 	for {
 		select {
@@ -278,11 +278,11 @@ func (b *Bridge) readLoop() {
 				return
 			}
 
-			applog.Warning("telegram bridge: read error", applog.BuildMetadata("error", err))
+			logger.Warning("telegram bridge: read error", logger.BuildMetadata("error", err))
 
 			// Attempt reconnection
 			if err := b.reconnect(); err != nil {
-				applog.Error("telegram bridge: reconnection failed", applog.BuildMetadata("error", err))
+				logger.Error("telegram bridge: reconnection failed", logger.BuildMetadata("error", err))
 				return
 			}
 
@@ -295,8 +295,8 @@ func (b *Bridge) readLoop() {
 			// Convert to router event and forward
 			ev, err := b.parseEvent(env)
 			if err != nil {
-				applog.Warning("telegram bridge: failed to parse event",
-					applog.BuildMetadata("error", err, "type", env.Type))
+				logger.Warning("telegram bridge: failed to parse event",
+					logger.BuildMetadata("error", err, "type", env.Type))
 				continue
 			}
 			if b.eventHandler != nil {
@@ -304,12 +304,12 @@ func (b *Bridge) readLoop() {
 			}
 
 		case gateway.KindError:
-			applog.Warning("telegram bridge: received error from gateway",
-				applog.BuildMetadata("error_type", env.Type, "error", env.Error))
+			logger.Warning("telegram bridge: received error from gateway",
+				logger.BuildMetadata("error_type", env.Type, "error", env.Error))
 
 		default:
-			applog.Debug("telegram bridge: unexpected message kind",
-				applog.BuildMetadata("kind", env.Kind, "type", env.Type))
+			logger.Debug("telegram bridge: unexpected message kind",
+				logger.BuildMetadata("kind", env.Kind, "type", env.Type))
 		}
 	}
 }
@@ -317,7 +317,7 @@ func (b *Bridge) readLoop() {
 // writeLoop sends messages from the outgoing queue to the WebSocket.
 func (b *Bridge) writeLoop() {
 	defer b.wg.Done()
-	defer applog.Debug("telegram bridge: write loop exited", nil)
+	defer logger.Debug("telegram bridge: write loop exited", nil)
 
 	for {
 		select {
@@ -330,19 +330,19 @@ func (b *Bridge) writeLoop() {
 			}
 
 			if err := b.conn.WriteJSON(env); err != nil {
-				applog.Warning("telegram bridge: write error", applog.BuildMetadata("error", err))
+				logger.Warning("telegram bridge: write error", logger.BuildMetadata("error", err))
 
 				// Try to reconnect
 				if err := b.reconnect(); err != nil {
-					applog.Error("telegram bridge: reconnection after write error failed",
-						applog.BuildMetadata("error", err))
+					logger.Error("telegram bridge: reconnection after write error failed",
+						logger.BuildMetadata("error", err))
 					return
 				}
 
 				// Retry sending the message
 				if err := b.conn.WriteJSON(env); err != nil {
-					applog.Warning("telegram bridge: retry write failed, dropping message",
-						applog.BuildMetadata("error", err))
+					logger.Warning("telegram bridge: retry write failed, dropping message",
+						logger.BuildMetadata("error", err))
 				}
 			}
 		}
@@ -360,8 +360,8 @@ func (b *Bridge) reconnect() error {
 	backoff := initialReconnectBackoff
 
 	for attempts := 0; attempts < 10; attempts++ {
-		applog.Info("telegram bridge: attempting reconnect",
-			applog.BuildMetadata("attempt", attempts+1, "backoff", backoff))
+		logger.Info("telegram bridge: attempting reconnect",
+			logger.BuildMetadata("attempt", attempts+1, "backoff", backoff))
 
 		if err := b.connect(); err == nil {
 			// Reconnection successful

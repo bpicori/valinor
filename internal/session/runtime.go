@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"valinor/internal/applog"
 	"valinor/internal/bus"
 	"valinor/internal/event"
+	"valinor/internal/logger"
 	"valinor/internal/tokens"
 )
 
@@ -63,7 +63,7 @@ func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string,
 
 	if err != nil {
 		if runCtx.Err() == context.Canceled {
-			applog.Info("session worker user message cancelled", applog.BuildMetadata("session_id", w.session.Meta().ID))
+			logger.Info("session worker user message cancelled", logger.BuildMetadata("session_id", w.session.Meta().ID))
 			bus.Publish(event.Event{
 				Type:      event.AgentCancelled,
 				Payload:   event.AgentCancelledPayload{},
@@ -106,13 +106,13 @@ type Runtime struct {
 	sessionOpts SessionOptions
 	bus         *bus.Bus
 
-	mu          sync.RWMutex
-	workers     map[string]*sessionWorker // sessionID -> worker
-	runtimeCtx  context.Context
+	mu            sync.RWMutex
+	workers       map[string]*sessionWorker // sessionID -> worker
+	runtimeCtx    context.Context
 	runtimeCancel context.CancelFunc
-	started     bool
-	closed      bool
-	wg          sync.WaitGroup
+	started       bool
+	closed        bool
+	wg            sync.WaitGroup
 
 	busSub *bus.Subscription
 }
@@ -268,16 +268,16 @@ func (r *Runtime) handleCommandEvent(ev event.Event) {
 		if ev.SessionID != "" {
 			if worker, err := r.GetWorker(ev.SessionID); err == nil {
 				if err := worker.handleUserMessage(r.runtimeCtx, ev.RequestID, payload.Content, r.bus); err != nil {
-					applog.Error("session worker user message failed",
-						applog.BuildMetadata("session_id", worker.session.Meta().ID, "error", err))
+					logger.Error("session worker user message failed",
+						logger.BuildMetadata("session_id", worker.session.Meta().ID, "error", err))
 				}
 			}
 		} else {
 			// Legacy fallback: broadcast to all workers (for events without session context)
 			r.dispatchToAllWorkers(func(w *sessionWorker) {
 				if err := w.handleUserMessage(r.runtimeCtx, ev.RequestID, payload.Content, r.bus); err != nil {
-					applog.Error("session worker user message failed",
-						applog.BuildMetadata("session_id", w.session.Meta().ID, "error", err))
+					logger.Error("session worker user message failed",
+						logger.BuildMetadata("session_id", w.session.Meta().ID, "error", err))
 				}
 			})
 		}
@@ -295,13 +295,13 @@ func (r *Runtime) handleCommandEvent(ev event.Event) {
 		// Broadcast to all workers
 		r.dispatchToAllWorkers(func(w *sessionWorker) {
 			if err := w.session.SwitchProviderModel(r.runtimeCtx, payload.Provider, payload.Model); err != nil {
-				applog.Error("session worker change provider/model failed",
-					applog.BuildMetadata("session_id", w.session.Meta().ID, "provider", payload.Provider, "model", payload.Model, "error", err))
+				logger.Error("session worker change provider/model failed",
+					logger.BuildMetadata("session_id", w.session.Meta().ID, "provider", payload.Provider, "model", payload.Model, "error", err))
 			}
 		})
 	case event.CreateNewSession:
 		// This is handled by HandleCreateSessionRequest which has explicit session context
-		applog.Debug("runtime: create_new_session should be handled via HandleCreateSessionRequest", nil)
+		logger.Debug("runtime: create_new_session should be handled via HandleCreateSessionRequest", nil)
 	case event.CancelAgentRun:
 		// Session-scoped cancel: if event has session context, cancel only that session's worker.
 		// Only broadcast to all workers if no session context is available (legacy fallback).
@@ -446,8 +446,8 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string, 
 		return "", nil, fmt.Errorf("create worker for new session: %w", err)
 	}
 
-	applog.Info("session created via runtime",
-		applog.BuildMetadata("session_id", newSession.Meta().ID, "provider", provider, "model", model))
+	logger.Info("session created via runtime",
+		logger.BuildMetadata("session_id", newSession.Meta().ID, "provider", provider, "model", model))
 	return newSession.Meta().ID, worker.session, nil
 }
 
@@ -516,8 +516,8 @@ func (r *Runtime) publishContextTokens(sess *Session) {
 	messages := sess.agentContext.Messages()
 	promptTokens := tokens.EstimatePromptTokens(messages)
 	r.bus.Publish(event.Event{
-		Type:      event.ContextTokens,
-		Payload:   event.ContextTokensPayload{
+		Type: event.ContextTokens,
+		Payload: event.ContextTokensPayload{
 			PromptTokens: promptTokens,
 			Estimated:    true,
 		},

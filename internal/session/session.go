@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"valinor/internal/applog"
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/llm"
+	"valinor/internal/logger"
 )
 
 // Metadata holds session metadata persisted in metadata.json.
@@ -77,7 +77,7 @@ func (s *Session) ResetConversation() {
 	persistMessages := s.agentContext.Messages()
 	s.mu.Unlock()
 	if err := s.store.SaveMessages(context.Background(), persistMessages); err != nil {
-		applog.Error("session reset save messages error", applog.BuildMetadata("session_id", s.meta.ID, "error", err))
+		logger.Error("session reset save messages error", logger.BuildMetadata("session_id", s.meta.ID, "error", err))
 	}
 }
 
@@ -106,23 +106,23 @@ func (s *Session) SwitchProviderModel(ctx context.Context, providerName, model s
 	if err := s.store.SaveMetadata(ctx, s.meta); err != nil {
 		return fmt.Errorf("save metadata: %w", err)
 	}
-	applog.Info("session model switched", applog.BuildMetadata("session_id", s.meta.ID, "model", model))
+	logger.Info("session model switched", logger.BuildMetadata("session_id", s.meta.ID, "model", model))
 	return nil
 }
 
 // Close releases resources. Call when the session is no longer needed.
 func (s *Session) Close() error {
 	sessionID := s.meta.ID
-	applog.Debug("session close start", applog.BuildMetadata("session_id", sessionID))
+	logger.Debug("session close start", logger.BuildMetadata("session_id", sessionID))
 	s.agent = nil
 	if s.store != nil {
 		err := s.store.Close()
 		s.store = nil
 		if err != nil {
-			applog.Error("session close store error", applog.BuildMetadata("session_id", sessionID, "error", err))
+			logger.Error("session close store error", logger.BuildMetadata("session_id", sessionID, "error", err))
 			return err
 		}
-		applog.Debug("session close success", applog.BuildMetadata("session_id", sessionID))
+		logger.Debug("session close success", logger.BuildMetadata("session_id", sessionID))
 	}
 	return nil
 }

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"valinor/internal/applog"
 	"valinor/internal/llm"
+	"valinor/internal/logger"
 	"valinor/internal/sandbox"
 )
 
@@ -25,7 +25,7 @@ func validateRelativePath(path string) (string, string) {
 		cleaned = "."
 	}
 	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/..") {
-		applog.Warning("tool path validation failed", applog.BuildMetadata("path", path, "reason", "absolute or .. not allowed"))
+		logger.Warning("tool path validation failed", logger.BuildMetadata("path", path, "reason", "absolute or .. not allowed"))
 		return "", "Tool Error: path must be relative to workspace (absolute paths and \"..\" not allowed)"
 	}
 	return cleaned, ""
@@ -35,7 +35,7 @@ func validateRelativePath(path string) (string, string) {
 func buildToolDef(name, description string, parameters map[string]any) llm.ToolDefinition {
 	paramsJSON, err := json.Marshal(parameters)
 	if err != nil {
-		applog.Error("tool definition marshal error", applog.BuildMetadata("tool", name, "error", err))
+		logger.Error("tool definition marshal error", logger.BuildMetadata("tool", name, "error", err))
 		paramsJSON = json.RawMessage("{}")
 	}
 	return llm.ToolDefinition{

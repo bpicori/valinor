@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 )
 
 const (
@@ -49,8 +49,8 @@ func newOffsetStore(dir string) (*offsetStore, error) {
 
 	// Load existing data if present
 	if err := store.load(); err != nil {
-		applog.Warning("telegram offset store: failed to load, starting fresh",
-			applog.BuildMetadata("error", err))
+		logger.Warning("telegram offset store: failed to load, starting fresh",
+			logger.BuildMetadata("error", err))
 	}
 
 	return store, nil
@@ -138,10 +138,10 @@ type Poller struct {
 	limit       int
 
 	// Lifecycle
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	mu     sync.RWMutex
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	mu      sync.RWMutex
 	running bool
 
 	// Telemetry
@@ -185,7 +185,7 @@ func (p *Poller) Start(ctx context.Context) {
 	p.wg.Add(1)
 	go p.pollLoop()
 
-	applog.Info("telegram poller: started", applog.BuildMetadata(
+	logger.Info("telegram poller: started", logger.BuildMetadata(
 		"poll_timeout", p.pollTimeout,
 		"limit", p.limit,
 	))
@@ -203,7 +203,7 @@ func (p *Poller) Stop() {
 	p.mu.Unlock()
 
 	p.wg.Wait()
-	applog.Info("telegram poller: stopped", nil)
+	logger.Info("telegram poller: stopped", nil)
 }
 
 // IsRunning returns true if the poller is running.
@@ -246,7 +246,7 @@ func (p *Poller) pollLoop() {
 				return
 			}
 
-			applog.Warning("telegram poller: error fetching updates", applog.BuildMetadata("error", err))
+			logger.Warning("telegram poller: error fetching updates", logger.BuildMetadata("error", err))
 
 			// Brief delay before retry to avoid hammering the API
 			select {
@@ -275,8 +275,8 @@ func (p *Poller) pollLoop() {
 
 			// Handle the update
 			if err := p.handler(p.ctx, update); err != nil {
-				applog.Error("telegram poller: handler error",
-					applog.BuildMetadata("error", err, "update_id", update.UpdateID))
+				logger.Error("telegram poller: handler error",
+					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
 				// Continue processing other updates
 			} else {
 				processed++
@@ -284,16 +284,15 @@ func (p *Poller) pollLoop() {
 
 			// Persist the offset after successful processing
 			if err := p.store.Set(update.UpdateID); err != nil {
-				applog.Warning("telegram poller: failed to persist offset",
-					applog.BuildMetadata("error", err, "update_id", update.UpdateID))
+				logger.Warning("telegram poller: failed to persist offset",
+					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
 			}
 		}
 
 		// Update stats
 		atomic.AddUint64(&p.stats.updatesProcessed, uint64(processed))
 
-		applog.Debug("telegram poller: processed updates",
-			applog.BuildMetadata("count", len(updates), "next_offset", offset, "processed", processed))
+		logger.Debug("telegram poller: processed updates",
+			logger.BuildMetadata("count", len(updates), "next_offset", offset, "processed", processed))
 	}
 }
-

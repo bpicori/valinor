@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"sync"
 
-	"valinor/internal/applog"
 	"valinor/internal/bus"
 	"valinor/internal/event"
+	"valinor/internal/logger"
 	"valinor/internal/session"
 )
 
@@ -105,7 +105,7 @@ func (r *Router) Start(ctx context.Context) {
 	r.wg.Add(1)
 	go r.eventForwardingLoop()
 
-	applog.Info("router started", nil)
+	logger.Info("router started", nil)
 }
 
 // Stop stops the router and cleans up resources.
@@ -138,7 +138,7 @@ func (r *Router) Stop() {
 		consumer.Close()
 	}
 
-	applog.Info("router stopped", applog.BuildMetadata("bindings", r.registry.Count()))
+	logger.Info("router stopped", logger.BuildMetadata("bindings", r.registry.Count()))
 }
 
 // SubscribeClient registers a client event consumer and returns/creates their session binding.
@@ -174,8 +174,8 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 			oldConsumer.Close()
 		}
 
-		applog.Info("router: client reconnected to in-memory session",
-			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
+		logger.Info("router: client reconnected to in-memory session",
+			logger.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 
 		// Send session attached event
 		consumer.SendEvent(Event{
@@ -207,8 +207,8 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 	// Update identity map with current session
 	if r.identityMap != nil {
 		if err := r.identityMap.Set(key, sess.Meta().ID, identity.Type); err != nil {
-			applog.Warning("router: failed to save identity mapping",
-				applog.BuildMetadata("error", err, "identity_key", key))
+			logger.Warning("router: failed to save identity mapping",
+				logger.BuildMetadata("error", err, "identity_key", key))
 			// Continue - this is not fatal
 		}
 	}
@@ -230,11 +230,11 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 	})
 
 	if isNew {
-		applog.Info("router: new client subscribed with new session",
-			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
+		logger.Info("router: new client subscribed with new session",
+			logger.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 	} else {
-		applog.Info("router: new client subscribed with resumed session",
-			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
+		logger.Info("router: new client subscribed with resumed session",
+			logger.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 	}
 
 	return binding, nil
@@ -249,8 +249,8 @@ func (r *Router) UnsubscribeClient(identity ClientIdentity, consumer ClientEvent
 	if ok {
 		if consumer != nil && currentConsumer != consumer {
 			r.mu.Unlock()
-			applog.Debug("router: stale unsubscribe ignored",
-				applog.BuildMetadata("identity_key", key))
+			logger.Debug("router: stale unsubscribe ignored",
+				logger.BuildMetadata("identity_key", key))
 			return
 		}
 		delete(r.clientConsumers, key)
@@ -262,8 +262,8 @@ func (r *Router) UnsubscribeClient(identity ClientIdentity, consumer ClientEvent
 	}
 	r.mu.Unlock()
 
-	applog.Debug("router: client unsubscribed",
-		applog.BuildMetadata("identity_key", key))
+	logger.Debug("router: client unsubscribed",
+		logger.BuildMetadata("identity_key", key))
 }
 
 // addSessionConsumerLocked adds a consumer to the session-consumer mapping.
@@ -340,8 +340,8 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		return fmt.Errorf("failed to resolve routing context for identity %s", key)
 	}
 
-	applog.Debug("router: handling command with session context",
-		applog.BuildMetadata("identity_key", key,
+	logger.Debug("router: handling command with session context",
+		logger.BuildMetadata("identity_key", key,
 			"command_type", cmd.Type,
 			"session_id", routingCtx.SessionID))
 
@@ -361,8 +361,8 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		// Update the binding to point to the new session
 		updatedBinding, updated := r.registry.UpdateSession(cmd.Identity, newSession)
 		if !updated {
-			applog.Warning("router: failed to update binding after session switch",
-				applog.BuildMetadata("identity_key", key, "session_id", newSessionID))
+			logger.Warning("router: failed to update binding after session switch",
+				logger.BuildMetadata("identity_key", key, "session_id", newSessionID))
 		} else {
 			// Update session-consumer mapping
 			r.mu.Lock()
@@ -387,13 +387,13 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		}
 		if r.identityMap != nil {
 			if err := r.identityMap.Set(key, newSessionID, cmd.Identity.Type); err != nil {
-				applog.Warning("router: failed to update identity mapping after session switch",
-					applog.BuildMetadata("error", err, "identity_key", key, "session_id", newSessionID))
+				logger.Warning("router: failed to update identity mapping after session switch",
+					logger.BuildMetadata("error", err, "identity_key", key, "session_id", newSessionID))
 			}
 		}
 
-		applog.Info("router: session switched",
-			applog.BuildMetadata("identity_key", key, "old_session_id", routingCtx.SessionID, "new_session_id", newSessionID))
+		logger.Info("router: session switched",
+			logger.BuildMetadata("identity_key", key, "old_session_id", routingCtx.SessionID, "new_session_id", newSessionID))
 		return nil
 	}
 
@@ -427,12 +427,12 @@ func (r *Router) getOrCreateSessionForIdentity(ctx context.Context, identity Cli
 			// Try to resume the existing session
 			sess, err := r.manager.Resume(ctx, mapping.SessionID, r.sessionOpts)
 			if err == nil {
-				applog.Info("router: resumed session from identity map",
-					applog.BuildMetadata("identity_key", key, "session_id", mapping.SessionID))
+				logger.Info("router: resumed session from identity map",
+					logger.BuildMetadata("identity_key", key, "session_id", mapping.SessionID))
 				return sess, false, nil
 			}
-			applog.Warning("router: failed to resume mapped session, creating new",
-				applog.BuildMetadata("identity_key", key, "session_id", mapping.SessionID, "error", err))
+			logger.Warning("router: failed to resume mapped session, creating new",
+				logger.BuildMetadata("identity_key", key, "session_id", mapping.SessionID, "error", err))
 			// Remove stale mapping
 			_ = r.identityMap.Remove(key)
 		}
@@ -455,11 +455,11 @@ func (r *Router) eventForwardingLoop() {
 	for {
 		select {
 		case <-r.ctx.Done():
-			applog.Debug("router: event forwarding loop exiting", nil)
+			logger.Debug("router: event forwarding loop exiting", nil)
 			return
 		case ev, ok := <-r.busSub.Ch():
 			if !ok {
-				applog.Debug("router: event channel closed", nil)
+				logger.Debug("router: event channel closed", nil)
 				return
 			}
 			// Use sessionID from event for targeted delivery.
@@ -486,8 +486,8 @@ func (r *Router) forwardEventToClients(be event.Event, sessionID string) {
 		// Targeted delivery: send only to consumers bound to this session
 		consumers = r.getSessionConsumers(sessionID)
 		if len(consumers) == 0 {
-			applog.Debug("router: no consumers bound to session for event",
-				applog.BuildMetadata("event_type", routerEvent.Type, "session_id", sessionID))
+			logger.Debug("router: no consumers bound to session for event",
+				logger.BuildMetadata("event_type", routerEvent.Type, "session_id", sessionID))
 			return
 		}
 	} else {
@@ -499,8 +499,8 @@ func (r *Router) forwardEventToClients(be event.Event, sessionID string) {
 		}
 		r.mu.RUnlock()
 		if routerEvent.Type == event.CronJobResult {
-			applog.Debug("router: broadcasting cron job result",
-				applog.BuildMetadata("event_type", routerEvent.Type, "consumer_count", len(consumers)))
+			logger.Debug("router: broadcasting cron job result",
+				logger.BuildMetadata("event_type", routerEvent.Type, "consumer_count", len(consumers)))
 		}
 	}
 
@@ -508,8 +508,8 @@ func (r *Router) forwardEventToClients(be event.Event, sessionID string) {
 	for _, consumer := range consumers {
 		sent := consumer.SendEvent(routerEvent)
 		if !sent {
-			applog.Warning("router: event dropped (client buffer full)",
-				applog.BuildMetadata("event_type", routerEvent.Type, "session_id", sessionID))
+			logger.Warning("router: event dropped (client buffer full)",
+				logger.BuildMetadata("event_type", routerEvent.Type, "session_id", sessionID))
 		}
 	}
 }
@@ -518,7 +518,7 @@ func (r *Router) forwardEventToClients(be event.Event, sessionID string) {
 // This is used for session-targeted event delivery.
 func (r *Router) forwardEventToSession(be event.Event, sessionID string) {
 	if sessionID == "" {
-		applog.Debug("router: cannot forward event without sessionID", nil)
+		logger.Debug("router: cannot forward event without sessionID", nil)
 		return
 	}
 	r.forwardEventToClients(be, sessionID)

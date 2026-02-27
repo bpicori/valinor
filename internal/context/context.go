@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 )
 
 const IdentityFile = "IDENTITY.md"
@@ -69,7 +69,7 @@ func LoadIdentity(workspaceDir string) (string, error) {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		applog.Error("context load identity read failed", applog.BuildMetadata("path", path, "error", err))
+		logger.Error("context load identity read failed", logger.BuildMetadata("path", path, "error", err))
 		return "", fmt.Errorf("read identity file: %w", err)
 	}
 	return strings.TrimSpace(string(data)), nil
@@ -82,20 +82,20 @@ func SystemPrompt() string {
 
 // BuildSystemPrompt builds the composed system prompt for the workspace.
 func BuildSystemPrompt(workspaceDir string) (string, error) {
-	applog.Debug("context build start", applog.BuildMetadata("workspace_dir", workspaceDir))
+	logger.Debug("context build start", logger.BuildMetadata("workspace_dir", workspaceDir))
 	identity, err := LoadIdentity(workspaceDir)
 	if err != nil {
-		applog.Error("context build identity failed", applog.BuildMetadata("workspace_dir", workspaceDir, "error", err))
+		logger.Error("context build identity failed", logger.BuildMetadata("workspace_dir", workspaceDir, "error", err))
 		return "", fmt.Errorf("load identity: %w", err)
 	}
 	skills, err := LoadSkills(workspaceDir)
 	if err != nil {
-		applog.Error("context build skills failed", applog.BuildMetadata("workspace_dir", workspaceDir, "error", err))
+		logger.Error("context build skills failed", logger.BuildMetadata("workspace_dir", workspaceDir, "error", err))
 		return "", fmt.Errorf("load skills: %w", err)
 	}
 
 	prompt := composeSystemPrompt(SystemPrompt(), identity, skills)
-	applog.Info("context build success", applog.BuildMetadata("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills)))
+	logger.Info("context build success", logger.BuildMetadata("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills)))
 	return prompt, nil
 }
 
@@ -104,13 +104,13 @@ func BuildSystemPrompt(workspaceDir string) (string, error) {
 func LoadSkills(workspaceDir string) ([]Skill, error) {
 	dir := filepath.Join(workspaceDir, SkillsDir)
 	entries, err := os.ReadDir(dir)
-	applog.Debug("context load skills dir read", applog.BuildMetadata("dir", dir, "entries", entries))
+	logger.Debug("context load skills dir read", logger.BuildMetadata("dir", dir, "entries", entries))
 	if err != nil {
 		// Missing skills directory is treated as empty catalog.
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		applog.Error("context load skills dir read failed", applog.BuildMetadata("dir", dir, "error", err))
+		logger.Error("context load skills dir read failed", logger.BuildMetadata("dir", dir, "error", err))
 		return nil, fmt.Errorf("read skills dir: %w", err)
 	}
 
@@ -133,7 +133,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		absPath := filepath.Join(dir, name)
 		data, err := os.ReadFile(absPath)
 		if err != nil {
-			applog.Error("context load skills file read failed", applog.BuildMetadata("file", name, "error", err))
+			logger.Error("context load skills file read failed", logger.BuildMetadata("file", name, "error", err))
 			return nil, fmt.Errorf("read skill file %q: %w", name, err)
 		}
 
@@ -141,7 +141,7 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 		if !ok {
 			continue
 		}
-		applog.Debug("context load skills file parsed", applog.BuildMetadata("file", name, "skill_name", skillName, "description", description))
+		logger.Debug("context load skills file parsed", logger.BuildMetadata("file", name, "skill_name", skillName, "description", description))
 		out = append(out, Skill{
 			Name:        skillName,
 			Description: description,
@@ -155,21 +155,21 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 // Returns nil if no valid skill is found.
 func loadNestedSkill(skillsDir, subdir string) *Skill {
 	skillPath := filepath.Join(skillsDir, subdir, "SKILL.md")
-	applog.Debug("context load nested skill checking", applog.BuildMetadata("dir", subdir, "path", skillPath))
+	logger.Debug("context load nested skill checking", logger.BuildMetadata("dir", subdir, "path", skillPath))
 	data, err := os.ReadFile(skillPath)
 	if err != nil {
 		// No SKILL.md in this directory is not an error - just log and skip
-		applog.Debug("context load nested skill no SKILL.md found", applog.BuildMetadata("dir", subdir, "path", skillPath, "error", err))
+		logger.Debug("context load nested skill no SKILL.md found", logger.BuildMetadata("dir", subdir, "path", skillPath, "error", err))
 		return nil
 	}
 
 	skillName, description, ok := parseSkillHeader(string(data))
 	if !ok {
-		applog.Debug("context load nested skill invalid header", applog.BuildMetadata("dir", subdir))
+		logger.Debug("context load nested skill invalid header", logger.BuildMetadata("dir", subdir))
 		return nil
 	}
 
-	applog.Debug("context load nested skill parsed", applog.BuildMetadata("dir", subdir, "skill_name", skillName, "description", description))
+	logger.Debug("context load nested skill parsed", logger.BuildMetadata("dir", subdir, "skill_name", skillName, "description", description))
 	return &Skill{
 		Name:        skillName,
 		Description: description,

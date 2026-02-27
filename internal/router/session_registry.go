@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 	"valinor/internal/session"
 )
 
@@ -41,8 +41,8 @@ func (r *SessionRegistry) Register(identity ClientIdentity, sess *session.Sessio
 
 	// Check if binding already exists
 	if existing, ok := r.bindings[key]; ok {
-		applog.Debug("session registry: reusing existing binding",
-			applog.BuildMetadata("identity_key", key, "session_id", existing.SessionID))
+		logger.Debug("session registry: reusing existing binding",
+			logger.BuildMetadata("identity_key", key, "session_id", existing.SessionID))
 		return existing
 	}
 
@@ -57,8 +57,8 @@ func (r *SessionRegistry) Register(identity ClientIdentity, sess *session.Sessio
 
 	r.bindings[key] = binding
 
-	applog.Info("session registry: new binding created",
-		applog.BuildMetadata("identity_key", key,
+	logger.Info("session registry: new binding created",
+		logger.BuildMetadata("identity_key", key,
 			"session_id", meta.ID,
 			"public_key", binding.PublicKey,
 			"provider", meta.Provider,
@@ -95,8 +95,8 @@ func (r *SessionRegistry) Remove(identity ClientIdentity) bool {
 
 	if binding, ok := r.bindings[key]; ok {
 		delete(r.bindings, key)
-		applog.Info("session registry: binding removed",
-			applog.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
+		logger.Info("session registry: binding removed",
+			logger.BuildMetadata("identity_key", key, "session_id", binding.SessionID))
 		return true
 	}
 
@@ -135,8 +135,8 @@ func (r *SessionRegistry) RemoveBySessionID(sessionID string) int {
 	for key, binding := range r.bindings {
 		if binding.SessionID == sessionID {
 			delete(r.bindings, key)
-			applog.Info("session registry: binding removed (session deleted)",
-				applog.BuildMetadata("identity_key", key, "session_id", sessionID))
+			logger.Info("session registry: binding removed (session deleted)",
+				logger.BuildMetadata("identity_key", key, "session_id", sessionID))
 			removed++
 		}
 	}
@@ -196,7 +196,7 @@ func (r *SessionRegistry) GetByClientType(clientType string) []*SessionBinding {
 	return result
 }
 
-// ValidateClientIdentity checks if a client identity is valid 
+// ValidateClientIdentity checks if a client identity is valid
 // Returns an error if the identity is invalid.
 func ValidateClientIdentity(identity ClientIdentity) error {
 	if identity.Type == "" {

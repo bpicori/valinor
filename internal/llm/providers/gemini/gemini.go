@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"valinor/internal/applog"
 	"valinor/internal/llm"
+	"valinor/internal/logger"
 
 	"google.golang.org/genai"
 )
@@ -99,7 +99,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 
 	for response, err := range stream {
 		if err != nil {
-			applog.Error("gemini stream error", applog.BuildMetadata("error", err))
+			logger.Error("gemini stream error", logger.BuildMetadata("error", err))
 			return nil, err
 		}
 
@@ -117,13 +117,13 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 			candidate := response.Candidates[0]
 			if candidate.Content != nil {
 				for _, part := range candidate.Content.Parts {
-				// Handle text parts
-				if part.Text != "" {
-					assistantContent += part.Text
-					if params.OnDelta != nil {
-						params.OnDelta(llm.StreamDelta{Content: part.Text})
+					// Handle text parts
+					if part.Text != "" {
+						assistantContent += part.Text
+						if params.OnDelta != nil {
+							params.OnDelta(llm.StreamDelta{Content: part.Text})
+						}
 					}
-				}
 
 					// Handle function calls
 					if part.FunctionCall != nil {
@@ -137,7 +137,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 						// Marshal the arguments to JSON string
 						argsJSON, err := json.Marshal(part.FunctionCall.Args)
 						if err != nil {
-							applog.Error("gemini function call args marshal error", applog.BuildMetadata("function", part.FunctionCall.Name, "error", err))
+							logger.Error("gemini function call args marshal error", logger.BuildMetadata("function", part.FunctionCall.Name, "error", err))
 							argsJSON = []byte("{}")
 						}
 

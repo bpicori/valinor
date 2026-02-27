@@ -3,8 +3,8 @@ package bus
 import (
 	"sync"
 
-	"valinor/internal/applog"
 	"valinor/internal/event"
+	"valinor/internal/logger"
 )
 
 // Event and EventType are aliases to the centralized event package types.
@@ -84,7 +84,7 @@ func (b *Bus) Publish(ev Event) {
 		select {
 		case sub.ch <- ev:
 		default:
-			applog.Warning("bus event dropped", applog.BuildMetadata("event_type", ev.Type, "reason", "channel full"))
+			logger.Warning("bus event dropped", logger.BuildMetadata("event_type", ev.Type, "reason", "channel full"))
 		}
 	}
 }

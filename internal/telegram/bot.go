@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"valinor/internal/applog"
 	"valinor/internal/event"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 )
 
@@ -91,8 +91,8 @@ func (b *Bot) dispatch(update Update) (*Command, error) {
 
 	// Check mention requirement in groups
 	if b.requireMention && b.isGroupChat(msg.Chat) && !b.isMentioned(msg) {
-		applog.Debug("telegram bot: bot not mentioned in group",
-			applog.BuildMetadata("chat_id", msg.Chat.ID))
+		logger.Debug("telegram bot: bot not mentioned in group",
+			logger.BuildMetadata("chat_id", msg.Chat.ID))
 		return nil, nil
 	}
 
@@ -296,8 +296,8 @@ func (b *Bot) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("verify bot token: %w", err)
 	}
-	applog.Info("telegram bot: authenticated",
-		applog.BuildMetadata("username", me.Username, "id", me.ID))
+	logger.Info("telegram bot: authenticated",
+		logger.BuildMetadata("username", me.Username, "id", me.ID))
 
 	// Initialize offset store
 	store, err := newOffsetStore(b.config.StorageDir)
@@ -327,7 +327,7 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.poller.Start(b.ctx)
 
 	b.ready.Store(true)
-	applog.Info("telegram bot: started", nil)
+	logger.Info("telegram bot: started", nil)
 
 	return nil
 }
@@ -338,7 +338,7 @@ func (b *Bot) Stop() {
 		return
 	}
 
-	applog.Info("telegram bot: stopping", nil)
+	logger.Info("telegram bot: stopping", nil)
 
 	b.cancel()
 
@@ -354,7 +354,7 @@ func (b *Bot) Stop() {
 	b.wg.Wait()
 	b.ready.Store(false)
 
-	applog.Info("telegram bot: stopped", nil)
+	logger.Info("telegram bot: stopped", nil)
 }
 
 // IsReady returns true if the bot is fully started and ready.
@@ -403,8 +403,8 @@ func (b *Bot) handleGatewayEvent(sourceIdentity ChatIdentity, ev router.Event) {
 	}
 
 	if identity.ChatID == 0 {
-		applog.Warning("telegram bot: received event for unknown request",
-			applog.BuildMetadata("request_id", ev.RequestID, "event_type", ev.Type))
+		logger.Warning("telegram bot: received event for unknown request",
+			logger.BuildMetadata("request_id", ev.RequestID, "event_type", ev.Type))
 		return
 	}
 
@@ -423,8 +423,8 @@ func (b *Bot) handleGatewayEvent(sourceIdentity ChatIdentity, ev router.Event) {
 	// Submit to sequencer for ordered processing alongside commands
 	// This is the key change: events now flow through the same sequential path
 	if !b.sequencer.Submit(item, key) {
-		applog.Warning("telegram bot: event dropped, sequencer queue full",
-			applog.BuildMetadata("request_id", ev.RequestID, "key", key))
+		logger.Warning("telegram bot: event dropped, sequencer queue full",
+			logger.BuildMetadata("request_id", ev.RequestID, "key", key))
 	}
 
 	// Note: Final event cleanup happens in processWorkItem to ensure proper sequencing
@@ -589,8 +589,8 @@ func (b *Bot) handleContentDelta(ev *router.Event, identity ChatIdentity, state 
 		state.AppendContent(payload.Content)
 	}
 	if err := b.sendTypingAction(identity, state); err != nil {
-		applog.Warning("telegram bot: send typing action failed",
-			applog.BuildMetadata("error", err, "chat_id", identity.ChatID))
+		logger.Warning("telegram bot: send typing action failed",
+			logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
 	}
 	return nil
 }
@@ -601,8 +601,8 @@ func (b *Bot) handleContentFull(ev *router.Event, identity ChatIdentity, state *
 		state.SetStreamingContent(payload.Content)
 	}
 	if err := b.sendTypingAction(identity, state); err != nil {
-		applog.Warning("telegram bot: send typing action failed",
-			applog.BuildMetadata("error", err, "chat_id", identity.ChatID))
+		logger.Warning("telegram bot: send typing action failed",
+			logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
 	}
 	return nil
 }
@@ -844,15 +844,15 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, state *ChatState, resul
 
 		// Handle thread ID for forum topics
 		if identity.ThreadID != nil {
-			applog.Debug("telegram bot: editing message in thread",
-				applog.BuildMetadata("chat_id", identity.ChatID, "thread_id", *identity.ThreadID, "message_id", state.GetStreamingMessageID()))
+			logger.Debug("telegram bot: editing message in thread",
+				logger.BuildMetadata("chat_id", identity.ChatID, "thread_id", *identity.ThreadID, "message_id", state.GetStreamingMessageID()))
 		}
 
 		_, err := b.client.EditMessageText(b.ctx, req)
 		if err != nil {
 			// If editing fails (e.g., message too old), fall back to sending new message
-			applog.Warning("telegram bot: edit failed, sending new message",
-				applog.BuildMetadata("error", err, "chat_id", identity.ChatID))
+			logger.Warning("telegram bot: edit failed, sending new message",
+				logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
 			return b.sendNewMessage(identity, state, result)
 		}
 
@@ -892,8 +892,8 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, state *ChatState, result *Re
 		state.SetStreamingMessageID(msg.MessageID)
 	}
 
-	applog.Debug("telegram bot: message sent",
-		applog.BuildMetadata("chat_id", identity.ChatID, "message_id", msg.MessageID))
+	logger.Debug("telegram bot: message sent",
+		logger.BuildMetadata("chat_id", identity.ChatID, "message_id", msg.MessageID))
 
 	return nil
 }

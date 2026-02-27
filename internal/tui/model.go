@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"valinor/internal/applog"
 	"valinor/internal/config"
 	"valinor/internal/event"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -246,7 +246,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case connectionStatusMsg:
 		// Connection status updates UI footer state.
 		if !typed.Connected && typed.Error != nil {
-			applog.Warning("tui connection lost", applog.BuildMetadata("error", typed.Error))
+			logger.Warning("tui connection lost", logger.BuildMetadata("error", typed.Error))
 			m.gatewayConnected = false
 			m.gatewayStatus = typed.Error.Error()
 			return m, nil
@@ -387,7 +387,7 @@ func (m Model) openModelPickerForProvider(provider string) Model {
 		return m.openProviderPicker()
 	}
 	if _, ok := m.config.Providers[provider]; !ok {
-		applog.Warning("tui unknown provider for model picker", applog.BuildMetadata("provider", provider))
+		logger.Warning("tui unknown provider for model picker", logger.BuildMetadata("provider", provider))
 		return m.openProviderPicker()
 	}
 
@@ -463,7 +463,7 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	}
 	pc, ok := m.config.Providers[provider]
 	if !ok {
-		applog.Warning("tui unknown provider", applog.BuildMetadata("provider", provider))
+		logger.Warning("tui unknown provider", logger.BuildMetadata("provider", provider))
 		return m, nil, true, false
 	}
 	if len(parts) == 1 {
@@ -528,7 +528,7 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 	// Parse the WebSocket event into a router Event
 	ev, err := ParseWSEvent(msg)
 	if err != nil {
-		applog.Warning("tui failed to parse ws event", applog.BuildMetadata("error", err, "type", msg.Type))
+		logger.Warning("tui failed to parse ws event", logger.BuildMetadata("error", err, "type", msg.Type))
 		return m, nil
 	}
 
@@ -545,7 +545,7 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		m.sessionKey = payload.SessionKey
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
-		applog.Info("tui session attached", applog.BuildMetadata(
+		logger.Info("tui session attached", logger.BuildMetadata(
 			"session_key", payload.SessionKey,
 			"provider", payload.Provider,
 			"model", payload.Model,
@@ -580,8 +580,8 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		applog.Debug("tui: received cron job result",
-			applog.BuildMetadata("content_length", len(payload.Content), "timestamp", payload.Timestamp))
+		logger.Debug("tui: received cron job result",
+			logger.BuildMetadata("content_length", len(payload.Content), "timestamp", payload.Timestamp))
 		return m, m.handleCronJobResult(payload)
 	}
 
@@ -652,7 +652,7 @@ func (m *Model) handleProviderModelsResult(payload router.ProviderModelsResultPa
 	m.modelPickerErr = payload.Error
 	m.modelPicker.Title = "Select Model (" + payload.Provider + ")"
 	if payload.Error != "" {
-		applog.Warning("provider model lookup failed", applog.BuildMetadata("provider", payload.Provider, "error", payload.Error))
+		logger.Warning("provider model lookup failed", logger.BuildMetadata("provider", payload.Provider, "error", payload.Error))
 		m.modelPicker.Title = "Select Model (" + payload.Provider + ") - fallback"
 	}
 
@@ -788,7 +788,7 @@ func (m *Model) handleAgentDone(last *chatMessage, payload router.AgentDonePaylo
 }
 
 func (m *Model) handleAgentError(last *chatMessage, payload router.AgentErrorPayload) tea.Cmd {
-	applog.Error("tui agent error", applog.BuildMetadata("error", payload.Error))
+	logger.Error("tui agent error", logger.BuildMetadata("error", payload.Error))
 	last.Streaming = false
 	if payload.Error != nil {
 		last.Error = payload.Error.Error()

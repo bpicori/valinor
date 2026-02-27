@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 )
 
@@ -28,7 +28,7 @@ type ClientConnection struct {
 	outgoing  chan *WireEnvelope // bounded outgoing message queue
 	closed    bool
 	closeOnce sync.Once
-	lastReqID string             // last request ID for correlation
+	lastReqID string // last request ID for correlation
 
 	// Context for cancellation
 	ctx    context.Context
@@ -75,14 +75,14 @@ func (c *ClientConnection) Run() {
 
 // readLoop reads messages from the WebSocket and processes them.
 func (c *ClientConnection) readLoop() {
-	defer applog.Debug("gateway: read loop exited", nil)
+	defer logger.Debug("gateway: read loop exited", nil)
 
 	// Set read limit
 	c.conn.SetReadLimit(MaxMessageSize)
 
 	// Set pong handler to detect dead connections
 	c.conn.SetPongHandler(func(string) error {
-		applog.Debug("gateway: pong received", nil)
+		logger.Debug("gateway: pong received", nil)
 		return nil
 	})
 
@@ -103,8 +103,8 @@ func (c *ClientConnection) readLoop() {
 		_, data, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				applog.Warning("gateway: unexpected close error",
-					applog.BuildMetadata("error", err, "identity", c.getIdentityKey()))
+				logger.Warning("gateway: unexpected close error",
+					logger.BuildMetadata("error", err, "identity", c.getIdentityKey()))
 			}
 			return
 		}
@@ -112,8 +112,8 @@ func (c *ClientConnection) readLoop() {
 		// Parse envelope
 		env, err := ParseEnvelope(data)
 		if err != nil {
-			applog.Warning("gateway: failed to parse envelope",
-				applog.BuildMetadata("error", err, "identity", c.getIdentityKey()))
+			logger.Warning("gateway: failed to parse envelope",
+				logger.BuildMetadata("error", err, "identity", c.getIdentityKey()))
 			c.sendError("parse_error", fmt.Sprintf("Invalid message: %v", err), "")
 			continue
 		}
@@ -137,21 +137,21 @@ func (c *ClientConnection) handleHandshake() bool {
 	// Read first message
 	_, data, err := c.conn.ReadMessage()
 	if err != nil {
-		applog.Warning("gateway: failed to read handshake", applog.BuildMetadata("error", err))
+		logger.Warning("gateway: failed to read handshake", logger.BuildMetadata("error", err))
 		return false
 	}
 
 	// Parse envelope
 	env, err := ParseEnvelope(data)
 	if err != nil {
-		applog.Warning("gateway: invalid handshake envelope", applog.BuildMetadata("error", err))
+		logger.Warning("gateway: invalid handshake envelope", logger.BuildMetadata("error", err))
 		c.sendHandshakeResponse(false, fmt.Sprintf("Invalid message: %v", err), "", "", "", 0, false)
 		return false
 	}
 
 	// Must be handshake kind
 	if env.Kind != KindHandshake {
-		applog.Warning("gateway: expected handshake, got", applog.BuildMetadata("kind", env.Kind))
+		logger.Warning("gateway: expected handshake, got", logger.BuildMetadata("kind", env.Kind))
 		c.sendHandshakeResponse(false, "First message must be client_hello handshake", "", "", "", 0, false)
 		return false
 	}
@@ -159,7 +159,7 @@ func (c *ClientConnection) handleHandshake() bool {
 	// Parse client hello
 	hello, err := ParseClientHello(env)
 	if err != nil {
-		applog.Warning("gateway: invalid client_hello", applog.BuildMetadata("error", err))
+		logger.Warning("gateway: invalid client_hello", logger.BuildMetadata("error", err))
 		c.sendHandshakeResponse(false, fmt.Sprintf("Invalid client_hello: %v", err), "", "", "", 0, false)
 		return false
 	}
@@ -174,8 +174,8 @@ func (c *ClientConnection) handleHandshake() bool {
 	// Register with router (this creates/gets session)
 	binding, err := c.router.SubscribeClient(c.ctx, identity, c)
 	if err != nil {
-		applog.Error("gateway: failed to subscribe client",
-			applog.BuildMetadata("error", err, "identity", identity.Key()))
+		logger.Error("gateway: failed to subscribe client",
+			logger.BuildMetadata("error", err, "identity", identity.Key()))
 		c.sendHandshakeResponse(false, fmt.Sprintf("Failed to create session: %v", err), "", "", "", 0, false)
 		return false
 	}
@@ -190,8 +190,8 @@ func (c *ClientConnection) handleHandshake() bool {
 	meta := binding.Session.Meta()
 	c.sendHandshakeResponse(true, "", binding.PublicKey, meta.Provider, meta.Model, 0, true)
 
-	applog.Info("gateway: client connected",
-		applog.BuildMetadata("identity", identity.Key(),
+	logger.Info("gateway: client connected",
+		logger.BuildMetadata("identity", identity.Key(),
 			"session_id", binding.SessionID,
 			"remote_addr", c.conn.RemoteAddr()))
 
@@ -218,27 +218,27 @@ func (c *ClientConnection) handleCommand(env *WireEnvelope) {
 	// Parse command
 	cmd, err := ParseCommand(env, identity)
 	if err != nil {
-		applog.Warning("gateway: invalid command",
-			applog.BuildMetadata("error", err, "identity", identity.Key()))
+		logger.Warning("gateway: invalid command",
+			logger.BuildMetadata("error", err, "identity", identity.Key()))
 		c.sendError("invalid_command", err.Error(), env.RequestID)
 		return
 	}
 
 	// Handle command via router
 	if err := c.router.HandleCommand(c.ctx, *cmd); err != nil {
-		applog.Warning("gateway: command handling failed",
-			applog.BuildMetadata("error", err, "command_type", cmd.Type, "identity", identity.Key()))
+		logger.Warning("gateway: command handling failed",
+			logger.BuildMetadata("error", err, "command_type", cmd.Type, "identity", identity.Key()))
 		c.sendError("command_failed", err.Error(), env.RequestID)
 		return
 	}
 
-	applog.Debug("gateway: command handled",
-		applog.BuildMetadata("command_type", cmd.Type, "identity", identity.Key(), "request_id", env.RequestID))
+	logger.Debug("gateway: command handled",
+		logger.BuildMetadata("command_type", cmd.Type, "identity", identity.Key(), "request_id", env.RequestID))
 }
 
 // writeLoop sends messages from the outgoing queue to the WebSocket.
 func (c *ClientConnection) writeLoop() {
-	defer applog.Debug("gateway: write loop exited", nil)
+	defer logger.Debug("gateway: write loop exited", nil)
 
 	// Start ping ticker
 	ticker := time.NewTicker(30 * time.Second)
@@ -254,8 +254,8 @@ func (c *ClientConnection) writeLoop() {
 				return
 			}
 			if err := c.writeEnvelope(env); err != nil {
-				applog.Warning("gateway: failed to write message",
-					applog.BuildMetadata("error", err, "identity", c.getIdentityKey()))
+				logger.Warning("gateway: failed to write message",
+					logger.BuildMetadata("error", err, "identity", c.getIdentityKey()))
 				return
 			}
 
@@ -263,7 +263,7 @@ func (c *ClientConnection) writeLoop() {
 			// Send ping to keep connection alive
 			c.conn.SetWriteDeadline(time.Now().Add(WriteTimeout))
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				applog.Debug("gateway: ping failed", applog.BuildMetadata("error", err))
+				logger.Debug("gateway: ping failed", logger.BuildMetadata("error", err))
 				return
 			}
 		}
@@ -294,8 +294,8 @@ func (c *ClientConnection) SendEvent(event router.Event) bool {
 	case c.outgoing <- env:
 		return true
 	default:
-		applog.Warning("gateway: outgoing queue full, event dropped",
-			applog.BuildMetadata("event_type", event.Type, "identity", c.getIdentityKey()))
+		logger.Warning("gateway: outgoing queue full, event dropped",
+			logger.BuildMetadata("event_type", event.Type, "identity", c.getIdentityKey()))
 		return false
 	}
 }
@@ -304,8 +304,8 @@ func (c *ClientConnection) SendEvent(event router.Event) bool {
 func (c *ClientConnection) sendError(errorType, errorMsg, requestID string) {
 	env := CreateErrorEnvelope(errorType, errorMsg, requestID)
 	if !c.enqueueEnvelope(env, WriteTimeout) {
-		applog.Warning("gateway: failed to send error (timeout)",
-			applog.BuildMetadata("error_type", errorType, "identity", c.getIdentityKey()))
+		logger.Warning("gateway: failed to send error (timeout)",
+			logger.BuildMetadata("error_type", errorType, "identity", c.getIdentityKey()))
 	}
 }
 
@@ -313,8 +313,8 @@ func (c *ClientConnection) sendError(errorType, errorMsg, requestID string) {
 func (c *ClientConnection) sendHandshakeResponse(success bool, errorMsg, sessionKey, provider, model string, contextTokens int64, estimated bool) {
 	env := CreateHandshakeResponse(success, errorMsg, sessionKey, provider, model, contextTokens, estimated)
 	if !c.enqueueEnvelope(env, WriteTimeout) {
-		applog.Warning("gateway: failed to send handshake response",
-			applog.BuildMetadata("identity", c.getIdentityKey()))
+		logger.Warning("gateway: failed to send handshake response",
+			logger.BuildMetadata("identity", c.getIdentityKey()))
 	}
 }
 
@@ -343,7 +343,7 @@ func (c *ClientConnection) getIdentityKey() string {
 // Close implements router.ClientEventConsumer and closes the connection.
 func (c *ClientConnection) Close() {
 	c.closeOnce.Do(func() {
-		applog.Debug("gateway: closing client connection", applog.BuildMetadata("identity", c.getIdentityKey()))
+		logger.Debug("gateway: closing client connection", logger.BuildMetadata("identity", c.getIdentityKey()))
 
 		// Cancel context to stop loops
 		c.cancel()
@@ -383,7 +383,7 @@ func ServeWs(router *router.Router, server *Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			applog.Warning("gateway: websocket upgrade failed", applog.BuildMetadata("error", err))
+			logger.Warning("gateway: websocket upgrade failed", logger.BuildMetadata("error", err))
 			return
 		}
 

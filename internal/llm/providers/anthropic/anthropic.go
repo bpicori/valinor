@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"valinor/internal/applog"
 	"valinor/internal/llm"
+	"valinor/internal/logger"
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -142,7 +142,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	}
 
 	if err := stream.Err(); err != nil {
-		applog.Error("anthropic stream error", applog.BuildMetadata("error", err))
+		logger.Error("anthropic stream error", logger.BuildMetadata("error", err))
 		return nil, err
 	}
 

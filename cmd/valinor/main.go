@@ -8,10 +8,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"valinor/internal/applog"
 	"valinor/internal/bus"
 	"valinor/internal/config"
 	"valinor/internal/gateway"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 	"valinor/internal/scheduler"
 	"valinor/internal/session"
@@ -31,7 +31,7 @@ func main() {
 	flag.Parse()
 
 	if err := run(*mode, *gatewayURL, *identity); err != nil {
-		applog.Error("valinor exit error", applog.BuildMetadata("error", err))
+		logger.Error("valinor exit error", logger.BuildMetadata("error", err))
 		os.Exit(1)
 	}
 }
@@ -45,14 +45,14 @@ func run(mode, gatewayURL, identity string) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		applog.Info("shutdown signal received", nil)
+		logger.Info("shutdown signal received", nil)
 		cancel()
 	}()
 
 	// Load configuration (needed by both modes)
 	cfg, err := config.LoadFromFile("config.toml")
 	if err != nil {
-		applog.Error("load config failed", applog.BuildMetadata("error", err))
+		logger.Error("load config failed", logger.BuildMetadata("error", err))
 		return err
 	}
 
@@ -90,16 +90,16 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 
 	// Initialize logger with both file and stdout transports
-	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile, applog.TransportStdout})
+	logPath, closeLogger, err := logger.Init(valinorDir, []logger.TransportType{logger.TransportFile, logger.TransportStdout})
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
 	defer closeLogger()
 
 	// Set log prefix for gateway mode
-	applog.SetPrefix("GATEWAY")
-	applog.Info("starting valinor in gateway mode", nil)
-	applog.Info("logging to file and stdout", applog.BuildMetadata("log_path", logPath))
+	logger.SetPrefix("GATEWAY")
+	logger.Info("starting valinor in gateway mode", nil)
+	logger.Info("logging to file and stdout", logger.BuildMetadata("log_path", logPath))
 
 	// Initialize core components
 	b := bus.New()
@@ -119,8 +119,8 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	// Create identity map store
 	identityMap, err := session.NewIdentityMapStore(valinorDir)
 	if err != nil {
-		applog.Warning("failed to create identity map store, continuing without persistence",
-			applog.BuildMetadata("error", err))
+		logger.Warning("failed to create identity map store, continuing without persistence",
+			logger.BuildMetadata("error", err))
 		identityMap = nil
 	}
 
@@ -134,7 +134,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		sched := scheduler.New(workspaceDir, sm, sessionOpts, b, cfg.Scheduler)
 		sched.Start(ctx)
 		defer sched.Stop()
-		applog.Info("scheduler enabled", applog.BuildMetadata("interval", cfg.Scheduler.CheckInterval))
+		logger.Info("scheduler enabled", logger.BuildMetadata("interval", cfg.Scheduler.CheckInterval))
 	}
 
 	// Create and start gateway server
@@ -145,8 +145,8 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 	gw := gateway.NewServer(gwCfg, rtr)
 
-	applog.Info("gateway server starting",
-		applog.BuildMetadata("url", cfg.GatewayWebSocketURL()))
+	logger.Info("gateway server starting",
+		logger.BuildMetadata("url", cfg.GatewayWebSocketURL()))
 
 	// Start gateway (blocks until shutdown)
 	if err := gw.Start(ctx); err != nil {
@@ -173,19 +173,19 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL, identity string)
 	}
 
 	// Initialize logger with file transport only (TUI has its own stdout display)
-	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile})
+	logPath, closeLogger, err := logger.Init(valinorDir, []logger.TransportType{logger.TransportFile})
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
 	defer closeLogger()
 
 	// Set log prefix for TUI mode
-	applog.SetPrefix("TUI")
-	applog.Info("starting valinor in tui mode", nil)
-	applog.Info("logging to file", applog.BuildMetadata("log_path", logPath))
+	logger.SetPrefix("TUI")
+	logger.Info("starting valinor in tui mode", nil)
+	logger.Info("logging to file", logger.BuildMetadata("log_path", logPath))
 
 	// Create WebSocket bridge first
-	applog.Info("connecting to gateway", applog.BuildMetadata("url", gatewayURL, "identity", identity))
+	logger.Info("connecting to gateway", logger.BuildMetadata("url", gatewayURL, "identity", identity))
 	wsBridge := tui.NewWSBridge(gatewayURL, identity)
 
 	// Create TUI model with the bridge as command sender
@@ -203,7 +203,7 @@ func runTUI(ctx context.Context, cfg config.Config, gatewayURL, identity string)
 	}
 	defer wsBridge.Stop()
 
-	applog.Info("tui startup complete", applog.BuildMetadata("gateway", gatewayURL))
+	logger.Info("tui startup complete", logger.BuildMetadata("gateway", gatewayURL))
 
 	// Run TUI
 	if _, err := p.Run(); err != nil {
@@ -229,20 +229,20 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("resolve valinor dir: %w", err)
 	}
 
-	logPath, closeLogger, err := applog.Init(valinorDir, []applog.TransportType{applog.TransportFile, applog.TransportStdout})
+	logPath, closeLogger, err := logger.Init(valinorDir, []logger.TransportType{logger.TransportFile, logger.TransportStdout})
 	if err != nil {
 		return fmt.Errorf("init logger: %w", err)
 	}
 	defer closeLogger()
 
 	// Set log prefix for Telegram mode
-	applog.SetPrefix("TELEGRAM")
-	applog.Info("starting valinor in telegram mode", nil)
-	applog.Info("logging to file", applog.BuildMetadata("log_path", logPath))
+	logger.SetPrefix("TELEGRAM")
+	logger.Info("starting valinor in telegram mode", nil)
+	logger.Info("logging to file", logger.BuildMetadata("log_path", logPath))
 
 	// Build gateway URL from config if not already set
 	gatewayURL := cfg.GatewayWebSocketURL()
-	applog.Info("connecting to gateway", applog.BuildMetadata("url", gatewayURL))
+	logger.Info("connecting to gateway", logger.BuildMetadata("url", gatewayURL))
 
 	// Create bot configuration
 	botCfg := telegram.Config{
@@ -264,11 +264,11 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 	}
 	defer bot.Stop()
 
-	applog.Info("telegram bot started successfully", nil)
+	logger.Info("telegram bot started successfully", nil)
 
 	// Wait for context cancellation (shutdown signal)
 	<-ctx.Done()
 
-	applog.Info("telegram bot shutting down", nil)
+	logger.Info("telegram bot shutting down", nil)
 	return nil
 }

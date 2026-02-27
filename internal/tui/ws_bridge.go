@@ -12,9 +12,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gorilla/websocket"
 
-	"valinor/internal/applog"
 	"valinor/internal/event"
 	"valinor/internal/gateway"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 )
 
@@ -60,8 +60,8 @@ type wsEventMsg struct {
 
 // connectionStatusMsg signals connection state changes to the UI.
 type connectionStatusMsg struct {
-	Connected bool
-	Error     error
+	Connected  bool
+	Error      error
 	SessionKey string
 	Provider   string
 	Model      string
@@ -105,7 +105,7 @@ func (b *WSBridge) Start(ctx context.Context, p *tea.Program) error {
 // Stop gracefully stops the bridge.
 func (b *WSBridge) Stop() {
 	b.closeOnce.Do(func() {
-		applog.Debug("tui ws bridge: stopping", nil)
+		logger.Debug("tui ws bridge: stopping", nil)
 
 		// Mark as closed first so goroutines know to exit
 		b.mu.Lock()
@@ -120,7 +120,7 @@ func (b *WSBridge) Stop() {
 
 		b.wg.Wait()
 
-		applog.Info("tui ws bridge: stopped", nil)
+		logger.Info("tui ws bridge: stopped", nil)
 	})
 }
 
@@ -189,8 +189,8 @@ func (b *WSBridge) connect() error {
 			return fmt.Errorf("gateway handshake error (%s): %s", env.Type, env.Error)
 		}
 
-		applog.Debug("tui ws bridge: skipping pre-ack frame",
-			applog.BuildMetadata("kind", env.Kind, "type", env.Type))
+		logger.Debug("tui ws bridge: skipping pre-ack frame",
+			logger.BuildMetadata("kind", env.Kind, "type", env.Type))
 	}
 	b.conn.SetReadDeadline(time.Time{}) // Clear deadline
 
@@ -211,8 +211,8 @@ func (b *WSBridge) connect() error {
 	b.handshaked = true
 	b.mu.Unlock()
 
-	applog.Info("tui ws bridge: connected",
-		applog.BuildMetadata("session_key", ackPayload.SessionKey,
+	logger.Info("tui ws bridge: connected",
+		logger.BuildMetadata("session_key", ackPayload.SessionKey,
 			"provider", ackPayload.Provider,
 			"model", ackPayload.Model))
 
@@ -231,7 +231,7 @@ func (b *WSBridge) connect() error {
 // readLoop reads messages from the WebSocket and forwards to Bubble Tea.
 func (b *WSBridge) readLoop() {
 	defer b.wg.Done()
-	defer applog.Debug("tui ws bridge: read loop exited", nil)
+	defer logger.Debug("tui ws bridge: read loop exited", nil)
 
 	for {
 		select {
@@ -246,14 +246,14 @@ func (b *WSBridge) readLoop() {
 				return
 			}
 
-			applog.Warning("tui ws bridge: read error", applog.BuildMetadata("error", err))
+			logger.Warning("tui ws bridge: read error", logger.BuildMetadata("error", err))
 
 			// Signal connection lost to UI
 			b.program.Send(connectionStatusMsg{Connected: false, Error: err})
 
 			// Attempt reconnection
 			if err := b.reconnect(); err != nil {
-				applog.Error("tui ws bridge: reconnection failed", applog.BuildMetadata("error", err))
+				logger.Error("tui ws bridge: reconnection failed", logger.BuildMetadata("error", err))
 				return
 			}
 
@@ -270,12 +270,12 @@ func (b *WSBridge) readLoop() {
 			})
 
 		case gateway.KindError:
-			applog.Warning("tui ws bridge: received error from gateway",
-				applog.BuildMetadata("error_type", env.Type, "error", env.Error))
+			logger.Warning("tui ws bridge: received error from gateway",
+				logger.BuildMetadata("error_type", env.Type, "error", env.Error))
 
 		default:
-			applog.Debug("tui ws bridge: unexpected message kind",
-				applog.BuildMetadata("kind", env.Kind, "type", env.Type))
+			logger.Debug("tui ws bridge: unexpected message kind",
+				logger.BuildMetadata("kind", env.Kind, "type", env.Type))
 		}
 	}
 }
@@ -283,7 +283,7 @@ func (b *WSBridge) readLoop() {
 // writeLoop sends messages from the outgoing queue to the WebSocket.
 func (b *WSBridge) writeLoop() {
 	defer b.wg.Done()
-	defer applog.Debug("tui ws bridge: write loop exited", nil)
+	defer logger.Debug("tui ws bridge: write loop exited", nil)
 
 	for {
 		select {
@@ -296,19 +296,19 @@ func (b *WSBridge) writeLoop() {
 			}
 
 			if err := b.conn.WriteJSON(env); err != nil {
-				applog.Warning("tui ws bridge: write error", applog.BuildMetadata("error", err))
+				logger.Warning("tui ws bridge: write error", logger.BuildMetadata("error", err))
 
 				// Try to reconnect
 				if err := b.reconnect(); err != nil {
-					applog.Error("tui ws bridge: reconnection after write error failed",
-						applog.BuildMetadata("error", err))
+					logger.Error("tui ws bridge: reconnection after write error failed",
+						logger.BuildMetadata("error", err))
 					return
 				}
 
 				// Retry sending the message
 				if err := b.conn.WriteJSON(env); err != nil {
-					applog.Warning("tui ws bridge: retry write failed, dropping message",
-						applog.BuildMetadata("error", err))
+					logger.Warning("tui ws bridge: retry write failed, dropping message",
+						logger.BuildMetadata("error", err))
 				}
 			}
 		}
@@ -327,8 +327,8 @@ func (b *WSBridge) reconnect() error {
 	maxBackoff := maxReconnectBackoff
 
 	for attempts := 0; attempts < 10; attempts++ {
-		applog.Info("tui ws bridge: attempting reconnect",
-			applog.BuildMetadata("attempt", attempts+1, "backoff", backoff))
+		logger.Info("tui ws bridge: attempting reconnect",
+			logger.BuildMetadata("attempt", attempts+1, "backoff", backoff))
 
 		if err := b.connect(); err == nil {
 			// Reconnection successful (connect() sends updated session/model state).
@@ -360,8 +360,8 @@ func (b *WSBridge) SendCommand(cmdType string, payload any) bool {
 
 	payloadData, err := json.Marshal(payload)
 	if err != nil {
-		applog.Error("tui ws bridge: failed to marshal command payload",
-			applog.BuildMetadata("error", err, "command_type", cmdType))
+		logger.Error("tui ws bridge: failed to marshal command payload",
+			logger.BuildMetadata("error", err, "command_type", cmdType))
 		return false
 	}
 
@@ -376,8 +376,8 @@ func (b *WSBridge) SendCommand(cmdType string, payload any) bool {
 	case b.outgoing <- env:
 		return true
 	default:
-		applog.Warning("tui ws bridge: outgoing queue full, command dropped",
-			applog.BuildMetadata("command_type", cmdType))
+		logger.Warning("tui ws bridge: outgoing queue full, command dropped",
+			logger.BuildMetadata("command_type", cmdType))
 		return false
 	}
 }

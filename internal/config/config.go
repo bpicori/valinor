@@ -7,7 +7,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 )
 
 // DefaultValinorDir is the default base directory under home.
@@ -107,7 +107,7 @@ func LoadFromFile(path string) (Config, error) {
 	var cfg Config
 	md, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
-		applog.Error("config load failed", applog.BuildMetadata("path", path, "error", err))
+		logger.Error("config load failed", logger.BuildMetadata("path", path, "error", err))
 		return Config{}, err
 	}
 
@@ -282,21 +282,21 @@ func resolvePathWithTilde(path string) (string, error) {
 	if len(path) > 1 && path[:2] == "~/" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			applog.Error("config path expand error", applog.BuildMetadata("input", path, "error", err))
+			logger.Error("config path expand error", logger.BuildMetadata("input", path, "error", err))
 			return "", err
 		}
 		path = filepath.Join(home, path[2:])
 	} else if path == "~" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			applog.Error("config path expand error", applog.BuildMetadata("input", path, "error", err))
+			logger.Error("config path expand error", logger.BuildMetadata("input", path, "error", err))
 			return "", err
 		}
 		return home, nil
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		applog.Error("config path expand error", applog.BuildMetadata("input", path, "error", err))
+		logger.Error("config path expand error", logger.BuildMetadata("input", path, "error", err))
 		return "", err
 	}
 	return abs, nil

@@ -12,7 +12,7 @@ import (
 
 	"github.com/bpicori/red-keep/pkg/redkeep"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 )
 
 // Runtime holds workspace and execution context for tool calls.
@@ -34,8 +34,8 @@ func NewRuntime(dir string) (*Runtime, error) {
 		return nil, fmt.Errorf("resolve python executable: %w", err)
 	}
 
-	applog.Info("sandbox runtime initialized",
-		applog.BuildMetadata("workspace", dir, "python_resolved", resolvedPython))
+	logger.Info("sandbox runtime initialized",
+		logger.BuildMetadata("workspace", dir, "python_resolved", resolvedPython))
 
 	return &Runtime{
 		workspaceDir:     dir,

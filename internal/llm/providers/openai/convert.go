@@ -3,8 +3,8 @@ package openai
 import (
 	"encoding/json"
 
-	"valinor/internal/applog"
 	"valinor/internal/llm"
+	"valinor/internal/logger"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
@@ -58,7 +58,7 @@ func ToOpenAITool(tool llm.ToolDefinition) openai.ChatCompletionToolUnionParam {
 	// Parse the JSON Schema parameters
 	var params shared.FunctionParameters
 	if err := json.Unmarshal(tool.Parameters, &params); err != nil {
-		applog.Error("openai tool conversion error", applog.BuildMetadata("tool", tool.Name, "error", err))
+		logger.Error("openai tool conversion error", logger.BuildMetadata("tool", tool.Name, "error", err))
 		params = shared.FunctionParameters{"type": "object"}
 	}
 

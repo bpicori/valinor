@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 	"valinor/internal/router"
 )
 
@@ -447,7 +447,7 @@ func (s *Sequencer) Stop() {
 		wg.Wait()
 	}
 
-	applog.Info("telegram sequencer: stopped", nil)
+	logger.Info("telegram sequencer: stopped", nil)
 }
 
 // Submit queues a work item for sequential processing by its sequential key.
@@ -489,8 +489,8 @@ func (s *Sequencer) Submit(item *WorkItem, key string) bool {
 	case queue <- item:
 		return true
 	default:
-		applog.Warning("telegram sequencer: queue full, dropping work item",
-			applog.BuildMetadata("key", key, "request_id", item.RequestID))
+		logger.Warning("telegram sequencer: queue full, dropping work item",
+			logger.BuildMetadata("key", key, "request_id", item.RequestID))
 		return false
 	}
 }
@@ -501,12 +501,12 @@ func (s *Sequencer) worker(ctx context.Context, key string, queue chan *WorkItem
 	defer wg.Done()
 	defer s.cleanupWorker(key)
 
-	applog.Debug("telegram sequencer: worker started", applog.BuildMetadata("key", key))
+	logger.Debug("telegram sequencer: worker started", logger.BuildMetadata("key", key))
 
 	for {
 		select {
 		case <-ctx.Done():
-			applog.Debug("telegram sequencer: worker exiting", applog.BuildMetadata("key", key))
+			logger.Debug("telegram sequencer: worker exiting", logger.BuildMetadata("key", key))
 			return
 
 		case item, ok := <-queue:
@@ -516,8 +516,8 @@ func (s *Sequencer) worker(ctx context.Context, key string, queue chan *WorkItem
 
 			// Process the work item
 			if err := s.workFn(ctx, item); err != nil {
-				applog.Error("telegram sequencer: work function error",
-					applog.BuildMetadata("key", key, "error", err, "request_id", item.RequestID))
+				logger.Error("telegram sequencer: work function error",
+					logger.BuildMetadata("key", key, "error", err, "request_id", item.RequestID))
 			}
 		}
 	}
@@ -532,7 +532,7 @@ func (s *Sequencer) cleanupWorker(key string) {
 	delete(s.cancelFuncs, key)
 	delete(s.wg, key)
 
-	applog.Debug("telegram sequencer: worker cleaned up", applog.BuildMetadata("key", key))
+	logger.Debug("telegram sequencer: worker cleaned up", logger.BuildMetadata("key", key))
 }
 
 // ActiveKeys returns the number of active sequential keys (worker queues).

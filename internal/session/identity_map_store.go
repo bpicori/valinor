@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"valinor/internal/applog"
+	"valinor/internal/logger"
 )
 
 // IdentityMapping maps a client identity key to a session ID.
@@ -104,8 +104,8 @@ func (s *IdentityMapStore) Set(identityKey, sessionID, clientType string) error 
 		return fmt.Errorf("save identity mapping: %w", err)
 	}
 
-	applog.Info("identity mapping saved",
-		applog.BuildMetadata("identity_key", identityKey, "session_id", sessionID))
+	logger.Info("identity mapping saved",
+		logger.BuildMetadata("identity_key", identityKey, "session_id", sessionID))
 
 	return nil
 }
@@ -125,7 +125,7 @@ func (s *IdentityMapStore) Remove(identityKey string) error {
 		return fmt.Errorf("save after remove: %w", err)
 	}
 
-	applog.Info("identity mapping removed", applog.BuildMetadata("identity_key", identityKey))
+	logger.Info("identity mapping removed", logger.BuildMetadata("identity_key", identityKey))
 
 	return nil
 }
@@ -151,7 +151,7 @@ func (s *IdentityMapStore) RemoveBySessionID(sessionID string) error {
 		return fmt.Errorf("save after session removal: %w", err)
 	}
 
-	applog.Info("identity mappings removed for session", applog.BuildMetadata("session_id", sessionID))
+	logger.Info("identity mappings removed for session", logger.BuildMetadata("session_id", sessionID))
 
 	return nil
 }
@@ -192,8 +192,8 @@ func (s *IdentityMapStore) load() error {
 		s.data[m.IdentityKey] = m
 	}
 
-	applog.Info("identity mappings loaded",
-		applog.BuildMetadata("count", len(s.data), "path", s.path))
+	logger.Info("identity mappings loaded",
+		logger.BuildMetadata("count", len(s.data), "path", s.path))
 
 	return nil
 }

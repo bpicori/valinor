@@ -3,8 +3,8 @@ package openai
 import (
 	"context"
 
-	"valinor/internal/applog"
 	"valinor/internal/llm"
+	"valinor/internal/logger"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -112,7 +112,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	}
 
 	if err := stream.Err(); err != nil {
-		applog.Error("openai stream error", applog.BuildMetadata("error", err))
+		logger.Error("openai stream error", logger.BuildMetadata("error", err))
 		return nil, err
 	}
 
