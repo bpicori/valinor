@@ -54,9 +54,22 @@ func BuildTools(rt *sandbox.Runtime) []llm.Tool {
 		{Name: listFilesName, Def: listFilesDef(), Exec: func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }},
 		{Name: grepName, Def: grepDef(), Exec: func(a json.RawMessage) (string, error) { return grepExec(rt, a) }},
 		{Name: pythonExecName, Def: pythonExecDef(), Exec: func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }},
+		{Name: bashExecName, Def: bashExecDef(), Exec: func(a json.RawMessage) (string, error) { return bashExec(rt, a) }},
 		// Cron tools are stateless and use a globally-set service; they don't need the sandbox runtime
 		{Name: cronAddName, Def: cronAddDef(), Exec: func(a json.RawMessage) (string, error) { return cronAddExec(a) }},
 		{Name: cronListName, Def: cronListDef(), Exec: func(a json.RawMessage) (string, error) { return cronListExec(a) }},
 		{Name: cronRemoveName, Def: cronRemoveDef(), Exec: func(a json.RawMessage) (string, error) { return cronRemoveExec(a) }},
 	}
+}
+
+// BuildToolsWithMCP returns tool definitions combining built-in tools and MCP tools.
+func BuildToolsWithMCP(rt *sandbox.Runtime, mcpTools []llm.Tool) []llm.Tool {
+	builtinTools := BuildTools(rt)
+
+	// Combine built-in and MCP tools
+	allTools := make([]llm.Tool, 0, len(builtinTools)+len(mcpTools))
+	allTools = append(allTools, builtinTools...)
+	allTools = append(allTools, mcpTools...)
+
+	return allTools
 }

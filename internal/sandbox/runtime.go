@@ -65,6 +65,19 @@ func (r *Runtime) RunCommand(ctx context.Context, workDir string, command string
 	})
 }
 
+// RunCommandOnHost executes a shell command directly on the host (not through red-keep).
+// Use with caution - this bypasses sandbox protections.
+// The command is executed via bash -c with the provided shell command string.
+func (r *Runtime) RunCommandOnHost(ctx context.Context, workDir string, shellCommand string, timeout time.Duration) (Result, error) {
+	targetWorkDir := r.workspaceDir
+	if workDir != "" && workDir != "." {
+		targetWorkDir = filepath.Join(r.workspaceDir, filepath.FromSlash(workDir))
+	}
+
+	command := []string{"bash", "-c", shellCommand}
+	return r.runHostCommandWithTimeout(ctx, command, targetWorkDir, nil, nil, timeout)
+}
+
 // ReadFile reads a file relative to workspace.
 func (r *Runtime) ReadFile(path string) (string, error) {
 	fullPath := r.resolveWorkspacePath(path)
