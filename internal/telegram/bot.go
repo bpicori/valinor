@@ -546,10 +546,10 @@ func (b *Bot) resolveIdentity(requestID string, fallback ChatIdentity) (ChatIden
 }
 
 // shouldProcessEvent returns true if the event should be processed given current state.
-// Always allows session setup events; requires matching streaming state for others.
+// Always allows session setup events and broadcast events like CronJobResult.
 func (b *Bot) shouldProcessEvent(ev *router.Event, state *ChatState) bool {
 	switch ev.Type {
-	case event.SessionAttached, event.NewConversation, event.ChangeModelEvent:
+	case event.SessionAttached, event.NewConversation, event.ChangeModelEvent, event.CronJobResult:
 		return true
 	default:
 		return state.IsStreaming || ev.RequestID == state.CurrentRequestID

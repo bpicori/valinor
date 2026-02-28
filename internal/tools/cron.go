@@ -41,24 +41,24 @@ func cronAddDef() llm.ToolDefinition {
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"name": map[string]string{
+				"name": map[string]any{
 					"type":        "string",
 					"description": "Short descriptive name for the job (e.g., 'Daily Weather', 'Hourly Check')",
 				},
-				"message": map[string]string{
+				"message": map[string]any{
 					"type":        "string",
 					"description": "The message/prompt to send to the AI when the job runs. Be specific about what to do.",
 				},
-				"schedule_kind": map[string]string{
+				"schedule_kind": map[string]any{
 					"type":        "string",
 					"description": "Type of schedule: 'every' for recurring intervals, 'at' for one-time specific time",
-					"enum":        "[]string{\"every\", \"at\"}",
+					"enum":        []string{"every", "at"},
 				},
-				"every": map[string]string{
+				"every": map[string]any{
 					"type":        "string",
 					"description": "For 'every' schedule: interval duration like '5m', '30m', '1h', '1h30m'. Minimum 1 minute.",
 				},
-				"at": map[string]string{
+				"at": map[string]any{
 					"type":        "string",
 					"description": "For 'at' schedule: ISO8601/RFC3339 timestamp when to run once, e.g., '2026-03-01T09:00:00Z'",
 				},
