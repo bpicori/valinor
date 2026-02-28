@@ -1,5 +1,4 @@
-// Package router provides the internal API boundary for routing commands and events.
-package router
+package gateway
 
 import (
 	"context"

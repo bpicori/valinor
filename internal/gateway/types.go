@@ -1,6 +1,5 @@
-// Package router provides the internal API boundary for routing commands and events
-// between clients (TUI, web, etc.) and the session core.
-package router
+// Package gateway provides the WebSocket gateway for client connections.
+package gateway
 
 import (
 	"fmt"
@@ -48,7 +47,7 @@ func (ci ClientIdentity) SessionKey(sessionID string) string {
 	return "session:" + ci.Type + ":" + sessionID
 }
 
-// Command types (client -> router) - re-exported from event package.
+// Command types (client -> gateway) - re-exported from event package.
 const (
 	CommandUserMessage           = string(event.UserMessage)
 	CommandNewConversation       = string(event.NewConversation)
@@ -58,7 +57,7 @@ const (
 	CommandCancelAgentRun        = string(event.CancelAgentRun)
 )
 
-// Event types (router -> client) - re-exported from event package.
+// Event types (gateway -> client) - re-exported from event package.
 const (
 	EventAgentContentDelta    = string(event.AgentContentDelta)
 	EventAgentContentFull     = string(event.AgentContentFull)
@@ -141,11 +140,11 @@ type Command struct {
 	Payload   any // typed payload based on Type
 }
 
-// Event represents a router event to be sent to clients.
+// Event represents a gateway event to be sent to clients.
 // Now a direct alias to event.Event, eliminating conversion boilerplate.
 type Event = event.Event
 
-// FromBusEvent converts a bus event to a router event.
+// FromBusEvent converts a bus event to a gateway event.
 // Now a no-op since both use the same event.Event type.
 func FromBusEvent(be event.Event) Event {
 	return be

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
-
-	"valinor/internal/router"
 )
 
 // WireEnvelope is the JSON structure sent over the WebSocket.
@@ -72,8 +70,8 @@ func ParseEnvelope(data []byte) (*WireEnvelope, error) {
 	return &env, nil
 }
 
-// CreateEnvelope creates a wire envelope from a router event.
-func CreateEnvelope(event router.Event, requestID string) *WireEnvelope {
+// CreateEnvelope creates a wire envelope from a gateway event.
+func CreateEnvelope(event Event, requestID string) *WireEnvelope {
 	payload, err := json.Marshal(event.Payload)
 	if err != nil {
 		// Fall back to empty payload on marshal error
@@ -91,7 +89,7 @@ func CreateEnvelope(event router.Event, requestID string) *WireEnvelope {
 
 // CreateHandshakeResponse creates a hello_ack response envelope.
 func CreateHandshakeResponse(success bool, errorMsg string, sessionKey, provider, model string, contextTokens int64, estimated bool) *WireEnvelope {
-	payload := router.HelloAckPayload{
+	payload := HelloAckPayload{
 		Success:         success,
 		Error:           errorMsg,
 		SessionKey:      sessionKey,
@@ -105,7 +103,7 @@ func CreateHandshakeResponse(success bool, errorMsg string, sessionKey, provider
 
 	return &WireEnvelope{
 		Kind:      KindHandshake,
-		Type:      router.HandshakeHelloAck,
+		Type:      HandshakeHelloAck,
 		Timestamp: time.Now().UnixMilli(),
 		Payload:   data,
 	}
@@ -123,27 +121,27 @@ func CreateErrorEnvelope(errorType, errorMsg, requestID string) *WireEnvelope {
 }
 
 // ParseClientHello parses the client_hello payload from an envelope.
-func ParseClientHello(env *WireEnvelope) (*router.ClientHelloPayload, error) {
-	if env.Type != router.HandshakeClientHello {
-		return nil, fmt.Errorf("expected type '%s', got '%s'", router.HandshakeClientHello, env.Type)
+func ParseClientHello(env *WireEnvelope) (*ClientHelloPayload, error) {
+	if env.Type != HandshakeClientHello {
+		return nil, fmt.Errorf("expected type '%s', got '%s'", HandshakeClientHello, env.Type)
 	}
 
-	var hello router.ClientHelloPayload
+	var hello ClientHelloPayload
 	if err := json.Unmarshal(env.Payload, &hello); err != nil {
 		return nil, fmt.Errorf("invalid client_hello payload: %w", err)
 	}
 
 	// Validate protocol version
-	if hello.ProtocolVersion != router.ProtocolVersion {
+	if hello.ProtocolVersion != ProtocolVersion {
 		return nil, fmt.Errorf("unsupported protocol version: %d (expected %d)",
-			hello.ProtocolVersion, router.ProtocolVersion)
+			hello.ProtocolVersion, ProtocolVersion)
 	}
 
 	// Validate client type
 	if hello.ClientType == "" {
 		return nil, fmt.Errorf("client_type is required")
 	}
-	if !router.ValidClientTypes[hello.ClientType] {
+	if !ValidClientTypes[hello.ClientType] {
 		return nil, fmt.Errorf("invalid client_type: %s", hello.ClientType)
 	}
 
@@ -155,13 +153,13 @@ func ParseClientHello(env *WireEnvelope) (*router.ClientHelloPayload, error) {
 	return &hello, nil
 }
 
-// ParseCommand parses a command envelope into a router Command.
-func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Command, error) {
+// ParseCommand parses a command envelope into a gateway Command.
+func ParseCommand(env *WireEnvelope, identity ClientIdentity) (*Command, error) {
 	if env.Kind != KindCommand {
 		return nil, fmt.Errorf("expected kind '%s', got '%s'", KindCommand, env.Kind)
 	}
 
-	cmd := &router.Command{
+	cmd := &Command{
 		Type:      env.Type,
 		RequestID: env.RequestID,
 		Identity:  identity,
@@ -169,8 +167,8 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 
 	// Parse payload based on command type
 	switch env.Type {
-	case router.CommandUserMessage:
-		var p router.UserMessagePayload
+	case CommandUserMessage:
+		var p UserMessagePayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return nil, fmt.Errorf("invalid user_message payload: %w", err)
 		}
@@ -179,8 +177,8 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 		}
 		cmd.Payload = p
 
-	case router.CommandChangeProviderModel:
-		var p router.ChangeProviderModelPayload
+	case CommandChangeProviderModel:
+		var p ChangeProviderModelPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return nil, fmt.Errorf("invalid change_provider_model payload: %w", err)
 		}
@@ -189,8 +187,8 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 		}
 		cmd.Payload = p
 
-	case router.CommandCreateNewSession:
-		var p router.CreateNewSessionPayload
+	case CommandCreateNewSession:
+		var p CreateNewSessionPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return nil, fmt.Errorf("invalid create_new_session payload: %w", err)
 		}
@@ -199,8 +197,8 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 		}
 		cmd.Payload = p
 
-	case router.CommandRequestProviderModels:
-		var p router.RequestProviderModelsPayload
+	case CommandRequestProviderModels:
+		var p RequestProviderModelsPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return nil, fmt.Errorf("invalid request_provider_models payload: %w", err)
 		}
@@ -209,7 +207,7 @@ func ParseCommand(env *WireEnvelope, identity router.ClientIdentity) (*router.Co
 		}
 		cmd.Payload = p
 
-	case router.CommandNewConversation, router.CommandCancelAgentRun:
+	case CommandNewConversation, CommandCancelAgentRun:
 		// These commands have no payload
 		cmd.Payload = nil
 

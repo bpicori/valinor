@@ -1,14 +1,68 @@
-# Gateway WebSocket Protocol
+# Gateway Package
 
-This document describes the WebSocket protocol exposed by the gateway so it can be tested manually (for example with Postman WebSocket requests).
+This package provides the WebSocket gateway server and the central Router for client connections. It handles protocol encoding/decoding, connection management, and routing of commands/events between clients and the session core.
 
-## Endpoint
+## Components
+
+- **Server** (`ws_server.go`) - WebSocket server that listens for client connections
+- **Router** (`router.go`) - Central routing component managing client connections and session bindings
+- **ClientConnection** (`client_conn.go`) - Per-client WebSocket connection handler
+- **Protocol** (`protocol.go`) - Wire format parsing and envelope creation
+- **Types** (`types.go`) - Protocol constants, identity types, and payload definitions
+
+## Architecture
+
+The gateway acts as the API boundary between clients (TUI, Telegram, Web) and the session core:
+
+```
+Clients (TUI/Telegram/Web) ←→ Gateway ←→ Router ←→ Session Manager / Runtime
+                                    ↓
+                                    Bus (events)
+```
+
+### Router
+
+The `Router` is the central component that:
+
+- Manages client connections via `ClientEventConsumer` interface
+- Binds clients to sessions using `ClientIdentity`
+- Routes commands from clients to the appropriate session worker
+- Forwards events from the bus to connected clients
+- Handles session lifecycle (subscribe/unsubscribe)
+
+Key methods:
+- `NewRouter(bus, runtime, manager, sessionOpts)` - Create a new router instance
+- `Start(ctx)` - Start the event forwarding loop
+- `Stop()` - Stop and clean up resources
+- `SubscribeClient(ctx, identity, consumer)` - Register a client and get/create their session
+- `UnsubscribeClient(identity, consumer)` - Unregister a client
+- `HandleCommand(ctx, cmd)` - Process a command from a client
+
+### Client Identity
+
+Clients are identified by `ClientIdentity`:
+
+```go
+type ClientIdentity struct {
+    Type       string // "tui", "web", "telegram", "whatsapp"
+    Identity   string // client-specific identifier
+    Connection string // connection address (for logging)
+}
+```
+
+Identity key format: `{type}:{identity}` (e.g., `telegram:123456`, `tui:default`)
+
+## WebSocket Protocol
+
+This section describes the WebSocket protocol for manual testing (e.g., with Postman WebSocket requests).
+
+### Endpoint
 
 - Default WebSocket URL: `ws://127.0.0.1:7778/ws`
 - Default health URL: `http://127.0.0.1:7778/health`
 - Defaults come from `internal/config/config.go` and may be overridden by your `config.toml`.
 
-## Envelope format
+### Envelope format
 
 All frames are JSON envelopes:
 
@@ -28,11 +82,11 @@ Notes:
 - `request_id` is optional on commands and is echoed back on error frames.
 - Max incoming frame size is `1 MB`.
 
-## Handshake (required first)
+### Handshake (required first)
 
 The first client frame **must** be a handshake of type `client_hello`.
 
-### Client -> Gateway (`handshake/client_hello`)
+#### Client -> Gateway (`handshake/client_hello`)
 
 ```json
 {
@@ -52,7 +106,7 @@ Allowed `client_type` values:
 - `telegram`
 - `whatsapp`
 
-### Gateway -> Client (`handshake/hello_ack`)
+#### Gateway -> Client (`handshake/hello_ack`)
 
 On success:
 
@@ -74,11 +128,11 @@ On success:
 
 On failure, `success` is `false` and `payload.error` is populated.
 
-## Supported commands (client -> gateway)
+### Supported commands (client -> gateway)
 
 After handshake, send `kind: "command"` frames.
 
-### `user_message`
+#### `user_message`
 
 ```json
 {
@@ -91,7 +145,7 @@ After handshake, send `kind: "command"` frames.
 }
 ```
 
-### `new_conversation`
+#### `new_conversation`
 
 ```json
 {
@@ -101,7 +155,7 @@ After handshake, send `kind: "command"` frames.
 }
 ```
 
-### `change_provider_model`
+#### `change_provider_model`
 
 ```json
 {
@@ -115,7 +169,7 @@ After handshake, send `kind: "command"` frames.
 }
 ```
 
-### `create_new_session`
+#### `create_new_session`
 
 ```json
 {
@@ -129,7 +183,7 @@ After handshake, send `kind: "command"` frames.
 }
 ```
 
-### `cancel_agent_run`
+#### `cancel_agent_run`
 
 ```json
 {
@@ -139,7 +193,7 @@ After handshake, send `kind: "command"` frames.
 }
 ```
 
-## Supported events (gateway -> client)
+### Supported events (gateway -> client)
 
 Events are sent as `kind: "event"` and include one of these `type` values:
 
@@ -155,8 +209,8 @@ Events are sent as `kind: "event"` and include one of these `type` values:
 - `agent_done` payload: `{ "prompt_tokens", "completion_tokens", "total_tokens" }`
 - `agent_error` payload: `{ "error" }`
 - `agent_cancelled` payload: `{}`
-- `new_conversation` (event type defined in router)
-- `change_provider_model` (event type defined in router)
+- `new_conversation`
+- `change_provider_model`
 
 Example event:
 
@@ -171,7 +225,7 @@ Example event:
 }
 ```
 
-## Error frames
+### Error frames
 
 Validation or protocol failures are returned as `kind: "error"`:
 

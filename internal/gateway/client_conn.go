@@ -11,19 +11,18 @@ import (
 	"github.com/gorilla/websocket"
 
 	"valinor/internal/logger"
-	"valinor/internal/router"
 )
 
 // ClientConnection represents a single WebSocket client connection.
 type ClientConnection struct {
 	// Immutable fields (safe to read without lock)
 	conn   *websocket.Conn
-	router *router.Router
+	router *Router
 	server *Server
 
 	// Mutable fields (require lock)
 	mu        sync.RWMutex
-	identity  router.ClientIdentity
+	identity  ClientIdentity
 	bound     bool               // true after successful hello
 	outgoing  chan *WireEnvelope // bounded outgoing message queue
 	closed    bool
@@ -36,7 +35,7 @@ type ClientConnection struct {
 }
 
 // NewClientConnection creates a new client connection wrapper.
-func NewClientConnection(conn *websocket.Conn, r *router.Router, server *Server) *ClientConnection {
+func NewClientConnection(conn *websocket.Conn, r *Router, server *Server) *ClientConnection {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &ClientConnection{
@@ -165,7 +164,7 @@ func (c *ClientConnection) handleHandshake() bool {
 	}
 
 	// Create identity
-	identity := router.ClientIdentity{
+	identity := ClientIdentity{
 		Type:       hello.ClientType,
 		Identity:   hello.ClientIdentity,
 		Connection: c.conn.RemoteAddr().String(),
@@ -276,10 +275,10 @@ func (c *ClientConnection) writeEnvelope(env *WireEnvelope) error {
 	return c.conn.WriteJSON(env)
 }
 
-// SendEvent implements router.ClientEventConsumer.
+// SendEvent implements ClientEventConsumer.
 // Returns true if event was queued, false if queue was full (event dropped).
 // The event's RequestID is used for correlation if present; otherwise the last received request ID is used.
-func (c *ClientConnection) SendEvent(event router.Event) bool {
+func (c *ClientConnection) SendEvent(event Event) bool {
 	// Use event's request ID if present, otherwise fall back to last received request ID
 	requestID := event.RequestID
 	if requestID == "" {
@@ -340,7 +339,7 @@ func (c *ClientConnection) getIdentityKey() string {
 	return c.identity.Key()
 }
 
-// Close implements router.ClientEventConsumer and closes the connection.
+// Close implements ClientEventConsumer and closes the connection.
 func (c *ClientConnection) Close() {
 	c.closeOnce.Do(func() {
 		logger.Debug("gateway: closing client connection", logger.BuildMetadata("identity", c.getIdentityKey()))
@@ -369,7 +368,7 @@ func (c *ClientConnection) Close() {
 }
 
 // ServeWs handles WebSocket requests from clients.
-func ServeWs(router *router.Router, server *Server) http.HandlerFunc {
+func ServeWs(router *Router, server *Server) http.HandlerFunc {
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"valinor/internal/logger"
-	"valinor/internal/router"
 )
 
 // Server is the WebSocket gateway server.
@@ -21,7 +20,7 @@ type Server struct {
 	Path string
 
 	// Dependencies
-	router *router.Router
+	router *Router
 
 	// HTTP server
 	server *http.Server
@@ -46,7 +45,7 @@ type Config struct {
 }
 
 // NewServer creates a new WebSocket gateway server.
-func NewServer(cfg Config, r *router.Router) *Server {
+func NewServer(cfg Config, r *Router) *Server {
 	return &Server{
 		Host:        cfg.Host,
 		Port:        cfg.Port,

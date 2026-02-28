@@ -15,7 +15,6 @@ import (
 	"valinor/internal/event"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/router"
 )
 
 // WebSocket timeout and backoff constants.
@@ -31,7 +30,7 @@ type WSBridge struct {
 	// Connection
 	conn       *websocket.Conn
 	gatewayURL string
-	identity   router.ClientIdentity
+	identity   gateway.ClientIdentity
 
 	// Bubble Tea program for sending messages
 	program *tea.Program
@@ -75,8 +74,8 @@ func NewWSBridge(gatewayURL, identity string) *WSBridge {
 	}
 	return &WSBridge{
 		gatewayURL: gatewayURL,
-		identity: router.ClientIdentity{
-			Type:     router.ClientTypeTUI,
+		identity: gateway.ClientIdentity{
+			Type:     gateway.ClientTypeTUI,
 			Identity: identity,
 		},
 		outgoing: make(chan *gateway.WireEnvelope, gateway.OutgoingQueueSize),
@@ -148,8 +147,8 @@ func (b *WSBridge) connect() error {
 	b.conn = conn
 
 	// Send client_hello
-	helloPayload := router.ClientHelloPayload{
-		ProtocolVersion: router.ProtocolVersion,
+	helloPayload := gateway.ClientHelloPayload{
+		ProtocolVersion: gateway.ProtocolVersion,
 		ClientType:      b.identity.Type,
 		ClientIdentity:  b.identity.Identity,
 	}
@@ -157,7 +156,7 @@ func (b *WSBridge) connect() error {
 	helloData, _ := json.Marshal(helloPayload)
 	hello := &gateway.WireEnvelope{
 		Kind:      gateway.KindHandshake,
-		Type:      router.HandshakeClientHello,
+		Type:      gateway.HandshakeClientHello,
 		Timestamp: time.Now().UnixMilli(),
 		Payload:   helloData,
 	}
@@ -179,7 +178,7 @@ func (b *WSBridge) connect() error {
 			return fmt.Errorf("read hello_ack: %w", err)
 		}
 
-		if env.Kind == gateway.KindHandshake && env.Type == router.HandshakeHelloAck {
+		if env.Kind == gateway.KindHandshake && env.Type == gateway.HandshakeHelloAck {
 			ack = env
 			break
 		}
@@ -195,7 +194,7 @@ func (b *WSBridge) connect() error {
 	b.conn.SetReadDeadline(time.Time{}) // Clear deadline
 
 	// Parse ack payload
-	var ackPayload router.HelloAckPayload
+	var ackPayload gateway.HelloAckPayload
 	if err := json.Unmarshal(ack.Payload, &ackPayload); err != nil {
 		conn.Close()
 		return fmt.Errorf("parse hello_ack: %w", err)
@@ -384,17 +383,17 @@ func (b *WSBridge) SendCommand(cmdType string, payload any) bool {
 
 // SendUserMessage sends a user message command.
 func (b *WSBridge) SendUserMessage(content string) bool {
-	return b.SendCommand(router.CommandUserMessage, router.UserMessagePayload{Content: content})
+	return b.SendCommand(gateway.CommandUserMessage, gateway.UserMessagePayload{Content: content})
 }
 
 // SendNewConversation sends a new conversation command.
 func (b *WSBridge) SendNewConversation() bool {
-	return b.SendCommand(router.CommandNewConversation, nil)
+	return b.SendCommand(gateway.CommandNewConversation, nil)
 }
 
 // SendChangeProviderModel sends a change provider/model command.
 func (b *WSBridge) SendChangeProviderModel(provider, model string) bool {
-	return b.SendCommand(router.CommandChangeProviderModel, router.ChangeProviderModelPayload{
+	return b.SendCommand(gateway.CommandChangeProviderModel, gateway.ChangeProviderModelPayload{
 		Provider: provider,
 		Model:    model,
 	})
@@ -402,7 +401,7 @@ func (b *WSBridge) SendChangeProviderModel(provider, model string) bool {
 
 // SendCreateNewSession sends a create new session command.
 func (b *WSBridge) SendCreateNewSession(provider, model string, force bool) bool {
-	return b.SendCommand(router.CommandCreateNewSession, router.CreateNewSessionPayload{
+	return b.SendCommand(gateway.CommandCreateNewSession, gateway.CreateNewSessionPayload{
 		Provider: provider,
 		Model:    model,
 		Force:    force,
@@ -411,14 +410,14 @@ func (b *WSBridge) SendCreateNewSession(provider, model string, force bool) bool
 
 // SendRequestProviderModels sends a request for available models for a provider.
 func (b *WSBridge) SendRequestProviderModels(provider string) bool {
-	return b.SendCommand(router.CommandRequestProviderModels, router.RequestProviderModelsPayload{
+	return b.SendCommand(gateway.CommandRequestProviderModels, gateway.RequestProviderModelsPayload{
 		Provider: provider,
 	})
 }
 
 // SendCancelAgentRun sends a cancel agent run command.
 func (b *WSBridge) SendCancelAgentRun() bool {
-	return b.SendCommand(router.CommandCancelAgentRun, nil)
+	return b.SendCommand(gateway.CommandCancelAgentRun, nil)
 }
 
 // IsConnected returns true if the bridge is connected and handshaked.
@@ -435,12 +434,12 @@ func (b *WSBridge) isClosed() bool {
 	return b.closed
 }
 
-// ParseWSEvent parses a wsEventMsg into a router Event.
+// ParseWSEvent parses a wsEventMsg into a gateway Event.
 // Delegates to the shared event package to eliminate duplication.
-func ParseWSEvent(msg wsEventMsg) (router.Event, error) {
+func ParseWSEvent(msg wsEventMsg) (gateway.Event, error) {
 	ev, err := event.ParseEvent(msg.Type, msg.Payload)
 	if err != nil {
-		return router.Event{}, err
+		return gateway.Event{}, err
 	}
 	return ev, nil
 }

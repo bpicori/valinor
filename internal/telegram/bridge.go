@@ -14,7 +14,6 @@ import (
 	"valinor/internal/event"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/router"
 )
 
 const (
@@ -29,7 +28,7 @@ const (
 )
 
 // EventHandler is called when an event is received from the gateway.
-type EventHandler func(ev router.Event)
+type EventHandler func(ev gateway.Event)
 
 // Bridge manages WebSocket communication with the gateway.
 type Bridge struct {
@@ -188,16 +187,16 @@ func (b *Bridge) connect() error {
 	b.conn = conn
 
 	// Send client_hello with telegram client type
-	helloPayload := router.ClientHelloPayload{
-		ProtocolVersion: router.ProtocolVersion,
-		ClientType:      router.ClientTypeTelegram,
+	helloPayload := gateway.ClientHelloPayload{
+		ProtocolVersion: gateway.ProtocolVersion,
+		ClientType:      gateway.ClientTypeTelegram,
 		ClientIdentity:  b.identity,
 	}
 
 	helloData, _ := json.Marshal(helloPayload)
 	hello := &gateway.WireEnvelope{
 		Kind:      gateway.KindHandshake,
-		Type:      router.HandshakeClientHello,
+		Type:      gateway.HandshakeClientHello,
 		Timestamp: time.Now().UnixMilli(),
 		Payload:   helloData,
 	}
@@ -217,7 +216,7 @@ func (b *Bridge) connect() error {
 			return fmt.Errorf("read hello_ack: %w", err)
 		}
 
-		if env.Kind == gateway.KindHandshake && env.Type == router.HandshakeHelloAck {
+		if env.Kind == gateway.KindHandshake && env.Type == gateway.HandshakeHelloAck {
 			ack = env
 			break
 		}
@@ -233,7 +232,7 @@ func (b *Bridge) connect() error {
 	b.conn.SetReadDeadline(time.Time{}) // Clear deadline
 
 	// Parse ack payload
-	var ackPayload router.HelloAckPayload
+	var ackPayload gateway.HelloAckPayload
 	if err := json.Unmarshal(ack.Payload, &ackPayload); err != nil {
 		conn.Close()
 		return fmt.Errorf("parse hello_ack: %w", err)
@@ -385,13 +384,13 @@ func (b *Bridge) reconnect() error {
 	return fmt.Errorf("max reconnection attempts exceeded")
 }
 
-// parseEvent converts a wire envelope to a router event.
-func (b *Bridge) parseEvent(env gateway.WireEnvelope) (router.Event, error) {
+// parseEvent converts a wire envelope to a gateway event.
+func (b *Bridge) parseEvent(env gateway.WireEnvelope) (gateway.Event, error) {
 	// Import the event parsing from the event package
 	// Since we can't import internal/event directly here without import cycle,
-	// we use the types defined in router package which are aliases to event types
+	// we use the types defined in gateway package which are aliases to event types
 
-	ev := router.Event{
+	ev := gateway.Event{
 		Type:      event.EventType(env.Type),
 		RequestID: env.RequestID,
 	}
@@ -399,91 +398,91 @@ func (b *Bridge) parseEvent(env gateway.WireEnvelope) (router.Event, error) {
 	// Parse payload based on event type
 	switch ev.Type {
 	case event.AgentContentDelta:
-		var p router.ContentDeltaPayload
+		var p gateway.ContentDeltaPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentContentFull:
-		var p router.ContentFullPayload
+		var p gateway.ContentFullPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentThinking:
-		var p router.ThinkingPayload
+		var p gateway.ThinkingPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentStepTokens:
-		var p router.StepTokenUsagePayload
+		var p gateway.StepTokenUsagePayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.ContextTokens:
-		var p router.ContextTokensPayload
+		var p gateway.ContextTokensPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentRefusal:
-		var p router.RefusalPayload
+		var p gateway.RefusalPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentToolCallStart:
-		var p router.ToolCallStartPayload
+		var p gateway.ToolCallStartPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentToolCallDone:
-		var p router.ToolCallDonePayload
+		var p gateway.ToolCallDonePayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentDone:
-		var p router.AgentDonePayload
+		var p gateway.AgentDonePayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentError:
-		var p router.AgentErrorPayload
+		var p gateway.AgentErrorPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.AgentCancelled:
-		var p router.AgentCancelledPayload
+		var p gateway.AgentCancelledPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.ProviderModelsResult:
-		var p router.ProviderModelsResultPayload
+		var p gateway.ProviderModelsResultPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.SessionAttached:
-		var p router.SessionAttachedPayload
+		var p gateway.SessionAttachedPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
@@ -493,14 +492,14 @@ func (b *Bridge) parseEvent(env gateway.WireEnvelope) (router.Event, error) {
 		// No payload
 
 	case event.ChangeModelEvent:
-		var p router.ChangeProviderModelPayload
+		var p gateway.ChangeProviderModelPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}
 		ev.Payload = p
 
 	case event.CronJobResult:
-		var p router.CronJobResultPayload
+		var p gateway.CronJobResultPayload
 		if err := json.Unmarshal(env.Payload, &p); err != nil {
 			return ev, err
 		}

@@ -8,8 +8,8 @@ import (
 
 	"valinor/internal/config"
 	"valinor/internal/event"
+	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/router"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
@@ -511,6 +511,10 @@ func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
 		m.viewport.MouseWheelDelta = 3
 		m.viewport.KeyMap.Up.SetKeys("up")
 		m.viewport.KeyMap.Down.SetKeys("down")
+		m.viewport.KeyMap.HalfPageUp.SetKeys("")
+		m.viewport.KeyMap.HalfPageDown.SetKeys("")
+		m.viewport.KeyMap.PageUp.SetKeys("")
+		m.viewport.KeyMap.PageDown.SetKeys("")
 		m.ready = true
 	} else {
 		m.viewport.Width = m.contentWidth
@@ -533,8 +537,8 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch ev.Type {
-	case event.EventType(router.EventSessionAttached):
-		payload, ok := ev.Payload.(router.SessionAttachedPayload)
+	case event.EventType(gateway.EventSessionAttached):
+		payload, ok := ev.Payload.(gateway.SessionAttachedPayload)
 		if !ok {
 			return m, nil
 		}
@@ -551,24 +555,24 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 			"model", payload.Model,
 		))
 		return m, nil
-	case event.EventType(router.EventNewConversation):
+	case event.EventType(gateway.EventNewConversation):
 		return m, m.handleNewConversation()
-	case event.EventType(router.EventChangeProviderModel):
-		payload, ok := ev.Payload.(router.ChangeProviderModelPayload)
+	case event.EventType(gateway.EventChangeProviderModel):
+		payload, ok := ev.Payload.(gateway.ChangeProviderModelPayload)
 		if !ok {
 			return m, nil
 		}
 		m.providerName = payload.Provider
 		m.modelName = payload.Model
 		return m, nil
-	case event.EventType(router.EventProviderModelsResult):
-		payload, ok := ev.Payload.(router.ProviderModelsResultPayload)
+	case event.EventType(gateway.EventProviderModelsResult):
+		payload, ok := ev.Payload.(gateway.ProviderModelsResultPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleProviderModelsResult(payload)
-	case event.EventType(router.EventContextTokens):
-		payload, ok := ev.Payload.(router.ContextTokensPayload)
+	case event.EventType(gateway.EventContextTokens):
+		payload, ok := ev.Payload.(gateway.ContextTokensPayload)
 		if !ok {
 			return m, nil
 		}
@@ -591,56 +595,56 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch ev.Type {
-	case event.EventType(router.EventAgentContentDelta):
-		payload, ok := ev.Payload.(router.ContentDeltaPayload)
+	case event.EventType(gateway.EventAgentContentDelta):
+		payload, ok := ev.Payload.(gateway.ContentDeltaPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleContentDelta(last, payload)
-	case event.EventType(router.EventAgentContentFull):
-		payload, ok := ev.Payload.(router.ContentFullPayload)
+	case event.EventType(gateway.EventAgentContentFull):
+		payload, ok := ev.Payload.(gateway.ContentFullPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleContentFull(last, payload)
-	case event.EventType(router.EventAgentRefusal):
-		payload, ok := ev.Payload.(router.RefusalPayload)
+	case event.EventType(gateway.EventAgentRefusal):
+		payload, ok := ev.Payload.(gateway.RefusalPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleRefusal(last, payload)
-	case event.EventType(router.EventAgentToolCallStart):
-		payload, ok := ev.Payload.(router.ToolCallStartPayload)
+	case event.EventType(gateway.EventAgentToolCallStart):
+		payload, ok := ev.Payload.(gateway.ToolCallStartPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleToolCallStart(last, payload)
-	case event.EventType(router.EventAgentToolCallDone):
-		payload, ok := ev.Payload.(router.ToolCallDonePayload)
+	case event.EventType(gateway.EventAgentToolCallDone):
+		payload, ok := ev.Payload.(gateway.ToolCallDonePayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleToolCallDone(last, payload)
-	case event.EventType(router.EventAgentDone):
-		payload, ok := ev.Payload.(router.AgentDonePayload)
+	case event.EventType(gateway.EventAgentDone):
+		payload, ok := ev.Payload.(gateway.AgentDonePayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleAgentDone(last, payload)
-	case event.EventType(router.EventAgentError):
-		payload, ok := ev.Payload.(router.AgentErrorPayload)
+	case event.EventType(gateway.EventAgentError):
+		payload, ok := ev.Payload.(gateway.AgentErrorPayload)
 		if !ok {
 			return m, nil
 		}
 		return m, m.handleAgentError(last, payload)
-	case event.EventType(router.EventAgentCancelled):
+	case event.EventType(gateway.EventAgentCancelled):
 		return m, m.handleAgentCancelled(last)
 	default:
 		return m, nil
 	}
 }
 
-func (m *Model) handleProviderModelsResult(payload router.ProviderModelsResultPayload) tea.Cmd {
+func (m *Model) handleProviderModelsResult(payload gateway.ProviderModelsResultPayload) tea.Cmd {
 	if m.state != stateModelPicker || m.modelPickerState != pickerSelectModel {
 		return nil
 	}
@@ -743,25 +747,25 @@ func (m *Model) lastMessage() (*chatMessage, bool) {
 	return &m.messages[len(m.messages)-1], true
 }
 
-func (m *Model) handleContentDelta(last *chatMessage, payload router.ContentDeltaPayload) tea.Cmd {
+func (m *Model) handleContentDelta(last *chatMessage, payload gateway.ContentDeltaPayload) tea.Cmd {
 	last.Content += payload.Content
 	m.appendStreamingContent()
 	return nil
 }
 
-func (m *Model) handleContentFull(last *chatMessage, payload router.ContentFullPayload) tea.Cmd {
+func (m *Model) handleContentFull(last *chatMessage, payload gateway.ContentFullPayload) tea.Cmd {
 	last.Content = payload.Content
 	m.rebuildViewportContent()
 	return nil
 }
 
-func (m *Model) handleRefusal(last *chatMessage, payload router.RefusalPayload) tea.Cmd {
+func (m *Model) handleRefusal(last *chatMessage, payload gateway.RefusalPayload) tea.Cmd {
 	last.Content += payload.Content
 	m.rebuildViewportContent()
 	return nil
 }
 
-func (m *Model) handleToolCallStart(last *chatMessage, payload router.ToolCallStartPayload) tea.Cmd {
+func (m *Model) handleToolCallStart(last *chatMessage, payload gateway.ToolCallStartPayload) tea.Cmd {
 	last.ToolCalls = append(last.ToolCalls, toolCall{
 		ID:   payload.ToolCallID,
 		Name: payload.ToolName,
@@ -771,7 +775,7 @@ func (m *Model) handleToolCallStart(last *chatMessage, payload router.ToolCallSt
 	return nil
 }
 
-func (m *Model) handleToolCallDone(last *chatMessage, payload router.ToolCallDonePayload) tea.Cmd {
+func (m *Model) handleToolCallDone(last *chatMessage, payload gateway.ToolCallDonePayload) tea.Cmd {
 	for i := range last.ToolCalls {
 		if last.ToolCalls[i].ID == payload.ToolCallID && !last.ToolCalls[i].Done {
 			last.ToolCalls[i].Result = payload.ToolResult
@@ -783,7 +787,7 @@ func (m *Model) handleToolCallDone(last *chatMessage, payload router.ToolCallDon
 	return nil
 }
 
-func (m *Model) handleAgentDone(last *chatMessage, payload router.AgentDonePayload) tea.Cmd {
+func (m *Model) handleAgentDone(last *chatMessage, payload gateway.AgentDonePayload) tea.Cmd {
 	last.Streaming = false
 	last.Rendered = renderMarkdown(last.Content, m.width-4)
 	m.contextPrompt = payload.PromptTokens
@@ -793,7 +797,7 @@ func (m *Model) handleAgentDone(last *chatMessage, payload router.AgentDonePaylo
 	return nil
 }
 
-func (m *Model) handleAgentError(last *chatMessage, payload router.AgentErrorPayload) tea.Cmd {
+func (m *Model) handleAgentError(last *chatMessage, payload gateway.AgentErrorPayload) tea.Cmd {
 	logger.Error("tui agent error", logger.BuildMetadata("error", payload.Error))
 	last.Streaming = false
 	if payload.Error != nil {

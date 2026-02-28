@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"valinor/internal/event"
+	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/router"
 )
 
 const (
@@ -181,7 +181,7 @@ func (b *Bot) parseCommand(identity ChatIdentity, msg *Message, updateID int64) 
 			return &Command{
 				Identity:  identity,
 				RequestID: requestID,
-				Type:      router.CommandNewConversation,
+				Type:      gateway.CommandNewConversation,
 				RawText:   msg.Text,
 			}, nil
 
@@ -189,7 +189,7 @@ func (b *Bot) parseCommand(identity ChatIdentity, msg *Message, updateID int64) 
 			return &Command{
 				Identity:         identity,
 				RequestID:        requestID,
-				Type:             router.CommandCancelAgentRun,
+				Type:             gateway.CommandCancelAgentRun,
 				RawText:          msg.Text,
 				IsControlCommand: true,
 			}, nil
@@ -201,8 +201,8 @@ func (b *Bot) parseCommand(identity ChatIdentity, msg *Message, updateID int64) 
 				return &Command{
 					Identity:  identity,
 					RequestID: requestID,
-					Type:      router.CommandChangeProviderModel,
-					Payload: router.ChangeProviderModelPayload{
+					Type:      gateway.CommandChangeProviderModel,
+					Payload: gateway.ChangeProviderModelPayload{
 						Provider: parts[0],
 						Model:    strings.Join(parts[1:], " "),
 					},
@@ -213,8 +213,8 @@ func (b *Bot) parseCommand(identity ChatIdentity, msg *Message, updateID int64) 
 			return &Command{
 				Identity:  identity,
 				RequestID: requestID,
-				Type:      router.CommandUserMessage,
-				Payload: router.UserMessagePayload{
+				Type:      gateway.CommandUserMessage,
+				Payload: gateway.UserMessagePayload{
 					Content: "To change the model, use: /model <provider> <model>",
 				},
 				RawText: msg.Text,
@@ -233,8 +233,8 @@ func (b *Bot) parseCommand(identity ChatIdentity, msg *Message, updateID int64) 
 			return &Command{
 				Identity:  identity,
 				RequestID: requestID,
-				Type:      router.CommandUserMessage,
-				Payload: router.UserMessagePayload{
+				Type:      gateway.CommandUserMessage,
+				Payload: gateway.UserMessagePayload{
 					Content: msg.Text,
 				},
 				RawText: msg.Text,
@@ -246,8 +246,8 @@ func (b *Bot) parseCommand(identity ChatIdentity, msg *Message, updateID int64) 
 	return &Command{
 		Identity:  identity,
 		RequestID: requestID,
-		Type:      router.CommandUserMessage,
-		Payload: router.UserMessagePayload{
+		Type:      gateway.CommandUserMessage,
+		Payload: gateway.UserMessagePayload{
 			Content: msg.Text,
 		},
 		RawText: msg.Text,
@@ -410,7 +410,7 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) error {
 // handleGatewayEvent is called by the bridge when a gateway event is received.
 // The event is converted to a work item and routed through the sequencer
 // to ensure per-chat serialization (matching TUI's single-threaded Update() flow).
-func (b *Bot) handleGatewayEvent(sourceIdentity ChatIdentity, ev router.Event) {
+func (b *Bot) handleGatewayEvent(sourceIdentity ChatIdentity, ev gateway.Event) {
 	// Get chat identity from request tracking, or from session setup events
 	identity, ok := b.getChatForRequest(ev.RequestID)
 	if !ok {
@@ -505,7 +505,7 @@ func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
 	}
 
 	// Handle new conversation command
-	if cmd.Type == router.CommandNewConversation {
+	if cmd.Type == gateway.CommandNewConversation {
 		// Reset streaming state (like TUI's handleNewConversation)
 		state.FinalizeStreaming()
 	}
@@ -516,7 +516,7 @@ func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
 	}
 
 	// Mark as streaming for user messages
-	if cmd.Type == router.CommandUserMessage {
+	if cmd.Type == gateway.CommandUserMessage {
 		state.StartStreaming(cmd.RequestID)
 	}
 
@@ -564,7 +564,7 @@ func (b *Bot) resolveIdentity(requestID string, fallback ChatIdentity) (ChatIden
 
 // shouldProcessEvent returns true if the event should be processed given current state.
 // Always allows session setup events and broadcast events like CronJobResult.
-func (b *Bot) shouldProcessEvent(ev *router.Event, state *ChatState) bool {
+func (b *Bot) shouldProcessEvent(ev *gateway.Event, state *ChatState) bool {
 	switch ev.Type {
 	case event.SessionAttached, event.NewConversation, event.ChangeModelEvent, event.CronJobResult:
 		return true
@@ -574,7 +574,7 @@ func (b *Bot) shouldProcessEvent(ev *router.Event, state *ChatState) bool {
 }
 
 // handleEvent processes event-specific state transitions.
-func (b *Bot) handleEvent(ev *router.Event, identity ChatIdentity, state *ChatState) error {
+func (b *Bot) handleEvent(ev *gateway.Event, identity ChatIdentity, state *ChatState) error {
 	switch ev.Type {
 	case event.AgentContentDelta:
 		return b.handleContentDelta(ev, identity, state)
@@ -601,8 +601,8 @@ func (b *Bot) handleEvent(ev *router.Event, identity ChatIdentity, state *ChatSt
 }
 
 // handleContentDelta accumulates streamed content and sends typing action.
-func (b *Bot) handleContentDelta(ev *router.Event, identity ChatIdentity, state *ChatState) error {
-	if payload, ok := ev.Payload.(router.ContentDeltaPayload); ok {
+func (b *Bot) handleContentDelta(ev *gateway.Event, identity ChatIdentity, state *ChatState) error {
+	if payload, ok := ev.Payload.(gateway.ContentDeltaPayload); ok {
 		state.AppendContent(payload.Content)
 	}
 	if err := b.sendTypingAction(identity, state); err != nil {
@@ -613,8 +613,8 @@ func (b *Bot) handleContentDelta(ev *router.Event, identity ChatIdentity, state 
 }
 
 // handleContentFull replaces accumulated content with full content.
-func (b *Bot) handleContentFull(ev *router.Event, identity ChatIdentity, state *ChatState) error {
-	if payload, ok := ev.Payload.(router.ContentFullPayload); ok {
+func (b *Bot) handleContentFull(ev *gateway.Event, identity ChatIdentity, state *ChatState) error {
+	if payload, ok := ev.Payload.(gateway.ContentFullPayload); ok {
 		state.SetStreamingContent(payload.Content)
 	}
 	if err := b.sendTypingAction(identity, state); err != nil {
@@ -625,8 +625,8 @@ func (b *Bot) handleContentFull(ev *router.Event, identity ChatIdentity, state *
 }
 
 // handleToolCallStart tracks a new tool call.
-func (b *Bot) handleToolCallStart(ev *router.Event, state *ChatState) {
-	if payload, ok := ev.Payload.(router.ToolCallStartPayload); ok {
+func (b *Bot) handleToolCallStart(ev *gateway.Event, state *ChatState) {
+	if payload, ok := ev.Payload.(gateway.ToolCallStartPayload); ok {
 		state.AddToolCall(ToolCallInfo{
 			ID:   payload.ToolCallID,
 			Name: payload.ToolName,
@@ -636,15 +636,15 @@ func (b *Bot) handleToolCallStart(ev *router.Event, state *ChatState) {
 }
 
 // handleToolCallDone marks a tool call as complete.
-func (b *Bot) handleToolCallDone(ev *router.Event, state *ChatState) {
-	if payload, ok := ev.Payload.(router.ToolCallDonePayload); ok {
+func (b *Bot) handleToolCallDone(ev *gateway.Event, state *ChatState) {
+	if payload, ok := ev.Payload.(gateway.ToolCallDonePayload); ok {
 		state.MarkToolCallDone(payload.ToolCallID, payload.ToolResult)
 	}
 }
 
 // handleAgentDone processes the final agent completion.
-func (b *Bot) handleAgentDone(ev *router.Event, identity ChatIdentity, state *ChatState) error {
-	if payload, ok := ev.Payload.(router.AgentDonePayload); ok {
+func (b *Bot) handleAgentDone(ev *gateway.Event, identity ChatIdentity, state *ChatState) error {
+	if payload, ok := ev.Payload.(gateway.AgentDonePayload); ok {
 		state.UpdateUsage(PromptTokenUsage{
 			PromptTokens:     payload.PromptTokens,
 			CompletionTokens: payload.CompletionTokens,
@@ -665,34 +665,34 @@ func (b *Bot) handleAgentDone(ev *router.Event, identity ChatIdentity, state *Ch
 }
 
 // handleAgentError processes agent errors.
-func (b *Bot) handleAgentError(ev *router.Event, state *ChatState) {
+func (b *Bot) handleAgentError(ev *gateway.Event, state *ChatState) {
 	state.FinalizeStreaming()
 	b.cleanupRequest(ev.RequestID)
 }
 
 // handleAgentCancelled processes agent cancellation.
-func (b *Bot) handleAgentCancelled(ev *router.Event, state *ChatState) {
+func (b *Bot) handleAgentCancelled(ev *gateway.Event, state *ChatState) {
 	state.FinalizeStreaming()
 	b.cleanupRequest(ev.RequestID)
 }
 
 // handleSessionAttached stores session info for /status command.
-func (b *Bot) handleSessionAttached(ev *router.Event, state *ChatState) {
-	if payload, ok := ev.Payload.(router.SessionAttachedPayload); ok {
+func (b *Bot) handleSessionAttached(ev *gateway.Event, state *ChatState) {
+	if payload, ok := ev.Payload.(gateway.SessionAttachedPayload); ok {
 		state.UpdateSessionInfo(payload.SessionKey, payload.Provider, payload.Model)
 	}
 }
 
 // handleModelChanged updates provider/model in state.
-func (b *Bot) handleModelChanged(ev *router.Event, state *ChatState) {
-	if payload, ok := ev.Payload.(router.ChangeProviderModelPayload); ok {
+func (b *Bot) handleModelChanged(ev *gateway.Event, state *ChatState) {
+	if payload, ok := ev.Payload.(gateway.ChangeProviderModelPayload); ok {
 		state.ProviderName = payload.Provider
 		state.ModelName = payload.Model
 	}
 }
 
 // handleCronJobResult sends scheduled job results to the chat.
-func (b *Bot) handleCronJobResult(ev *router.Event, identity ChatIdentity) error {
+func (b *Bot) handleCronJobResult(ev *gateway.Event, identity ChatIdentity) error {
 	if payload, ok := ev.Payload.(event.CronJobResultPayload); ok {
 		// Build display title - use job name if available
 		title := "Scheduled Task"
@@ -721,7 +721,7 @@ func (b *Bot) handleCronJobResult(ev *router.Event, identity ChatIdentity) error
 }
 
 // renderAndSend renders an event and sends it via Telegram API.
-func (b *Bot) renderAndSend(identity ChatIdentity, state *ChatState, ev router.Event) error {
+func (b *Bot) renderAndSend(identity ChatIdentity, state *ChatState, ev gateway.Event) error {
 	result := b.renderer.RenderEvent(ev)
 	if result == nil {
 		return nil
@@ -782,7 +782,7 @@ func (b *Bot) createBridgeLocked(identity ChatIdentity, identityKey string) (*Br
 	chatBridge := NewBridge(
 		b.config.GatewayURL,
 		identityKey,
-		func(ev router.Event) {
+		func(ev gateway.Event) {
 			b.handleGatewayEvent(identity, ev)
 		},
 	)

@@ -13,7 +13,6 @@ import (
 	"valinor/internal/cron"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/router"
 	"valinor/internal/scheduler"
 	"valinor/internal/session"
 	"valinor/internal/telegram"
@@ -134,7 +133,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	defer runtime.Close()
 
 	// Create router
-	rtr := router.NewRouter(b, runtime, sm, sessionOpts)
+	rtr := gateway.NewRouter(b, runtime, sm, sessionOpts)
 	rtr.Start(ctx)
 	defer rtr.Stop()
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"valinor/internal/event"
-	"valinor/internal/router"
+	"valinor/internal/gateway"
 )
 
 // MaxTelegramMessageLength is Telegram's maximum message length.
@@ -55,10 +55,10 @@ func NewRenderer() *Renderer {
 	return &Renderer{}
 }
 
-// RenderEvent converts a router event to a Telegram message.
+// RenderEvent converts a gateway event to a Telegram message.
 // Returns nil if the event should not result in a message.
 // This is a pure function - all state decisions are made by the caller.
-func (r *Renderer) RenderEvent(ev router.Event) *RenderResult {
+func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 	switch ev.Type {
 	case event.AgentContentDelta:
 		return r.renderContentDelta(ev.Payload)
@@ -105,7 +105,7 @@ func (r *Renderer) renderContentFull(payload interface{}) *RenderResult {
 
 // renderThinking renders a thinking message.
 func (r *Renderer) renderThinking(payload interface{}) *RenderResult {
-	p, ok := payload.(router.ThinkingPayload)
+	p, ok := payload.(gateway.ThinkingPayload)
 	if !ok {
 		return nil
 	}
@@ -120,7 +120,7 @@ func (r *Renderer) renderThinking(payload interface{}) *RenderResult {
 // Note: This sends as a new message rather than editing, to avoid replacing
 // the streaming content that was already delivered.
 func (r *Renderer) renderDone(payload interface{}) *RenderResult {
-	p, ok := payload.(router.AgentDonePayload)
+	p, ok := payload.(gateway.AgentDonePayload)
 	if !ok {
 		// If no payload, don't show anything - the streaming content is already visible
 		return nil
@@ -147,7 +147,7 @@ func (r *Renderer) renderDone(payload interface{}) *RenderResult {
 // renderError renders an error message.
 // This edits the streaming message to show the error.
 func (r *Renderer) renderError(payload interface{}) *RenderResult {
-	p, ok := payload.(router.AgentErrorPayload)
+	p, ok := payload.(gateway.AgentErrorPayload)
 	if !ok {
 		return &RenderResult{
 			Text:      "❌ *Error occurred*",
@@ -181,7 +181,7 @@ func (r *Renderer) renderCancelled() *RenderResult {
 
 // renderSessionAttached renders a session attachment notification.
 func (r *Renderer) renderSessionAttached(payload interface{}) *RenderResult {
-	p, ok := payload.(router.SessionAttachedPayload)
+	p, ok := payload.(gateway.SessionAttachedPayload)
 	if !ok {
 		return nil
 	}
@@ -200,7 +200,7 @@ func (r *Renderer) renderSessionAttached(payload interface{}) *RenderResult {
 
 // renderModelChanged renders a model change notification.
 func (r *Renderer) renderModelChanged(payload interface{}) *RenderResult {
-	p, ok := payload.(router.ChangeProviderModelPayload)
+	p, ok := payload.(gateway.ChangeProviderModelPayload)
 	if !ok {
 		return nil
 	}

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/router"
 )
 
 // Sequential key patterns for deterministic session resume and ordered processing.
@@ -60,7 +60,7 @@ func (ci ChatIdentity) IsForumTopic() bool {
 	return ci.ThreadID != nil
 }
 
-// ToClientIdentity converts ChatIdentity to router.ClientIdentity.
+// ToClientIdentity converts ChatIdentity to gateway.ClientIdentity.
 // The identity string is formatted as "{chatID}" or "{chatID}:topic:{threadID}".
 func (ci ChatIdentity) ToClientIdentity() string {
 	if ci.ThreadID != nil {
@@ -350,7 +350,7 @@ type WorkItem struct {
 	Command *Command
 
 	// For event work items (stored by value for safety)
-	Event router.Event
+	Event gateway.Event
 
 	// RequestID for correlation
 	RequestID string
