@@ -709,7 +709,11 @@ func (b *Bot) handleCronJobResult(ev *router.Event, identity ChatIdentity) error
 			ParseMode: "",
 			IsFinal:   true,
 		}
-		if err := b.sendTelegramMessage(identity, nil, result); err != nil {
+
+		// Get or create chat state for tracking the message
+		state := b.stateStore.GetOrCreate(identity)
+
+		if err := b.sendTelegramMessage(identity, state, result); err != nil {
 			return fmt.Errorf("send cron job result: %w", err)
 		}
 	}

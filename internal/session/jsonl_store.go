@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	agentcontext "valinor/internal/context"
 	"valinor/internal/logger"
@@ -18,7 +19,9 @@ const (
 
 // JSONLStore implements Store using JSONL files on disk.
 type JSONLStore struct {
-	dir string
+	dir    string
+	mu     sync.Mutex
+	closed bool
 }
 
 // NewJSONLStore opens or creates a session directory and returns a Store.
@@ -144,8 +147,14 @@ func (s *JSONLStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 	return &meta, nil
 }
 
-// Close releases resources.
+// Close releases resources. Safe to call multiple times.
 func (s *JSONLStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	logger.Debug("store close success", logger.BuildMetadata("dir", s.dir))
 	return nil
 }
