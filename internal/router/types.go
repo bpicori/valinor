@@ -3,6 +3,8 @@
 package router
 
 import (
+	"fmt"
+
 	"valinor/internal/event"
 )
 
@@ -147,4 +149,22 @@ type Event = event.Event
 // Now a no-op since both use the same event.Event type.
 func FromBusEvent(be event.Event) Event {
 	return be
+}
+
+// ValidateClientIdentity checks if a client identity is valid.
+// Returns an error if the identity is invalid.
+func ValidateClientIdentity(identity ClientIdentity) error {
+	if identity.Type == "" {
+		return fmt.Errorf("client_type is required")
+	}
+
+	if !ValidClientTypes[identity.Type] {
+		return fmt.Errorf("invalid client_type: %s", identity.Type)
+	}
+
+	if identity.Identity == "" {
+		return fmt.Errorf("client_identity is required")
+	}
+
+	return nil
 }

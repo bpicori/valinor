@@ -14,13 +14,17 @@ import (
 
 // Metadata holds session metadata persisted in metadata.json.
 type Metadata struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	WorkspaceDir string    `json:"workspace_dir"`
-	Provider     string    `json:"provider,omitempty"` // Config key for the LLM provider
-	Model        string    `json:"model,omitempty"`    // Model ID for the session
+	ID             string    `json:"id"`
+	Title          string    `json:"title"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	WorkspaceDir   string    `json:"workspace_dir"`
+	Provider       string    `json:"provider,omitempty"` // Config key for the LLM provider
+	Model          string    `json:"model,omitempty"`    // Model ID for the session
+	ClientType     string    `json:"client_type,omitempty"`     // Client type that owns this session (e.g., "tui", "telegram")
+	ClientIdentity string    `json:"client_identity,omitempty"` // Client identity that owns this session
+	Active         bool      `json:"active,omitempty"`          // Whether this is the active session for the client
+	Temporary      bool      `json:"temporary,omitempty"`       // Whether this is a temporary (non-persisted) session
 }
 
 // Session owns the agent and persists conversation messages to the store.

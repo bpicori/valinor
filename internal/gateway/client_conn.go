@@ -172,7 +172,7 @@ func (c *ClientConnection) handleHandshake() bool {
 	}
 
 	// Register with router (this creates/gets session)
-	binding, err := c.router.SubscribeClient(c.ctx, identity, c)
+	sess, err := c.router.SubscribeClient(c.ctx, identity, c)
 	if err != nil {
 		logger.Error("gateway: failed to subscribe client",
 			logger.BuildMetadata("error", err, "identity", identity.Key()))
@@ -187,12 +187,12 @@ func (c *ClientConnection) handleHandshake() bool {
 	c.mu.Unlock()
 
 	// Send success response
-	meta := binding.Session.Meta()
-	c.sendHandshakeResponse(true, "", binding.PublicKey, meta.Provider, meta.Model, 0, true)
+	meta := sess.Meta()
+	c.sendHandshakeResponse(true, "", identity.SessionKey(meta.ID), meta.Provider, meta.Model, 0, true)
 
 	logger.Info("gateway: client connected",
 		logger.BuildMetadata("identity", identity.Key(),
-			"session_id", binding.SessionID,
+			"session_id", meta.ID,
 			"remote_addr", c.conn.RemoteAddr()))
 
 	return true

@@ -100,6 +100,7 @@ func (w *sessionWorker) close() {
 }
 
 // Runtime owns the session worker registry and handles command dispatch.
+// Commands are dispatched directly via HandleCommandForSession rather than through bus events.
 type Runtime struct {
 	ctx         context.Context
 	manager     *Manager
@@ -113,8 +114,6 @@ type Runtime struct {
 	started       bool
 	closed        bool
 	wg            sync.WaitGroup
-
-	busSub *bus.Subscription
 }
 
 // NewRuntime creates a session runtime with a worker registry.
@@ -133,7 +132,7 @@ func NewRuntime(
 	}
 }
 
-// Start starts the runtime's command handling loop.
+// Start starts the runtime.
 func (r *Runtime) Start() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -143,18 +142,6 @@ func (r *Runtime) Start() {
 	}
 	r.started = true
 	r.runtimeCtx, r.runtimeCancel = context.WithCancel(r.ctx)
-
-	// Subscribe to all command events from the bus
-	r.busSub = r.bus.Subscribe(
-		event.UserMessage,
-		event.NewConversation,
-		event.ChangeProviderModel,
-		event.CreateNewSession,
-		event.RequestProviderModels,
-		event.CancelAgentRun,
-	)
-
-	r.startCommandHandlerLocked()
 }
 
 // GetOrCreateWorker gets an existing worker for the session or creates a new one.
@@ -233,119 +220,6 @@ func (r *Runtime) ListActiveSessions() []string {
 	return sessionIDs
 }
 
-func (r *Runtime) startCommandHandlerLocked() {
-	r.wg.Add(1)
-	go r.runCommandHandlerLoop()
-}
-
-func (r *Runtime) runCommandHandlerLoop() {
-	defer r.wg.Done()
-	for {
-		select {
-		case <-r.runtimeCtx.Done():
-			return
-		case ev, ok := <-r.busSub.Ch():
-			if !ok {
-				return
-			}
-			r.handleCommandEvent(ev)
-		}
-	}
-}
-
-// handleCommandEvent processes a command event from the bus.
-// Events without explicit session context are currently broadcast to all workers
-// (legacy behavior). Per-session routing requires session context in the event.
-func (r *Runtime) handleCommandEvent(ev event.Event) {
-	switch ev.Type {
-	case event.UserMessage:
-		payload, ok := ev.Payload.(event.UserMessagePayload)
-		if !ok {
-			return
-		}
-		// Session-scoped delivery: if event has session context, deliver only to that session's worker.
-		// Only broadcast to all workers if no session context is available (legacy fallback).
-		if ev.SessionID != "" {
-			if worker, err := r.GetWorker(ev.SessionID); err == nil {
-				if err := worker.handleUserMessage(r.runtimeCtx, ev.RequestID, payload.Content, r.bus); err != nil {
-					logger.Error("session worker user message failed",
-						logger.BuildMetadata("session_id", worker.session.Meta().ID, "error", err))
-				}
-			}
-		} else {
-			// Legacy fallback: broadcast to all workers (for events without session context)
-			r.dispatchToAllWorkers(func(w *sessionWorker) {
-				if err := w.handleUserMessage(r.runtimeCtx, ev.RequestID, payload.Content, r.bus); err != nil {
-					logger.Error("session worker user message failed",
-						logger.BuildMetadata("session_id", w.session.Meta().ID, "error", err))
-				}
-			})
-		}
-	case event.NewConversation:
-		// Broadcast to all workers
-		r.dispatchToAllWorkers(func(w *sessionWorker) {
-			w.session.ResetConversation()
-			r.publishContextTokens(w.session)
-		})
-	case event.ChangeProviderModel:
-		payload, ok := ev.Payload.(event.ChangeProviderModelPayload)
-		if !ok {
-			return
-		}
-		// Broadcast to all workers
-		r.dispatchToAllWorkers(func(w *sessionWorker) {
-			if err := w.session.SwitchProviderModel(r.runtimeCtx, payload.Provider, payload.Model); err != nil {
-				logger.Error("session worker change provider/model failed",
-					logger.BuildMetadata("session_id", w.session.Meta().ID, "provider", payload.Provider, "model", payload.Model, "error", err))
-			}
-		})
-	case event.CreateNewSession:
-		// This is handled by HandleCreateSessionRequest which has explicit session context
-		logger.Debug("runtime: create_new_session should be handled via HandleCreateSessionRequest", nil)
-	case event.CancelAgentRun:
-		// Session-scoped cancel: if event has session context, cancel only that session's worker.
-		// Only broadcast to all workers if no session context is available (legacy fallback).
-		if ev.SessionID != "" {
-			if worker, err := r.GetWorker(ev.SessionID); err == nil {
-				worker.cancelRun()
-				// Emit cancelled event with session context for proper routing
-				r.bus.Publish(event.Event{
-					Type:      event.AgentCancelled,
-					Payload:   event.AgentCancelledPayload{},
-					SessionID: ev.SessionID,
-					RequestID: ev.RequestID,
-				})
-			}
-		} else {
-			// Legacy fallback: broadcast cancel to all workers (for events without session context)
-			r.dispatchToAllWorkers(func(w *sessionWorker) {
-				w.cancelRun()
-			})
-		}
-	case event.RequestProviderModels:
-		payload, ok := ev.Payload.(event.RequestProviderModelsPayload)
-		if !ok {
-			return
-		}
-		// For bus events without session context, broadcast the result to all sessions
-		// The router will filter based on session binding
-		r.handleRequestProviderModels(payload.Provider, ev.SessionID, ev.RequestID)
-	}
-}
-
-// dispatchToAllWorkers executes the given function for all workers.
-func (r *Runtime) dispatchToAllWorkers(fn func(*sessionWorker)) {
-	r.mu.RLock()
-	workers := make([]*sessionWorker, 0, len(r.workers))
-	for _, w := range r.workers {
-		workers = append(workers, w)
-	}
-	r.mu.RUnlock()
-
-	for _, w := range workers {
-		fn(w)
-	}
-}
 
 // HandleCommandForSession processes a command for a specific session.
 // This is the preferred API for router-targeted command dispatch.
@@ -469,10 +343,6 @@ func (r *Runtime) Close() {
 		return
 	}
 	r.closed = true
-	if r.busSub != nil {
-		r.bus.Unsubscribe(r.busSub)
-		r.busSub = nil
-	}
 	if r.runtimeCancel != nil {
 		r.runtimeCancel()
 		r.runtimeCancel = nil

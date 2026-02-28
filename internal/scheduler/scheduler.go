@@ -169,8 +169,8 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 			logger.BuildMetadata("job_id", job.ID, "next_run", updatedJob.NextRunAt.Format(time.RFC3339)))
 	}
 
-	// Create a fresh isolated session for this job execution
-	sess, err := s.manager.Create(ctx, s.sessionOpts)
+	// Create a fresh isolated temporary session for this job execution
+	sess, err := s.manager.CreateTemporary(ctx, s.sessionOpts)
 	if err != nil {
 		logger.Error("scheduler: failed to create session for job",
 			logger.BuildMetadata("job_id", job.ID, "error", err))

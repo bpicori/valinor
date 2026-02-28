@@ -133,16 +133,8 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	runtime.Start()
 	defer runtime.Close()
 
-	// Create identity map store
-	identityMap, err := session.NewIdentityMapStore(valinorDir)
-	if err != nil {
-		logger.Warning("failed to create identity map store, continuing without persistence",
-			logger.BuildMetadata("error", err))
-		identityMap = nil
-	}
-
 	// Create router
-	rtr := router.NewRouter(b, runtime, sm, sessionOpts, identityMap)
+	rtr := router.NewRouter(b, runtime, sm, sessionOpts)
 	rtr.Start(ctx)
 	defer rtr.Stop()
 
