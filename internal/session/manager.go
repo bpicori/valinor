@@ -107,7 +107,11 @@ func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, er
 		logger.Error("session create save messages error", logger.BuildMetadata("session_id", id, "error", err))
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
-	sess := NewSession(meta, store, ag, systemPrompt, initialMessages, m.config)
+	sess, err := NewSession(meta, store, ag, systemPrompt, initialMessages, m.config)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("create session instance: %w", err)
+	}
 	logger.Info("session create success", logger.BuildMetadata("session_id", id, "provider", providerName, "model", model, "workspace_dir", workspaceDir))
 	return sess, nil
 }
@@ -175,7 +179,11 @@ func (m *Manager) Resume(ctx context.Context, id string, opts SessionOptions) (*
 	_ = store.SaveMetadata(ctx, *meta)
 	_ = store.SaveMessages(ctx, msgs)
 
-	sess := NewSession(*meta, store, ag, systemPrompt, msgs, m.config)
+	sess, err := NewSession(*meta, store, ag, systemPrompt, msgs, m.config)
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("create session instance: %w", err)
+	}
 	logger.Info("session resume success", logger.BuildMetadata("session_id", id, "message_count", len(msgs)))
 	return sess, nil
 }

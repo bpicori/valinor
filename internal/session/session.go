@@ -34,14 +34,20 @@ type Session struct {
 }
 
 // NewSession creates a session with one owned context state.
-func NewSession(meta Metadata, store Store, ag *llm.LLM, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config) *Session {
+func NewSession(meta Metadata, store Store, ag *llm.LLM, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config) (*Session, error) {
+	if store == nil {
+		return nil, fmt.Errorf("store is required")
+	}
+	if ag == nil {
+		return nil, fmt.Errorf("agent is required")
+	}
 	return &Session{
 		meta:         meta,
 		store:        store,
 		agent:        ag,
 		agentContext: agentcontext.NewContext(systemPrompt, initialMessages),
 		config:       cfg,
-	}
+	}, nil
 }
 
 // HandleUserMessage appends and processes a user message through the active agent.

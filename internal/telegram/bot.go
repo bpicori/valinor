@@ -31,6 +31,7 @@ type Bot struct {
 	// Components
 	client    *Client
 	store     *offsetStore
+	chatStore *KnownChatStore
 	poller    *Poller
 	sequencer *Sequencer
 	bridges   map[string]*Bridge
@@ -276,11 +277,18 @@ func NewBot(cfg Config) (*Bot, error) {
 		return nil, fmt.Errorf("gateway URL is required")
 	}
 
+	// Initialize known chats store
+	chatStore, err := newKnownChatStore(cfg.StorageDir)
+	if err != nil {
+		return nil, fmt.Errorf("initialize known chats store: %w", err)
+	}
+
 	return &Bot{
 		config:       cfg,
 		stateStore:   NewChatStateStore(),
 		requestChats: make(map[string]ChatIdentity),
 		bridges:      make(map[string]*Bridge),
+		chatStore:    chatStore,
 	}, nil
 }
 
@@ -316,6 +324,9 @@ func (b *Bot) Start(ctx context.Context) error {
 	// Initialize sequencer with unified work processor
 	// This is key: both commands AND events go through the same sequential path
 	b.sequencer = NewSequencer(b.processWorkItem)
+
+	// Pre-create bridges for all known chats so they can receive cron results
+	b.preCreateBridgesForKnownChats()
 
 	// Initialize poller
 	b.poller = NewPoller(b.client, b.store, b.handleUpdate)
@@ -372,6 +383,12 @@ func (b *Bot) handleUpdate(ctx context.Context, update Update) error {
 	if cmd == nil {
 		// Update was filtered out (no message, etc.)
 		return nil
+	}
+
+	// Record this chat as known (persist for future bridge pre-creation)
+	if err := b.chatStore.Add(cmd.Identity); err != nil {
+		logger.Warning("telegram bot: failed to record chat",
+			logger.BuildMetadata("error", err, "chat_id", cmd.Identity.ChatID))
 	}
 
 	// Create work item for the command
@@ -752,6 +769,12 @@ func (b *Bot) getOrCreateBridge(identity ChatIdentity) (*Bridge, error) {
 		return existing, nil
 	}
 
+	return b.createBridgeLocked(identity, identityKey)
+}
+
+// createBridgeLocked creates a new bridge for the given identity.
+// Must be called with b.bridgesMu held for writing.
+func (b *Bot) createBridgeLocked(identity ChatIdentity, identityKey string) (*Bridge, error) {
 	chatBridge := NewBridge(
 		b.config.GatewayURL,
 		identityKey,
@@ -765,6 +788,51 @@ func (b *Bot) getOrCreateBridge(identity ChatIdentity) (*Bridge, error) {
 
 	b.bridges[identityKey] = chatBridge
 	return chatBridge, nil
+}
+
+// preCreateBridgesForKnownChats creates bridges for all known chats on startup.
+// This ensures cron results are delivered to all chats that have ever messaged the bot,
+// not just those that are currently sending messages.
+func (b *Bot) preCreateBridgesForKnownChats() {
+	knownChats := b.chatStore.List()
+	if len(knownChats) == 0 {
+		return
+	}
+
+	logger.Info("telegram bot: pre-creating bridges for known chats",
+		logger.BuildMetadata("count", len(knownChats)))
+
+	created := 0
+	failed := 0
+
+	for _, chat := range knownChats {
+		identity := chat.ToChatIdentity()
+		identityKey := identity.ToClientIdentity()
+
+		// Check if bridge already exists
+		b.bridgesMu.RLock()
+		exists := b.bridges[identityKey] != nil
+		b.bridgesMu.RUnlock()
+
+		if exists {
+			continue
+		}
+
+		b.bridgesMu.Lock()
+		_, err := b.createBridgeLocked(identity, identityKey)
+		b.bridgesMu.Unlock()
+
+		if err != nil {
+			logger.Warning("telegram bot: failed to pre-create bridge for known chat",
+				logger.BuildMetadata("error", err, "chat_id", identity.ChatID, "thread_id", identity.ThreadID))
+			failed++
+		} else {
+			created++
+		}
+	}
+
+	logger.Info("telegram bot: pre-created bridges",
+		logger.BuildMetadata("created", created, "failed", failed, "total_known", len(knownChats)))
 }
 
 // stopAllBridges stops and clears all per-chat bridges.
