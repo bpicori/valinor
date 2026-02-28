@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"valinor/internal/bus"
 	"valinor/internal/event"
+	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 	"valinor/internal/tokens"
 )
@@ -36,7 +36,7 @@ func newSessionWorker(sess *Session) *sessionWorker {
 
 // handleUserMessage processes a user message for this session.
 // It manages its own run cancellation state independently.
-func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string, content string, bus *bus.Bus) error {
+func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string, content string, bus *event_bus.Bus) error {
 	w.mu.Lock()
 	if w.closed {
 		w.mu.Unlock()
@@ -105,7 +105,7 @@ type Runtime struct {
 	ctx         context.Context
 	manager     *Manager
 	sessionOpts SessionOptions
-	bus         *bus.Bus
+	bus         *event_bus.Bus
 
 	mu            sync.RWMutex
 	workers       map[string]*sessionWorker // sessionID -> worker
@@ -121,7 +121,7 @@ func NewRuntime(
 	ctx context.Context,
 	manager *Manager,
 	sessionOpts SessionOptions,
-	eventBus *bus.Bus,
+	eventBus *event_bus.Bus,
 ) *Runtime {
 	return &Runtime{
 		ctx:         ctx,
@@ -219,7 +219,6 @@ func (r *Runtime) ListActiveSessions() []string {
 	}
 	return sessionIDs
 }
-
 
 // HandleCommandForSession processes a command for a specific session.
 // This is the preferred API for router-targeted command dispatch.

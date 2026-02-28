@@ -8,9 +8,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"valinor/internal/bus"
 	"valinor/internal/config"
 	"valinor/internal/cron"
+	"valinor/internal/event_bus"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
 	"valinor/internal/scheduler"
@@ -118,7 +118,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 
 	// Initialize core components
-	b := bus.New()
+	b := event_bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir, cfg)
 
 	// Session options used when router/runtime create or resume sessions on-demand.

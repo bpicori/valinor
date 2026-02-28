@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"valinor/internal/bus"
 	"valinor/internal/event"
+	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 	"valinor/internal/session"
 )
@@ -23,7 +23,7 @@ type ClientEventConsumer interface {
 // Router is the central routing component that manages client connections,
 // session bindings, and routes commands/events between clients and the session core.
 type Router struct {
-	bus         *bus.Bus
+	bus         *event_bus.Bus
 	runtime     *session.Runtime
 	manager     *session.Manager
 	sessionOpts session.SessionOptions
@@ -36,12 +36,12 @@ type Router struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	busSub *bus.Subscription
+	busSub *event_bus.Subscription
 }
 
 // NewRouter creates a new router instance.
 func NewRouter(
-	b *bus.Bus,
+	b *event_bus.Bus,
 	runtime *session.Runtime,
 	manager *session.Manager,
 	sessionOpts session.SessionOptions,

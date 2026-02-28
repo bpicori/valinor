@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 
-	"valinor/internal/bus"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/event"
+	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 )
 
@@ -20,7 +20,7 @@ const (
 )
 
 // New creates an LLM runtime with the given provider and tools.
-func New(provider Provider, model string, tools []Tool, b *bus.Bus, maxIterations int) (*LLM, error) {
+func New(provider Provider, model string, tools []Tool, b *event_bus.Bus, maxIterations int) (*LLM, error) {
 	if maxIterations <= 0 {
 		maxIterations = 20
 	}

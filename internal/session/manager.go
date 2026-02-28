@@ -8,9 +8,9 @@ import (
 	"sort"
 	"time"
 
-	"valinor/internal/bus"
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
+	"valinor/internal/event_bus"
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
@@ -22,7 +22,7 @@ import (
 
 // SessionOptions holds parameters for creating/resuming a session.
 type SessionOptions struct {
-	Bus                *bus.Bus
+	Bus                *event_bus.Bus
 	MaxAgentIterations int
 	// Provider and Model override manager config defaults when set.
 	Provider string
@@ -437,14 +437,14 @@ func (m *Manager) CreateTemporary(ctx context.Context, opts SessionOptions) (*Se
 
 	now := time.Now()
 	meta := Metadata{
-		ID:        id,
-		Title:     "Temporary " + id[:8],
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           id,
+		Title:        "Temporary " + id[:8],
+		CreatedAt:    now,
+		UpdatedAt:    now,
 		WorkspaceDir: workspaceDir,
 		Provider:     providerName,
 		Model:        model,
-		Temporary:    true, // Mark as temporary
+		Temporary:    true,  // Mark as temporary
 		Active:       false, // Temporary sessions are not "active" in the client sense
 	}
 
@@ -568,7 +568,7 @@ func createTools(workspaceDir string) ([]llm.Tool, error) {
 	return tools.BuildTools(rt), nil
 }
 
-func buildAgent(workspaceDir string, providerCfg config.ProviderConfig, model string, b *bus.Bus, maxIterations int) (*llm.LLM, error) {
+func buildAgent(workspaceDir string, providerCfg config.ProviderConfig, model string, b *event_bus.Bus, maxIterations int) (*llm.LLM, error) {
 	provider, err := createProvider(providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider: %w", err)

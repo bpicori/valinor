@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"valinor/internal/bus"
 	agentcontext "valinor/internal/context"
+	"valinor/internal/event_bus"
 )
 
 // StreamDelta represents a chunk of streamed content from the provider.
@@ -22,7 +22,7 @@ type StreamCallback func(delta StreamDelta)
 type LLM struct {
 	provider      Provider
 	model         string
-	bus           *bus.Bus
+	bus           *event_bus.Bus
 	maxIterations int
 	tools         []Tool
 }

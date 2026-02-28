@@ -11,21 +11,21 @@ import (
 
 	"github.com/google/uuid"
 
-	"valinor/internal/bus"
 	"valinor/internal/config"
 	"valinor/internal/cron"
 	"valinor/internal/event"
+	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 	"valinor/internal/session"
 )
 
 // Scheduler runs scheduled jobs from the cron service.
 type Scheduler struct {
-	cronService  *cron.Service
-	manager      *session.Manager
-	sessionOpts  session.SessionOptions
-	bus          *bus.Bus
-	interval     time.Duration
+	cronService *cron.Service
+	manager     *session.Manager
+	sessionOpts session.SessionOptions
+	bus         *event_bus.Bus
+	interval    time.Duration
 
 	mu      sync.Mutex
 	cancel  context.CancelFunc
@@ -34,18 +34,18 @@ type Scheduler struct {
 }
 
 // New creates a new scheduler with the given cron service.
-func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.SessionOptions, b *bus.Bus, cfg config.SchedulerConfig) *Scheduler {
+func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.SessionOptions, b *event_bus.Bus, cfg config.SchedulerConfig) *Scheduler {
 	interval, _ := time.ParseDuration(cfg.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Minute
 	}
 
 	return &Scheduler{
-		cronService:  cronService,
-		manager:      manager,
-		sessionOpts:  sessionOpts,
-		bus:          b,
-		interval:     interval,
+		cronService: cronService,
+		manager:     manager,
+		sessionOpts: sessionOpts,
+		bus:         b,
+		interval:    interval,
 	}
 }
 
