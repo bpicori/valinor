@@ -486,8 +486,6 @@ func (r *Router) forwardEventToClients(be event.Event, sessionID string) {
 		// Targeted delivery: send only to consumers bound to this session
 		consumers = r.getSessionConsumers(sessionID)
 		if len(consumers) == 0 {
-			logger.Debug("router: no consumers bound to session for event",
-				logger.BuildMetadata("event_type", routerEvent.Type, "session_id", sessionID))
 			return
 		}
 	} else {

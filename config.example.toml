@@ -36,6 +36,7 @@ gateway_path = "/ws"
 # valinor_dir = "~/.valinor"
 # session_dir = "~/.valinor/sessions"
 # workspace_dir = "~/.valinor/workspace"
+# cron_dir = "~/.valinor/cron"     # Cron job storage (jobs.json)
 
 # Agent configuration
 max_agent_iterations = 20
@@ -51,7 +52,8 @@ max_agent_iterations = 20
 # require_mention = false        # Require @bot mention in groups
 
 # Scheduled jobs configuration (optional)
-# Uncomment to enable Cron.md based scheduled jobs
+# The agent can schedule jobs using cron tools (cron_add, cron_list, cron_remove).
+# Jobs are persisted to ~/.valinor/cron/jobs.json and run in isolated sessions.
 # [scheduler]
 # enabled = true
-# check_interval = "30m"         # Interval between cron checks (e.g., "30m", "1h")
+# check_interval = "30m"         # How often to check for due jobs (e.g., "30m", "1h")

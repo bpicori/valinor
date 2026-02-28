@@ -138,6 +138,8 @@ type SessionAttachedPayload struct {
 
 // CronJobResultPayload carries the result of a scheduled cron job execution.
 type CronJobResultPayload struct {
+	JobID     string    `json:"job_id,omitempty"`   // ID of the job that ran
+	JobName   string    `json:"job_name,omitempty"` // Name of the job
 	Content   string    `json:"content"`
 	Timestamp time.Time `json:"timestamp"`
 }

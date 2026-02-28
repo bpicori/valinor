@@ -32,7 +32,9 @@ run-telegram: build
 	./$(BINARY) -mode=telegram
 
 clean-valinor-dir:
-	rm -rf ~/.valinor
+	rm -rf ~/.valinor/*
+	rm -rf ~/.valinor/.[!.]*
+	rm -rf ~/.valinor/..?*
 
 test:
 	go test ./...

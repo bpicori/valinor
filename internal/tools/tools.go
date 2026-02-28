@@ -54,5 +54,9 @@ func BuildTools(rt *sandbox.Runtime) []llm.Tool {
 		{Name: listFilesName, Def: listFilesDef(), Exec: func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }},
 		{Name: grepName, Def: grepDef(), Exec: func(a json.RawMessage) (string, error) { return grepExec(rt, a) }},
 		{Name: pythonExecName, Def: pythonExecDef(), Exec: func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }},
+		// Cron tools are stateless and use a globally-set service; they don't need the sandbox runtime
+		{Name: cronAddName, Def: cronAddDef(), Exec: func(a json.RawMessage) (string, error) { return cronAddExec(a) }},
+		{Name: cronListName, Def: cronListDef(), Exec: func(a json.RawMessage) (string, error) { return cronListExec(a) }},
+		{Name: cronRemoveName, Def: cronRemoveDef(), Exec: func(a json.RawMessage) (string, error) { return cronRemoveExec(a) }},
 	}
 }

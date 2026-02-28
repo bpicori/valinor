@@ -677,7 +677,14 @@ func (b *Bot) handleModelChanged(ev *router.Event, state *ChatState) {
 // handleCronJobResult sends scheduled job results to the chat.
 func (b *Bot) handleCronJobResult(ev *router.Event, identity ChatIdentity) error {
 	if payload, ok := ev.Payload.(event.CronJobResultPayload); ok {
-		content := fmt.Sprintf("Scheduled Task (%s)\n\n%s",
+		// Build display title - use job name if available
+		title := "Scheduled Task"
+		if payload.JobName != "" {
+			title = payload.JobName
+		}
+
+		content := fmt.Sprintf("%s (%s)\n\n%s",
+			title,
 			payload.Timestamp.Format("15:04"),
 			payload.Content)
 		result := &RenderResult{

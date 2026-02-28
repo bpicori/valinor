@@ -716,11 +716,17 @@ func (m *Model) handleNewConversation() tea.Cmd {
 }
 
 func (m *Model) handleCronJobResult(payload event.CronJobResultPayload) tea.Cmd {
+	// Build display title - use job name if available
+	title := "Scheduled Task"
+	if payload.JobName != "" {
+		title = fmt.Sprintf("Scheduled: %s", payload.JobName)
+	}
+
 	// Add a system message showing the cron job result
 	msg := chatMessage{
 		Role:      roleSystem,
-		Content:   fmt.Sprintf("[Scheduled Task %s]\n\n%s", payload.Timestamp.Format("15:04"), payload.Content),
-		Rendered:  renderMarkdown(fmt.Sprintf("**Scheduled Task** (%s)\n\n%s", payload.Timestamp.Format("15:04"), payload.Content), m.width-4),
+		Content:   fmt.Sprintf("[%s %s]\n\n%s", title, payload.Timestamp.Format("15:04"), payload.Content),
+		Rendered:  renderMarkdown(fmt.Sprintf("**%s** (%s)\n\n%s", title, payload.Timestamp.Format("15:04"), payload.Content), m.width-4),
 		Streaming: false,
 	}
 	m.messages = append(m.messages, msg)

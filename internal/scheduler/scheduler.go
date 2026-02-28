@@ -1,13 +1,11 @@
-// Package scheduler provides a background cron job runner based on Cron.md.
-// The scheduler reads Cron.md every configured interval and executes due jobs
-// by creating a fresh agent session and broadcasting results to all clients.
+// Package scheduler provides a background cron job runner based on the cron service.
+// It polls for due jobs and executes them in isolated sessions, publishing results
+// to all connected clients via the event bus.
 package scheduler
 
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -15,23 +13,15 @@ import (
 
 	"valinor/internal/bus"
 	"valinor/internal/config"
+	"valinor/internal/cron"
 	"valinor/internal/event"
 	"valinor/internal/logger"
 	"valinor/internal/session"
 )
 
-// cronPromptTemplate is the prompt sent to the agent during each cron tick.
-// It includes the current timestamp and the contents of Cron.md.
-const cronPromptTemplate = `The current date and time is: %s
-
-Below are your scheduled jobs from Cron.md. Review each job's schedule and execute ONLY the jobs that are due right now. If no jobs are due, respond with "No jobs due." For each job you execute, report what you did.
-
----
-%s`
-
-// Scheduler runs scheduled jobs based on Cron.md in the workspace.
+// Scheduler runs scheduled jobs from the cron service.
 type Scheduler struct {
-	workspaceDir string
+	cronService  *cron.Service
 	manager      *session.Manager
 	sessionOpts  session.SessionOptions
 	bus          *bus.Bus
@@ -43,15 +33,15 @@ type Scheduler struct {
 	running bool
 }
 
-// New creates a new scheduler with the given configuration.
-func New(workspaceDir string, manager *session.Manager, sessionOpts session.SessionOptions, b *bus.Bus, cfg config.SchedulerConfig) *Scheduler {
+// New creates a new scheduler with the given cron service.
+func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.SessionOptions, b *bus.Bus, cfg config.SchedulerConfig) *Scheduler {
 	interval, _ := time.ParseDuration(cfg.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Minute
 	}
 
 	return &Scheduler{
-		workspaceDir: workspaceDir,
+		cronService:  cronService,
 		manager:      manager,
 		sessionOpts:  sessionOpts,
 		bus:          b,
@@ -121,43 +111,77 @@ func (s *Scheduler) runLoop(ctx context.Context) {
 	}
 }
 
-// executeTick performs a single cron check and execution.
+// executeTick checks for due jobs and executes them.
 func (s *Scheduler) executeTick(ctx context.Context) {
 	logger.Debug("scheduler tick started", nil)
 
-	// Read Cron.md from workspace
-	cronPath := filepath.Join(s.workspaceDir, "Cron.md")
-	content, err := os.ReadFile(cronPath)
+	now := time.Now().UTC()
+
+	// Get due jobs from cron service
+	dueJobs, err := s.cronService.Tick(now)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			logger.Warning("scheduler: failed to read Cron.md", logger.BuildMetadata("path", cronPath, "error", err))
+		logger.Error("scheduler: failed to get due jobs", logger.BuildMetadata("error", err))
+		return
+	}
+
+	if len(dueJobs) == 0 {
+		logger.Debug("scheduler tick completed: no jobs due", nil)
+		return
+	}
+
+	logger.Info("scheduler: executing due jobs", logger.BuildMetadata("count", len(dueJobs)))
+
+	// Execute each due job
+	for _, job := range dueJobs {
+		select {
+		case <-ctx.Done():
+			logger.Debug("scheduler tick cancelled", nil)
+			return
+		default:
+			s.executeJob(ctx, job, now)
 		}
-		// File doesn't exist or error reading - skip this tick
+	}
+
+	logger.Info("scheduler tick completed", logger.BuildMetadata("jobs_executed", len(dueJobs)))
+}
+
+// executeJob runs a single cron job in an isolated session.
+func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.Time) {
+	logger.Debug("scheduler: executing job",
+		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
+
+	// Mark job as running - compute next run time
+	updatedJob, ok, err := s.cronService.MarkJobExecuted(job.ID, at)
+	if err != nil {
+		logger.Error("scheduler: failed to mark job executed",
+			logger.BuildMetadata("job_id", job.ID, "error", err))
+		return
+	}
+	if !ok {
+		logger.Warning("scheduler: job not found during execution",
+			logger.BuildMetadata("job_id", job.ID))
 		return
 	}
 
-	// Check if content is empty or just whitespace
-	if len(content) == 0 || len(trimSpace(string(content))) == 0 {
-		logger.Debug("scheduler: Cron.md is empty", nil)
-		return
+	// Log next scheduled run for recurring jobs
+	if updatedJob.Schedule.Kind == cron.ScheduleEvery && !updatedJob.NextRunAt.IsZero() {
+		logger.Debug("scheduler: job rescheduled",
+			logger.BuildMetadata("job_id", job.ID, "next_run", updatedJob.NextRunAt.Format(time.RFC3339)))
 	}
 
-	// Create a fresh session for this execution
+	// Create a fresh isolated session for this job execution
 	sess, err := s.manager.Create(ctx, s.sessionOpts)
 	if err != nil {
-		logger.Error("scheduler: failed to create session", logger.BuildMetadata("error", err))
+		logger.Error("scheduler: failed to create session for job",
+			logger.BuildMetadata("job_id", job.ID, "error", err))
+		s.publishError(job, fmt.Errorf("failed to create session: %w", err))
 		return
 	}
 
 	// Generate request ID for this execution
 	requestID := uuid.New().String()
 
-	// Build the cron prompt with current timestamp and Cron.md content
-	timestamp := time.Now().Format(time.RFC3339)
-	prompt := fmt.Sprintf(cronPromptTemplate, timestamp, string(content))
-
-	// Subscribe to run events before starting execution so we can collect output
-	// and know exactly when this request has completed.
+	// Subscribe to run events before starting execution
 	sub := s.bus.Subscribe(
 		event.AgentContentFull,
 		event.AgentDone,
@@ -166,13 +190,13 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 	)
 	defer s.bus.Unsubscribe(sub)
 
-	// Execute the cron prompt in the session
+	// Execute the job message in the session
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- sess.HandleUserMessage(ctx, requestID, prompt)
+		errChan <- sess.HandleUserMessage(ctx, requestID, job.Message)
 	}()
 
-	// Collect the response for this specific session/request.
+	// Collect the response for this specific session/request
 	var resultContent string
 	var execErr error
 	done := false
@@ -183,7 +207,7 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 	for !done {
 		select {
 		case <-ctx.Done():
-			logger.Debug("scheduler tick cancelled", nil)
+			logger.Debug("scheduler job cancelled", logger.BuildMetadata("job_id", job.ID))
 			sess.Close()
 			return
 
@@ -192,12 +216,12 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 			runCompletedAt = time.Now()
 			execErr = err
 			if err != nil {
-				logger.Error("scheduler: session execution error", logger.BuildMetadata("error", err))
+				logger.Error("scheduler: job execution error",
+					logger.BuildMetadata("job_id", job.ID, "error", err))
 				done = true
 				break
 			}
 			// Success path: normally AgentDone arrives and ends the loop.
-			// If the event is missed for any reason, stop waiting after a short grace period.
 			if !runCompletedAt.IsZero() && time.Since(runCompletedAt) >= runEventWait {
 				done = true
 			}
@@ -207,7 +231,7 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 				done = true
 				break
 			}
-			// Filter to this scheduler run.
+			// Filter to this job's session
 			if ev.SessionID == sess.Meta().ID && ev.RequestID == requestID {
 				switch ev.Type {
 				case event.AgentContentFull:
@@ -227,8 +251,7 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 				}
 			}
 		case <-time.After(250 * time.Millisecond):
-			// Poll-style fallback: if run already returned and no terminal event arrived,
-			// stop waiting after a short grace period.
+			// Poll-style fallback
 			if runReturned && !runCompletedAt.IsZero() && time.Since(runCompletedAt) >= runEventWait {
 				done = true
 			}
@@ -237,60 +260,55 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 
 	// If there was an execution error and no content, report the error
 	if execErr != nil && resultContent == "" {
-		resultContent = fmt.Sprintf("Error executing scheduled jobs: %v", execErr)
+		resultContent = fmt.Sprintf("Error executing scheduled job '%s': %v", job.Name, execErr)
 	}
 
 	// Close the session
 	if err := sess.Close(); err != nil {
-		logger.Warning("scheduler: failed to close session", logger.BuildMetadata("error", err))
+		logger.Warning("scheduler: failed to close session",
+			logger.BuildMetadata("job_id", job.ID, "error", err))
 	}
 
-	// If we got no content at all, don't broadcast.
-	// Note: "No jobs due." is still a meaningful scheduler result and should be
-	// broadcast so clients can see that the scheduler fired.
+	// If we got no content at all, don't broadcast
 	if resultContent == "" {
-		logger.Debug("scheduler: empty scheduler result", nil)
+		logger.Debug("scheduler: empty job result",
+			logger.BuildMetadata("job_id", job.ID))
 		return
 	}
 
 	// Publish CronJobResult event (no session ID = broadcast to all clients)
-	logger.Debug("scheduler: publishing cron job result",
-		logger.BuildMetadata("result_length", len(resultContent)))
+	logger.Debug("scheduler: publishing job result",
+		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "result_length", len(resultContent)))
+
 	s.bus.Publish(event.Event{
 		Type: event.CronJobResult,
 		Payload: event.CronJobResultPayload{
+			JobID:     job.ID,
+			JobName:   job.Name,
 			Content:   resultContent,
 			Timestamp: time.Now(),
 		},
-		// Explicitly broadcast to all clients (not session-targeted).
+		// Explicitly broadcast to all clients (not session-targeted)
 		SessionID: "",
+		RequestID: job.ID, // Use job ID for correlation
 	})
 
-	logger.Info("scheduler tick completed", logger.BuildMetadata("result_length", len(resultContent)))
+	logger.Info("scheduler: job completed",
+		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
 }
 
-// trimSpace is a helper that trims whitespace and returns the string.
-func trimSpace(s string) string {
-	start := 0
-	end := len(s)
-
-	for start < end {
-		c := s[start]
-		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-			start++
-		} else {
-			break
-		}
-	}
-
-	for end > start {
-		c := s[end-1]
-		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-			end--
-		} else {
-			break
-		}
-	}
-
-	return s[start:end]
+// publishError broadcasts an error result for a job.
+func (s *Scheduler) publishError(job *cron.CronJob, execErr error) {
+	content := fmt.Sprintf("Scheduled job '%s' failed: %v", job.Name, execErr)
+	s.bus.Publish(event.Event{
+		Type: event.CronJobResult,
+		Payload: event.CronJobResultPayload{
+			JobID:     job.ID,
+			JobName:   job.Name,
+			Content:   content,
+			Timestamp: time.Now(),
+		},
+		SessionID: "",
+		RequestID: job.ID,
+	})
 }

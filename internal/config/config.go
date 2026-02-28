@@ -265,6 +265,15 @@ func (c Config) ResolveLogsDir() (string, error) {
 	return filepath.Join(baseDir, "logs"), nil
 }
 
+// ResolveCronDir returns the absolute path for cron job storage.
+func (c Config) ResolveCronDir() (string, error) {
+	baseDir, err := c.ResolveValinorDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(baseDir, "cron"), nil
+}
+
 // GatewayWebSocketURL returns the WebSocket URL for the gateway.
 func (c Config) GatewayWebSocketURL() string {
 	return fmt.Sprintf("ws://%s:%d%s", c.GatewayHost, c.GatewayPort, c.GatewayPath)

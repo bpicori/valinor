@@ -1,4 +1,3 @@
-- [ ] Add cron commands execution
 - [ ] Move config to ~/.valinor/config.toml and not anymore from dev directory
 - [ ] Add memory tool
 - [ ] Add sub agents tool
@@ -10,3 +9,4 @@ Done:
 - [x] In tui add support to cancel a running agent
 - [x] Implement a single router that all the clients connect to (tui, web, telegram)
 - [x] Add Telegram support
+- [x] Add cron commands execution
