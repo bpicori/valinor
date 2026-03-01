@@ -1,0 +1,27 @@
+# Valinor Sandbox Container
+# This container provides a secure execution environment for all tool commands.
+# The workspace is bind-mounted at /workspace.
+
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential tools for development tasks
+RUN apt-get update && apt-get install -y \
+    bash \
+    coreutils \
+    curl \
+    git \
+    python3 \
+    python3-pip \
+    python3-venv \
+    ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create the workspace directory (will be bind-mounted from host)
+WORKDIR /workspace
+
+# Default command keeps the container running
+# The actual commands are executed via 'podman exec'
+CMD ["sleep", "infinity"]

@@ -20,7 +20,7 @@ const (
 func pythonExecDef() llm.ToolDefinition {
 	return buildToolDef(
 		pythonExecName,
-		"Execute Python code in the workspace using the host Python runtime. Use for running Python scripts, data analysis, file processing, or Python automation.",
+		"Execute Python code in a sandboxed container. Use for running Python scripts, data analysis, file processing, or Python automation.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{

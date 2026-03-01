@@ -20,7 +20,7 @@ const (
 func bashExecDef() llm.ToolDefinition {
 	return buildToolDef(
 		bashExecName,
-		"Execute bash commands directly on the host. Use for running shell commands, git operations, package management, builds, tests, and system automation. Commands run with workspace directory access.",
+		"Execute bash commands in a sandboxed container. Use for running shell commands, git operations, package management, builds, tests, and system automation. Commands run with workspace directory access.",
 		map[string]any{
 			"type": "object",
 			"properties": map[string]any{

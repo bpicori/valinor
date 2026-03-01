@@ -125,6 +125,7 @@ func (s *Session) Close() error {
 	sessionID := s.meta.ID
 	logger.Debug("session close start", logger.BuildMetadata("session_id", sessionID))
 	s.agent = nil
+
 	if s.store != nil {
 		err := s.store.Close()
 		s.store = nil
@@ -132,8 +133,9 @@ func (s *Session) Close() error {
 			logger.Error("session close store error", logger.BuildMetadata("session_id", sessionID, "error", err))
 			return err
 		}
-		logger.Debug("session close success", logger.BuildMetadata("session_id", sessionID))
 	}
+
+	logger.Debug("session close success", logger.BuildMetadata("session_id", sessionID))
 	return nil
 }
 

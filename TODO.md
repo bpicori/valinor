@@ -1,4 +1,6 @@
+- [ ] Review every package to simplify
 - [ ] Move config to ~/.valinor/config.toml and not anymore from dev directory
+- [ ] Create a quick wizard to create the configuration file
 - [ ] Add memory tool
 - [ ] Add sub agents tool
 - [ ] Add telemetry, logging and metrics
@@ -10,3 +12,4 @@ Done:
 - [x] Implement a single router that all the clients connect to (tui, web, telegram)
 - [x] Add Telegram support
 - [x] Add cron commands execution
+- [x] Try sandbox with podman container

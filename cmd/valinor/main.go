@@ -13,6 +13,7 @@ import (
 	"valinor/internal/event_bus"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
+	"valinor/internal/sandbox"
 	"valinor/internal/scheduler"
 	"valinor/internal/session"
 	"valinor/internal/telegram"
@@ -106,6 +107,15 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	logger.Info("starting valinor in gateway mode", nil)
 	logger.Info("logging to file and stdout", logger.BuildMetadata("log_path", logPath))
 
+	// Create shared sandbox runtime (single container for all sessions)
+	rt, err := sandbox.NewRuntime(workspaceDir, cfg.SandboxImage)
+	if err != nil {
+		logger.Error("failed to create sandbox runtime", logger.BuildMetadata("workspace", workspaceDir, "image", cfg.SandboxImage, "error", err))
+		return fmt.Errorf("create sandbox runtime: %w", err)
+	}
+	defer rt.Close()
+	logger.Info("sandbox runtime initialized", logger.BuildMetadata("workspace", workspaceDir, "image", cfg.SandboxImage))
+
 	// Initialize cron service
 	cronService, err := cron.NewService(cronDir)
 	if err != nil {
@@ -119,7 +129,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 
 	// Initialize core components
 	b := event_bus.New()
-	sm := session.NewManager(sessionsDir, workspaceDir, cfg)
+	sm := session.NewManager(sessionsDir, workspaceDir, cfg, rt)
 
 	// Session options used when router/runtime create or resume sessions on-demand.
 	sessionOpts := session.SessionOptions{

@@ -34,6 +34,7 @@ type Manager struct {
 	sessionDir   string
 	workspaceDir string
 	config       config.Config
+	runtime      *sandbox.Runtime // shared sandbox runtime for all sessions
 }
 
 // Message history lifecycle:
@@ -42,8 +43,8 @@ type Manager struct {
 // - On resume, persisted messages are loaded and system prompt is rebuilt.
 
 // NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
-func NewManager(sessionDir, workspaceDir string, cfg config.Config) *Manager {
-	return &Manager{sessionDir: sessionDir, workspaceDir: workspaceDir, config: cfg}
+func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime) *Manager {
+	return &Manager{sessionDir: sessionDir, workspaceDir: workspaceDir, config: cfg, runtime: rt}
 }
 
 // Create creates a new session with a fresh agent and empty transcript.
@@ -89,7 +90,7 @@ func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, er
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	ag, err := buildAgent(workspaceDir, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
+	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create agent error", logger.BuildMetadata("session_id", id, "model", model, "error", err))
@@ -168,7 +169,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts SessionOptions) (*
 	}
 
 	msgs := normalizeSystemPrompt(messages, systemPrompt)
-	ag, err := buildAgent(workspaceDir, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
+	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume agent error", logger.BuildMetadata("session_id", id, "model", model, "error", err))
@@ -354,7 +355,7 @@ func (m *Manager) CreateForClient(ctx context.Context, clientType, clientIdentit
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	ag, err := buildAgent(workspaceDir, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
+	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create agent error", logger.BuildMetadata("session_id", id, "model", model, "error", err))
@@ -458,7 +459,7 @@ func (m *Manager) CreateTemporary(ctx context.Context, opts SessionOptions) (*Se
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	ag, err := buildAgent(workspaceDir, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
+	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
 	if err != nil {
 		logger.Error("session create temporary agent error",
 			logger.BuildMetadata("session_id", id, "model", model, "error", err))
@@ -559,24 +560,18 @@ func (m *Manager) ListProviderModels(ctx context.Context, providerName string) (
 	return models, nil
 }
 
-// createTools is a helper that creates tools for the given workspace.
-func createTools(workspaceDir string) ([]llm.Tool, error) {
-	rt, err := sandbox.NewRuntime(workspaceDir)
-	if err != nil {
-		return nil, fmt.Errorf("create runtime: %w", err)
-	}
-	return tools.BuildTools(rt), nil
+// createTools returns tools using the shared runtime.
+func createTools(rt *sandbox.Runtime) []llm.Tool {
+	return tools.BuildTools(rt)
 }
 
-func buildAgent(workspaceDir string, providerCfg config.ProviderConfig, model string, b *event_bus.Bus, maxIterations int) (*llm.LLM, error) {
+// buildAgent creates an agent with tools using the shared runtime.
+func buildAgent(rt *sandbox.Runtime, providerCfg config.ProviderConfig, model string, b *event_bus.Bus, maxIterations int) (*llm.LLM, error) {
 	provider, err := createProvider(providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider: %w", err)
 	}
-	availableTools, err := createTools(workspaceDir)
-	if err != nil {
-		return nil, fmt.Errorf("create tools: %w", err)
-	}
+	availableTools := createTools(rt)
 	ag, err := llm.New(provider, model, availableTools, b, maxIterations)
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)

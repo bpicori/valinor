@@ -45,6 +45,11 @@ const (
 	DefaultSchedulerCheckInterval = "30m"
 )
 
+// Default sandbox configuration.
+const (
+	DefaultSandboxImage = "valinor-sandbox:latest"
+)
+
 // Config holds provider configurations and application paths.
 type Config struct {
 	DefaultProvider    string                    `toml:"default_provider"`
@@ -68,6 +73,9 @@ type Config struct {
 
 	// Scheduler configuration for Cron.md based scheduled jobs.
 	Scheduler SchedulerConfig `toml:"scheduler"`
+
+	// SandboxImage is the container image used for the sandbox runtime (default: "valinor-sandbox:latest").
+	SandboxImage string `toml:"sandbox_image"`
 }
 
 // TelegramConfig holds Telegram Bot API configuration.
@@ -195,6 +203,11 @@ func LoadFromFile(path string) (Config, error) {
 	// Apply scheduler defaults
 	if cfg.Scheduler.CheckInterval == "" {
 		cfg.Scheduler.CheckInterval = DefaultSchedulerCheckInterval
+	}
+
+	// Apply sandbox defaults
+	if cfg.SandboxImage == "" {
+		cfg.SandboxImage = DefaultSandboxImage
 	}
 
 	return cfg, nil
