@@ -13,9 +13,9 @@ import (
 const MaxTelegramMessageLength = 4096
 
 // Pre-allocated replacer for MarkdownV2 escaping to avoid repeated allocations.
+// These are the characters that MUST be escaped in Telegram MarkdownV2.
 var mdReplacer = strings.NewReplacer(
 	"_", "\\_",
-	"*", "\\*",
 	"[", "\\[",
 	"]", "\\]",
 	"(", "\\(",
@@ -25,7 +25,6 @@ var mdReplacer = strings.NewReplacer(
 	">", "\\>",
 	"#", "\\#",
 	"+", "\\+",
-	"-", "\\-",
 	"=", "\\=",
 	"|", "\\|",
 	"{", "\\{",
@@ -214,6 +213,7 @@ func (r *Renderer) renderModelChanged(payload interface{}) *RenderResult {
 }
 
 // RenderFinalContent renders the final assistant content as a single Telegram message.
+// Converts standard markdown to Telegram MarkdownV2 format.
 func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 	if content == "" {
 		return nil
@@ -225,13 +225,15 @@ func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 	}
 
 	return &RenderResult{
-		Text:      EscapeMarkdown(text),
+		Text:      ConvertMarkdownToTelegram(text),
 		ParseMode: "MarkdownV2",
 		IsFinal:   true,
 	}
 }
 
 // EscapeMarkdown escapes text for Telegram's MarkdownV2 format.
+// This escapes all special characters and should be used for plain text
+// that shouldn't have any markdown formatting interpreted.
 func EscapeMarkdown(text string) string {
 	return mdReplacer.Replace(text)
 }
