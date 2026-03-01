@@ -15,7 +15,6 @@ import (
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
-	"valinor/internal/tools"
 
 	"github.com/google/uuid"
 )
@@ -126,29 +125,19 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	systemPrompt, err := agentcontext.BuildSystemPrompt(workspaceDir)
+	agentCtx, err := agentcontext.New(workspaceDir, m.runtime)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
 		return nil, fmt.Errorf("build context: %w", err)
 	}
-
-	// Build tools for the context (agent is created per-run)
-	toolsList := tools.BuildTools(m.runtime)
-
-	initialMessages := []agentcontext.Message{
-		{
-			Role:    agentcontext.RoleSystem,
-			Content: systemPrompt,
-		},
-	}
-	if err := store.SaveMessages(ctx, initialMessages); err != nil {
+	if err := store.SaveMessages(ctx, agentCtx.Messages()); err != nil {
 		_ = store.Close()
 		logger.Error("session create save messages error", logger.BuildMetadata("session_id", id, "error", err))
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
 
-	sess, err := NewSession(meta, store, toolsList, systemPrompt, initialMessages, m.config, opts.MaxAgentIterations)
+	sess, err := NewSession(meta, store, agentCtx, m.config, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -210,28 +199,23 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	meta.Provider = providerName
 	meta.Model = model
 
-	systemPrompt, err := agentcontext.BuildSystemPrompt(workspaceDir)
+	agentCtx, err := agentcontext.Resume(workspaceDir, m.runtime, messages)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	msgs := normalizeSystemPrompt(messages, systemPrompt)
-
-	// Build tools for the context (agent is created per-run)
-	toolsList := tools.BuildTools(m.runtime)
-
 	meta.UpdatedAt = time.Now()
 	_ = store.SaveMetadata(ctx, *meta)
-	_ = store.SaveMessages(ctx, msgs)
+	_ = store.SaveMessages(ctx, agentCtx.Messages())
 
-	sess, err := NewSession(*meta, store, toolsList, systemPrompt, msgs, m.config, opts.MaxAgentIterations)
+	sess, err := NewSession(*meta, store, agentCtx, m.config, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
 	}
-	logger.Info("session resume success", logger.BuildMetadata("session_id", id, "message_count", len(msgs)))
+	logger.Info("session resume success", logger.BuildMetadata("session_id", id, "message_count", len(agentCtx.Messages())))
 	return sess, nil
 }
 
@@ -419,24 +403,4 @@ func writeMetadataFile(dir string, meta *Metadata) error {
 		return fmt.Errorf("rename metadata file: %w", err)
 	}
 	return nil
-}
-
-func normalizeSystemPrompt(messages []agentcontext.Message, systemPrompt string) []agentcontext.Message {
-	base := agentcontext.CloneMessages(messages)
-	if len(base) == 0 {
-		return []agentcontext.Message{{
-			Role:    agentcontext.RoleSystem,
-			Content: systemPrompt,
-		}}
-	}
-
-	if base[0].Role == agentcontext.RoleSystem {
-		base[0].Content = systemPrompt
-		return base
-	}
-
-	return append([]agentcontext.Message{{
-		Role:    agentcontext.RoleSystem,
-		Content: systemPrompt,
-	}}, base...)
 }

@@ -1,6 +1,11 @@
 package agentcontext
 
-import "valinor/internal/tools"
+import (
+	"fmt"
+
+	"valinor/internal/sandbox"
+	"valinor/internal/tools"
+)
 
 // Context owns the in-memory conversation state and tools for one session.
 type Context struct {
@@ -9,13 +14,42 @@ type Context struct {
 	tools        []tools.Tool
 }
 
-// NewContext builds a context state with a base system prompt and tools.
-func NewContext(systemPrompt string, initialMessages []Message, tools []tools.Tool) Context {
+// New creates a fresh context with a built system prompt and tools.
+func New(workspaceDir string, runtime *sandbox.Runtime) (Context, error) {
+	systemPrompt, err := BuildSystemPrompt(workspaceDir)
+	if err != nil {
+		return Context{}, fmt.Errorf("build system prompt: %w", err)
+	}
 	return Context{
 		systemPrompt: systemPrompt,
-		messages:     CloneMessages(initialMessages),
-		tools:        tools,
+		messages:     []Message{{Role: RoleSystem, Content: systemPrompt}},
+		tools:        tools.BuildTools(runtime),
+	}, nil
+}
+
+// Resume creates a context from persisted messages, normalizing the system prompt.
+func Resume(workspaceDir string, runtime *sandbox.Runtime, messages []Message) (Context, error) {
+	systemPrompt, err := BuildSystemPrompt(workspaceDir)
+	if err != nil {
+		return Context{}, fmt.Errorf("build system prompt: %w", err)
 	}
+	return Context{
+		systemPrompt: systemPrompt,
+		messages:     normalizeSystemPrompt(CloneMessages(messages), systemPrompt),
+		tools:        tools.BuildTools(runtime),
+	}, nil
+}
+
+// normalizeSystemPrompt ensures the first message is the system prompt.
+func normalizeSystemPrompt(messages []Message, systemPrompt string) []Message {
+	if len(messages) == 0 {
+		return []Message{{Role: RoleSystem, Content: systemPrompt}}
+	}
+	if messages[0].Role == RoleSystem {
+		messages[0].Content = systemPrompt
+		return messages
+	}
+	return append([]Message{{Role: RoleSystem, Content: systemPrompt}}, messages...)
 }
 
 // Tools returns the tools available in this context.
@@ -53,5 +87,23 @@ func (c *Context) Reset() {
 
 // Messages returns a cloned copy of the current context messages.
 func (c *Context) Messages() []Message {
+	return CloneMessages(c.messages)
+}
+
+// RunData holds the snapshot needed for an LLM run.
+type RunData struct {
+	Messages []Message
+	Tools    []tools.Tool
+}
+
+// PrepareRun appends the user message and returns a snapshot of messages and tools for the LLM.
+func (c *Context) PrepareRun(userMessage string) RunData {
+	c.messages = append(c.messages, Message{Role: RoleUser, Content: userMessage})
+	return RunData{Messages: CloneMessages(c.messages), Tools: c.tools}
+}
+
+// CompleteRun replaces internal messages with the agent's result and returns a clone for persistence.
+func (c *Context) CompleteRun(messages []Message) []Message {
+	c.messages = CloneMessages(messages)
 	return CloneMessages(c.messages)
 }

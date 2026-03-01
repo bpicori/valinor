@@ -11,7 +11,6 @@ import (
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
-	"valinor/internal/tools"
 )
 
 // Metadata holds session metadata persisted in metadata.json.
@@ -40,26 +39,24 @@ type Session struct {
 	mu            sync.Mutex
 }
 
-// NewSession creates a session with one owned context state.
-func NewSession(meta Metadata, store Store, tools []tools.Tool, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config, maxIterations int) (*Session, error) {
+// NewSession creates a session with the provided agent context.
+func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context, cfg config.Config, maxIterations int) (*Session, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
 	return &Session{
 		meta:          meta,
 		store:         store,
-		agentContext:  agentcontext.NewContext(systemPrompt, initialMessages, tools),
+		agentContext:  agentCtx,
 		config:        cfg,
 		maxIterations: maxIterations,
 	}, nil
 }
 
 // RunInteraction appends a user message and processes it through a fresh agent.
-func (s *Session) RunInteraction(ctx context.Context, requestID string, content string) error {
+func (s *Session) RunInteraction(ctx context.Context, requestID string, message string) error {
 	s.mu.Lock()
-	s.agentContext.AppendUserMessage(content)
-	runMessages := s.agentContext.Messages()
-	runTools := s.agentContext.Tools()
+	runData := s.agentContext.PrepareRun(message)
 	s.mu.Unlock()
 
 	providerCfg := s.config.Providers[s.meta.Provider]
@@ -71,8 +68,8 @@ func (s *Session) RunInteraction(ctx context.Context, requestID string, content 
 	agent := llm.New(provider, s.meta.Model, s.maxIterations)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
-		Messages:  runMessages,
-		Tools:     runTools,
+		Messages:  runData.Messages,
+		Tools:     runData.Tools,
 		SessionID: s.meta.ID,
 		RequestID: requestID,
 	})
@@ -81,8 +78,7 @@ func (s *Session) RunInteraction(ctx context.Context, requestID string, content 
 	}
 
 	s.mu.Lock()
-	s.agentContext.ReplaceMessages(result.Messages)
-	persistMessages := s.agentContext.Messages()
+	persistMessages := s.agentContext.CompleteRun(result.Messages)
 	s.mu.Unlock()
 	if err := s.store.SaveMessages(ctx, persistMessages); err != nil {
 		return fmt.Errorf("save messages: %w", err)
