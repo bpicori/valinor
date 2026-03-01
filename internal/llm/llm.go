@@ -24,6 +24,9 @@ func New(provider Provider, model string, tools []Tool, b *event_bus.Bus, maxIte
 	if maxIterations <= 0 {
 		maxIterations = 20
 	}
+	if b == nil {
+		return nil, fmt.Errorf("event bus is required")
+	}
 
 	return &LLM{
 		provider:      provider,

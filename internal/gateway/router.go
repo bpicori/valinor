@@ -31,6 +31,9 @@ type Router struct {
 	// clientConsumers maps identity key to the connected consumer
 	mu              sync.RWMutex
 	clientConsumers map[string]ClientEventConsumer // key: identity key (type:identity)
+	// sessionOwners caches session routing target by session ID.
+	// value: identity key (type:identity)
+	sessionOwners map[string]string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -52,6 +55,7 @@ func NewRouter(
 		manager:         manager,
 		sessionOpts:     sessionOpts,
 		clientConsumers: make(map[string]ClientEventConsumer),
+		sessionOwners:   make(map[string]string),
 	}
 }
 
@@ -145,7 +149,7 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 	}
 
 	// Get or create active session for this client
-	sess, err := r.manager.GetActiveSessionForClient(ctx, identity.Type, identity.Identity)
+	sess, err := r.manager.GetActiveSessionForClient(ctx, identity.Type, identity.Identity, r.sessionOpts)
 	if err != nil {
 		return nil, fmt.Errorf("get active session: %w", err)
 	}
@@ -166,6 +170,9 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 
 	// Send session attached event
 	meta := sess.Meta()
+	r.mu.Lock()
+	r.sessionOwners[meta.ID] = key
+	r.mu.Unlock()
 	consumer.SendEvent(Event{
 		Type: event.SessionAttached,
 		Payload: SessionAttachedPayload{
@@ -212,7 +219,7 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 	key := cmd.Identity.Key()
 
 	// Get active session for this client
-	sess, err := r.manager.GetActiveSessionForClient(ctx, cmd.Identity.Type, cmd.Identity.Identity)
+	sess, err := r.manager.GetActiveSessionForClient(ctx, cmd.Identity.Type, cmd.Identity.Identity, r.sessionOpts)
 	if err != nil {
 		return fmt.Errorf("get active session: %w", err)
 	}
@@ -252,6 +259,9 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		r.mu.RUnlock()
 
 		if consumer != nil {
+			r.mu.Lock()
+			r.sessionOwners[newSessionID] = key
+			r.mu.Unlock()
 			consumer.SendEvent(Event{
 				Type: event.SessionAttached,
 				Payload: SessionAttachedPayload{
@@ -307,58 +317,48 @@ func (r *Router) forwardEventToClients(be event.Event) {
 	var consumers []ClientEventConsumer
 
 	if be.SessionID == "" {
-		// Broadcast: events without session ID go to all clients
-		r.mu.RLock()
-		consumers = make([]ClientEventConsumer, 0, len(r.clientConsumers))
-		for _, consumer := range r.clientConsumers {
-			consumers = append(consumers, consumer)
-		}
-		r.mu.RUnlock()
+		// Broadcast: events without session ID go to all clients.
+		consumers = r.allConsumers()
 
 		if routerEvent.Type == event.CronJobResult {
 			logger.Debug("router: broadcasting cron job result",
 				logger.BuildMetadata("consumer_count", len(consumers)))
 		}
 	} else {
-		// Look up session metadata to find the owner
-		meta, err := r.manager.GetMetadata(r.ctx, be.SessionID)
-		if err != nil {
-			logger.Warning("router: failed to get session metadata for routing",
-				logger.BuildMetadata("session_id", be.SessionID, "error", err))
-			// Fall back to broadcast
-			r.mu.RLock()
-			consumers = make([]ClientEventConsumer, 0, len(r.clientConsumers))
-			for _, consumer := range r.clientConsumers {
-				consumers = append(consumers, consumer)
-			}
-			r.mu.RUnlock()
-		} else if meta == nil {
-			// Session not found - broadcast
-			r.mu.RLock()
-			consumers = make([]ClientEventConsumer, 0, len(r.clientConsumers))
-			for _, consumer := range r.clientConsumers {
-				consumers = append(consumers, consumer)
-			}
-			r.mu.RUnlock()
-		} else if meta.Temporary || meta.ClientType == "" || meta.ClientIdentity == "" {
-			// Temporary session or no owner - broadcast to all
-			r.mu.RLock()
-			consumers = make([]ClientEventConsumer, 0, len(r.clientConsumers))
-			for _, consumer := range r.clientConsumers {
-				consumers = append(consumers, consumer)
-			}
-			r.mu.RUnlock()
-		} else {
-			// Owned session - send only to the owner
-			identityKey := meta.ClientType + ":" + meta.ClientIdentity
-			r.mu.RLock()
-			consumer, ok := r.clientConsumers[identityKey]
-			r.mu.RUnlock()
-			if ok {
+		// Use in-memory owner cache first, then metadata lookup as fallback.
+		if identityKey, ok := r.ownerForSession(be.SessionID); ok {
+			if consumer, ok := r.consumerForIdentity(identityKey); ok {
 				consumers = []ClientEventConsumer{consumer}
 			} else {
-				// Owner not connected - drop event
+				// Owner not connected - drop event.
 				return
+			}
+		} else {
+			// Cache miss: fallback to metadata lookup to preserve behavior.
+			meta, err := r.manager.GetMetadata(r.ctx, be.SessionID)
+			if err != nil {
+				logger.Warning("router: failed to get session metadata for routing",
+					logger.BuildMetadata("session_id", be.SessionID, "error", err))
+				// Fall back to broadcast
+				consumers = r.allConsumers()
+			} else if meta == nil {
+				// Session not found - broadcast
+				consumers = r.allConsumers()
+			} else if meta.Temporary || meta.ClientType == "" || meta.ClientIdentity == "" {
+				// Temporary session or no owner - broadcast to all
+				consumers = r.allConsumers()
+			} else {
+				// Owned session - send only to the owner.
+				identityKey := meta.ClientType + ":" + meta.ClientIdentity
+				r.mu.Lock()
+				r.sessionOwners[be.SessionID] = identityKey
+				r.mu.Unlock()
+				if consumer, ok := r.consumerForIdentity(identityKey); ok {
+					consumers = []ClientEventConsumer{consumer}
+				} else {
+					// Owner not connected - drop event.
+					return
+				}
 			}
 		}
 	}
@@ -371,6 +371,30 @@ func (r *Router) forwardEventToClients(be event.Event) {
 				logger.BuildMetadata("event_type", routerEvent.Type))
 		}
 	}
+}
+
+func (r *Router) allConsumers() []ClientEventConsumer {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	consumers := make([]ClientEventConsumer, 0, len(r.clientConsumers))
+	for _, consumer := range r.clientConsumers {
+		consumers = append(consumers, consumer)
+	}
+	return consumers
+}
+
+func (r *Router) ownerForSession(sessionID string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	identityKey, ok := r.sessionOwners[sessionID]
+	return identityKey, ok
+}
+
+func (r *Router) consumerForIdentity(identityKey string) (ClientEventConsumer, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	consumer, ok := r.clientConsumers[identityKey]
+	return consumer, ok
 }
 
 // GetConsumer returns the consumer for a specific identity (for testing/debugging).

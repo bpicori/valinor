@@ -286,7 +286,7 @@ func (m *Manager) Delete(id string) error {
 
 // GetActiveSessionForClient returns the active session for a given client identity.
 // Returns nil if no active session exists for this client.
-func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, clientIdentity string) (*Session, error) {
+func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, clientIdentity string, opts SessionOptions) (*Session, error) {
 	sessions, err := m.List()
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
@@ -294,7 +294,7 @@ func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, cli
 
 	for _, meta := range sessions {
 		if meta.ClientType == clientType && meta.ClientIdentity == clientIdentity && meta.Active && !meta.Temporary {
-			return m.Resume(ctx, meta.ID, SessionOptions{})
+			return m.Resume(ctx, meta.ID, opts)
 		}
 	}
 
