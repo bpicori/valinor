@@ -75,8 +75,8 @@ func (s *Session) buildAgent() (*llm.LLM, error) {
 	return ag, nil
 }
 
-// HandleUserMessage appends and processes a user message through a fresh agent.
-func (s *Session) HandleUserMessage(ctx context.Context, requestID string, content string) error {
+// RunInteraction appends a user message and processes it through a fresh agent.
+func (s *Session) RunInteraction(ctx context.Context, requestID string, content string) error {
 	s.mu.Lock()
 	s.agentContext.AppendUserMessage(content)
 	runMessages := s.agentContext.Messages()

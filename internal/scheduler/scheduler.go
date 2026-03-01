@@ -23,7 +23,7 @@ import (
 type Scheduler struct {
 	cronService *cron.Service
 	manager     *session.Manager
-	sessionOpts session.SessionOptions
+	sessionOpts session.CreateSessionOptions
 	bus         *event_bus.Bus
 	interval    time.Duration
 
@@ -34,7 +34,7 @@ type Scheduler struct {
 }
 
 // New creates a new scheduler with the given cron service.
-func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.SessionOptions, b *event_bus.Bus, cfg config.SchedulerConfig) *Scheduler {
+func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.CreateSessionOptions, b *event_bus.Bus, cfg config.SchedulerConfig) *Scheduler {
 	interval, _ := time.ParseDuration(cfg.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Minute
@@ -170,7 +170,13 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	}
 
 	// Create a fresh isolated temporary session for this job execution
-	sess, err := s.manager.CreateTemporary(ctx, s.sessionOpts)
+	sess, err := s.manager.Create(ctx, session.CreateSessionOptions{
+		Bus:                s.sessionOpts.Bus,
+		MaxAgentIterations: s.sessionOpts.MaxAgentIterations,
+		Provider:           s.sessionOpts.Provider,
+		Model:              s.sessionOpts.Model,
+		Temporary:          true,
+	})
 	if err != nil {
 		logger.Error("scheduler: failed to create session for job",
 			logger.BuildMetadata("job_id", job.ID, "error", err))
@@ -193,7 +199,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	// Execute the job message in the session
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- sess.HandleUserMessage(ctx, requestID, job.Message)
+		errChan <- sess.RunInteraction(ctx, requestID, job.Message)
 	}()
 
 	// Collect the response for this specific session/request

@@ -26,7 +26,7 @@ type Router struct {
 	bus         *event_bus.Bus
 	runtime     *session.Runtime
 	manager     *session.Manager
-	sessionOpts session.SessionOptions
+	sessionOpts session.CreateSessionOptions
 
 	// clientConsumers maps identity key to the connected consumer
 	mu              sync.RWMutex
@@ -47,7 +47,7 @@ func NewRouter(
 	b *event_bus.Bus,
 	runtime *session.Runtime,
 	manager *session.Manager,
-	sessionOpts session.SessionOptions,
+	sessionOpts session.CreateSessionOptions,
 ) *Router {
 	return &Router{
 		bus:             b,
@@ -155,8 +155,22 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 	}
 
 	if sess == nil {
+		// Deactivate any existing active session for this client before creating new one
+		if err := r.manager.DeactivateClientSessions(identity.Type, identity.Identity); err != nil {
+			logger.Warning("failed to deactivate existing sessions",
+				logger.BuildMetadata("client_type", identity.Type, "client_identity", identity.Identity, "error", err))
+		}
+
 		// Create a new session for this client
-		sess, err = r.manager.CreateForClient(ctx, identity.Type, identity.Identity, r.sessionOpts)
+		sess, err = r.manager.Create(ctx, session.CreateSessionOptions{
+			Bus:                r.sessionOpts.Bus,
+			MaxAgentIterations: r.sessionOpts.MaxAgentIterations,
+			Provider:           r.sessionOpts.Provider,
+			Model:              r.sessionOpts.Model,
+			ClientType:         identity.Type,
+			ClientIdentity:     identity.Identity,
+			Temporary:          false,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("create session for client: %w", err)
 		}
@@ -241,7 +255,7 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 		}
 
 		newSessionID, newSession, err := r.runtime.HandleCreateSessionRequest(
-			sessionID, payload.Provider, payload.Model, payload.Force)
+			sessionID, payload.Provider, payload.Model, cmd.Identity.Type, cmd.Identity.Identity, payload.Force)
 		if err != nil {
 			return err
 		}

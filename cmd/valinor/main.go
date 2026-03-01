@@ -132,7 +132,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	sm := session.NewManager(sessionsDir, workspaceDir, cfg, rt)
 
 	// Session options used when router/runtime create or resume sessions on-demand.
-	sessionOpts := session.SessionOptions{
+	sessionOpts := session.CreateSessionOptions{
 		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}

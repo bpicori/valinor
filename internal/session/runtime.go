@@ -21,7 +21,7 @@ type EventEmitter func(sessionID string, ev event.Event)
 type Runtime struct {
 	ctx         context.Context
 	manager     *Manager
-	sessionOpts SessionOptions
+	sessionOpts CreateSessionOptions
 	bus         *event_bus.Bus
 
 	mu            sync.RWMutex
@@ -37,7 +37,7 @@ type Runtime struct {
 func NewRuntime(
 	ctx context.Context,
 	manager *Manager,
-	sessionOpts SessionOptions,
+	sessionOpts CreateSessionOptions,
 	eventBus *event_bus.Bus,
 ) *Runtime {
 	return &Runtime{
@@ -192,7 +192,8 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 // HandleCreateSessionRequest creates a session for the given provider/model.
 // When force is false and provider matches the existing session, it may reuse
 // the session and only switch model; when force is true, it always creates a new session.
-func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string, force bool) (string, *Session, error) {
+// The clientType and clientIdentity are required for non-temporary sessions.
+func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model, clientType, clientIdentity string, force bool) (string, *Session, error) {
 	r.mu.Lock()
 	if r.closed {
 		r.mu.Unlock()
@@ -223,11 +224,22 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string, 
 		return existingWorker.session.Meta().ID, existingWorker.session, nil
 	}
 
-	// Create a new session
-	newOpts := r.sessionOpts
-	newOpts.Provider = provider
-	newOpts.Model = model
-	newSession, err := r.manager.Create(r.ctx, newOpts)
+	// Deactivate any existing active session for this client before creating new one
+	if err := r.manager.DeactivateClientSessions(clientType, clientIdentity); err != nil {
+		logger.Warning("failed to deactivate existing sessions",
+			logger.BuildMetadata("client_type", clientType, "client_identity", clientIdentity, "error", err))
+	}
+
+	// Create a new session with client binding
+	newSession, err := r.manager.Create(r.ctx, CreateSessionOptions{
+		Bus:                r.sessionOpts.Bus,
+		MaxAgentIterations: r.sessionOpts.MaxAgentIterations,
+		Provider:           provider,
+		Model:              model,
+		ClientType:         clientType,
+		ClientIdentity:     clientIdentity,
+		Temporary:          false,
+	})
 	if err != nil {
 		return "", nil, fmt.Errorf("create session for provider '%s' model '%s': %w", provider, model, err)
 	}
@@ -239,7 +251,8 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string, 
 	}
 
 	logger.Info("session created via runtime",
-		logger.BuildMetadata("session_id", newSession.Meta().ID, "provider", provider, "model", model))
+		logger.BuildMetadata("session_id", newSession.Meta().ID, "provider", provider, "model", model,
+			"client_type", clientType, "client_identity", clientIdentity))
 	return newSession.Meta().ID, newSession, nil
 }
 

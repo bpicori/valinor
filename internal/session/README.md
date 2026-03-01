@@ -42,21 +42,23 @@ Active session semantics:
 
 ### Create
 
-`Manager.Create(...)`:
+`Manager.Create(ctx, opts)` creates a new session with the given options:
+
 1. Resolves provider/model
-2. Creates a new session id and directory
-3. Saves metadata (no owner, not active, not temporary)
-4. Builds system prompt from workspace context
-5. Builds agent + tools
-6. Writes initial messages containing the system prompt
+2. Validates options (non-temporary sessions require client binding)
+3. For non-temporary sessions: deactivates any existing active session for the client
+4. Creates new session id and directory (or MemoryStore for temporary sessions)
+5. Saves metadata with ownership and active status
+6. Builds system prompt from workspace context
+7. Builds agent + tools
+8. Writes initial messages containing the system prompt
 
-### CreateForClient
-
-`Manager.CreateForClient(ctx, clientType, clientIdentity, opts)`:
-1. Deactivates any existing active session for this client
-2. Creates new session with ownership metadata set
-3. Marks the new session as active
-4. Returns the ready session
+CreateSessionOptions fields:
+- `Bus`: event bus for publishing session events (required)
+- `MaxAgentIterations`: limits the number of agent turns per request
+- `Provider`, `Model`: LLM configuration (overrides defaults when set)
+- `ClientType`, `ClientIdentity`: required for non-temporary sessions
+- `Temporary`: creates in-memory-only session (no client binding required)
 
 ### Resume
 
@@ -70,17 +72,9 @@ Active session semantics:
 
 This means an old session can be resumed even after app restart, as long as session files exist.
 
-### CreateTemporary
-
-`Manager.CreateTemporary(...)`:
-1. Creates a new session with `temporary=true`
-2. Uses `MemoryStore` (no disk persistence)
-3. No client ownership set
-4. Events from temporary sessions are broadcast to all clients
-
 ## Session behavior during a turn
 
-`Session.HandleUserMessage(...)` follows this flow:
+`Session.RunInteraction(...)` follows this flow:
 1. Append user message to in-memory context
 2. Run the agent with current full message history
 3. Replace in-memory history with model output
@@ -130,11 +124,9 @@ Both metadata and messages are written atomically by writing a temp file and ren
 
 ## Public manager operations
 
-- `Create(ctx, opts)`: create fresh session with no owner
-- `CreateForClient(ctx, clientType, clientIdentity, opts)`: create session bound to a client
-- `CreateTemporary(ctx, opts)`: create non-persisted in-memory session
-- `Resume(ctx, id, opts)`: load persisted session and rebuild runtime objects
-- `GetActiveSessionForClient(ctx, clientType, clientIdentity)`: get the active session for a client
+- `Create(ctx, opts CreateSessionOptions)`: create fresh session (bound to client unless temporary)
+- `Resume(ctx, id, opts CreateSessionOptions)`: load persisted session and rebuild runtime objects (uses Bus and MaxAgentIterations)
+- `GetActiveSessionForClient(ctx, clientType, clientIdentity, opts CreateSessionOptions)`: get the active session for a client
 - `SetSessionActive(sessionID)`: mark a session as active (deactivates others for same client)
 - `List()`: list all sessions sorted by most recently updated
 - `GetMetadata(ctx, id)`: fetch metadata only
