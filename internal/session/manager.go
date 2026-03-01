@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,34 +48,61 @@ func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.
 	return &Manager{sessionDir: sessionDir, workspaceDir: workspaceDir, config: cfg, runtime: rt}
 }
 
-// Create creates a new session with a fresh agent and empty transcript.
-// Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
-func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, error) {
-	providerName, model, err := m.config.ResolveProviderModel(opts.Provider, opts.Model)
+// createParams holds parameters for internal session creation.
+type createParams struct {
+	Provider       string
+	Model          string
+	Opts           SessionOptions
+	Store          Store // nil = create FileStore from sessionDir
+	ClientType     string
+	ClientIdentity string
+	Active         bool
+	Temporary      bool
+	TitlePrefix    string
+}
+
+// createSession creates a new session with the given parameters.
+// This is the core internal builder used by Create, CreateForClient, and CreateTemporary.
+func (m *Manager) createSession(ctx context.Context, p createParams) (*Session, error) {
+	providerName, model, err := m.config.ResolveProviderModel(p.Provider, p.Model)
 	if err != nil {
 		return nil, err
 	}
 	providerCfg := m.config.Providers[providerName]
 
 	id := uuid.New().String()
-	dir := filepath.Join(m.sessionDir, id)
 	workspaceDir := m.workspaceDir
 
 	now := time.Now()
+	titlePrefix := p.TitlePrefix
+	if titlePrefix == "" {
+		titlePrefix = "Session"
+	}
 	meta := Metadata{
-		ID:           id,
-		Title:        "Session " + id[:8],
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		WorkspaceDir: workspaceDir,
-		Provider:     providerName,
-		Model:        model,
+		ID:             id,
+		Title:          titlePrefix + " " + id[:8],
+		CreatedAt:      now,
+		UpdatedAt:      now,
+		WorkspaceDir:   workspaceDir,
+		Provider:       providerName,
+		Model:          model,
+		ClientType:     p.ClientType,
+		ClientIdentity: p.ClientIdentity,
+		Active:         p.Active,
+		Temporary:      p.Temporary,
 	}
 
-	store, err := NewJSONLStore(dir)
-	if err != nil {
-		logger.Error("session create store error", logger.BuildMetadata("session_id", id, "error", err))
-		return nil, fmt.Errorf("create store: %w", err)
+	var store Store
+	if p.Store != nil {
+		store = p.Store
+	} else {
+		dir := filepath.Join(m.sessionDir, id)
+		fs, err := NewFileStore(dir)
+		if err != nil {
+			logger.Error("session create store error", logger.BuildMetadata("session_id", id, "error", err))
+			return nil, fmt.Errorf("create store: %w", err)
+		}
+		store = fs
 	}
 
 	if err := store.SaveMetadata(ctx, meta); err != nil {
@@ -90,7 +118,7 @@ func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, er
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
+	ag, err := buildAgent(m.runtime, providerCfg, model, p.Opts.Bus, p.Opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create agent error", logger.BuildMetadata("session_id", id, "model", model, "error", err))
@@ -108,12 +136,31 @@ func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, er
 		logger.Error("session create save messages error", logger.BuildMetadata("session_id", id, "error", err))
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
+
 	sess, err := NewSession(meta, store, ag, systemPrompt, initialMessages, m.config)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
 	}
-	logger.Info("session create success", logger.BuildMetadata("session_id", id, "provider", providerName, "model", model, "workspace_dir", workspaceDir))
+
+	return sess, nil
+}
+
+// Create creates a new session with a fresh agent and empty transcript.
+// Session artifacts are stored at session_dir/<uuid>/ and tools run in the manager workspace.
+func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, error) {
+	sess, err := m.createSession(ctx, createParams{
+		Provider: opts.Provider,
+		Model:    opts.Model,
+		Opts:     opts,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Info("session create success",
+		logger.BuildMetadata("session_id", sess.Meta().ID, "provider", sess.Meta().Provider,
+			"model", sess.Meta().Model, "workspace_dir", sess.Meta().WorkspaceDir))
 	return sess, nil
 }
 
@@ -121,7 +168,7 @@ func (m *Manager) Create(ctx context.Context, opts SessionOptions) (*Session, er
 func (m *Manager) Resume(ctx context.Context, id string, opts SessionOptions) (*Session, error) {
 	dir := filepath.Join(m.sessionDir, id)
 	logger.Debug("session resume start", logger.BuildMetadata("session_id", id))
-	store, err := NewJSONLStore(dir)
+	store, err := NewFileStore(dir)
 	if err != nil {
 		logger.Error("session resume store open error", logger.BuildMetadata("session_id", id, "error", err))
 		return nil, fmt.Errorf("open store: %w", err)
@@ -189,6 +236,44 @@ func (m *Manager) Resume(ctx context.Context, id string, opts SessionOptions) (*
 	return sess, nil
 }
 
+// readMetadataFile reads metadata directly from a session directory without creating a full store.
+func readMetadataFile(dir string) (*Metadata, error) {
+	metaPath := filepath.Join(dir, MetadataFile)
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read metadata file: %w", err)
+	}
+
+	var meta Metadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("unmarshal metadata: %w", err)
+	}
+	return &meta, nil
+}
+
+// writeMetadataFile writes metadata directly to a session directory without creating a full store.
+func writeMetadataFile(dir string, meta *Metadata) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal metadata: %w", err)
+	}
+
+	tmpPath := filepath.Join(dir, MetadataFile+".tmp")
+	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+		return fmt.Errorf("write metadata temp file: %w", err)
+	}
+
+	metaPath := filepath.Join(dir, MetadataFile)
+	if err := os.Rename(tmpPath, metaPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename metadata file: %w", err)
+	}
+	return nil
+}
+
 // List returns metadata for all sessions, sorted by UpdatedAt descending.
 func (m *Manager) List() ([]Metadata, error) {
 	logger.Debug("session list start", nil)
@@ -207,13 +292,7 @@ func (m *Manager) List() ([]Metadata, error) {
 			continue
 		}
 		dir := filepath.Join(m.sessionDir, e.Name())
-		store, err := NewJSONLStore(dir)
-		if err != nil {
-			logger.Debug("session list skip invalid", logger.BuildMetadata("entry_name", e.Name(), "error", err))
-			continue
-		}
-		meta, err := store.LoadMetadata(context.Background())
-		_ = store.Close()
+		meta, err := readMetadataFile(dir)
 		if err != nil || meta == nil {
 			logger.Debug("session list skip invalid", logger.BuildMetadata("entry_name", e.Name(), "error", err))
 			continue
@@ -233,26 +312,20 @@ func (m *Manager) List() ([]Metadata, error) {
 func (m *Manager) GetMetadata(ctx context.Context, id string) (*Metadata, error) {
 	dir := filepath.Join(m.sessionDir, id)
 
-	// Check if directory exists before creating store to avoid creating
-	// empty directories for temporary/non-existent sessions
+	// Check if directory exists
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		return nil, nil // Session doesn't exist on disk
 	} else if err != nil {
 		return nil, fmt.Errorf("check session dir: %w", err)
 	}
 
-	store, err := NewJSONLStore(dir)
-	if err != nil {
-		return nil, fmt.Errorf("open store: %w", err)
-	}
-	defer store.Close()
-	return store.LoadMetadata(ctx)
+	return readMetadataFile(dir)
 }
 
 // LoadMessages returns persisted messages for a given session ID.
 func (m *Manager) LoadMessages(ctx context.Context, id string) ([]agentcontext.Message, error) {
 	dir := filepath.Join(m.sessionDir, id)
-	store, err := NewJSONLStore(dir)
+	store, err := NewFileStore(dir)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -288,12 +361,25 @@ func (m *Manager) Delete(id string) error {
 // GetActiveSessionForClient returns the active session for a given client identity.
 // Returns nil if no active session exists for this client.
 func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, clientIdentity string, opts SessionOptions) (*Session, error) {
-	sessions, err := m.List()
+	dir := filepath.Join(m.sessionDir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 
-	for _, meta := range sessions {
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionDir := filepath.Join(m.sessionDir, e.Name())
+		meta, err := readMetadataFile(sessionDir)
+		if err != nil || meta == nil {
+			continue
+		}
+
 		if meta.ClientType == clientType && meta.ClientIdentity == clientIdentity && meta.Active && !meta.Temporary {
 			return m.Resume(ctx, meta.ID, opts)
 		}
@@ -308,81 +394,25 @@ func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, cli
 func (m *Manager) CreateForClient(ctx context.Context, clientType, clientIdentity string, opts SessionOptions) (*Session, error) {
 	// First, deactivate any existing active session for this client
 	if err := m.deactivateClientSessions(clientType, clientIdentity); err != nil {
-		logger.Warning("failed to deactivate existing sessions", logger.BuildMetadata("client_type", clientType, "client_identity", clientIdentity, "error", err))
+		logger.Warning("failed to deactivate existing sessions",
+			logger.BuildMetadata("client_type", clientType, "client_identity", clientIdentity, "error", err))
 	}
 
-	providerName, model, err := m.config.ResolveProviderModel(opts.Provider, opts.Model)
-	if err != nil {
-		return nil, err
-	}
-	providerCfg := m.config.Providers[providerName]
-
-	id := uuid.New().String()
-	dir := filepath.Join(m.sessionDir, id)
-	workspaceDir := m.workspaceDir
-
-	now := time.Now()
-	meta := Metadata{
-		ID:             id,
-		Title:          "Session " + id[:8],
-		CreatedAt:      now,
-		UpdatedAt:      now,
-		WorkspaceDir:   workspaceDir,
-		Provider:       providerName,
-		Model:          model,
+	sess, err := m.createSession(ctx, createParams{
+		Provider:       opts.Provider,
+		Model:          opts.Model,
+		Opts:           opts,
 		ClientType:     clientType,
 		ClientIdentity: clientIdentity,
 		Active:         true,
-		Temporary:      false,
-	}
-
-	store, err := NewJSONLStore(dir)
+	})
 	if err != nil {
-		logger.Error("session create store error", logger.BuildMetadata("session_id", id, "error", err))
-		return nil, fmt.Errorf("create store: %w", err)
-	}
-
-	if err := store.SaveMetadata(ctx, meta); err != nil {
-		_ = store.Close()
-		logger.Error("session create metadata save error", logger.BuildMetadata("session_id", id, "error", err))
-		return nil, fmt.Errorf("save metadata: %w", err)
-	}
-
-	systemPrompt, err := agentcontext.BuildSystemPrompt(workspaceDir)
-	if err != nil {
-		_ = store.Close()
-		logger.Error("session create context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
-		return nil, fmt.Errorf("build context: %w", err)
-	}
-
-	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
-	if err != nil {
-		_ = store.Close()
-		logger.Error("session create agent error", logger.BuildMetadata("session_id", id, "model", model, "error", err))
 		return nil, err
 	}
 
-	initialMessages := []agentcontext.Message{
-		{
-			Role:    agentcontext.RoleSystem,
-			Content: systemPrompt,
-		},
-	}
-	if err := store.SaveMessages(ctx, initialMessages); err != nil {
-		_ = store.Close()
-		logger.Error("session create save messages error", logger.BuildMetadata("session_id", id, "error", err))
-		return nil, fmt.Errorf("save messages: %w", err)
-	}
-
-	sess, err := NewSession(meta, store, ag, systemPrompt, initialMessages, m.config)
-	if err != nil {
-		_ = store.Close()
-		return nil, fmt.Errorf("create session instance: %w", err)
-	}
-
 	logger.Info("session create for client success",
-		logger.BuildMetadata("session_id", id, "provider", providerName, "model", model,
-			"client_type", clientType, "client_identity", clientIdentity))
+		logger.BuildMetadata("session_id", sess.Meta().ID, "provider", sess.Meta().Provider,
+			"model", sess.Meta().Model, "client_type", clientType, "client_identity", clientIdentity))
 	return sess, nil
 }
 
@@ -408,13 +438,7 @@ func (m *Manager) SetSessionActive(sessionID string) error {
 	meta.UpdatedAt = time.Now()
 
 	dir := filepath.Join(m.sessionDir, sessionID)
-	store, err := NewJSONLStore(dir)
-	if err != nil {
-		return fmt.Errorf("open store: %w", err)
-	}
-	defer store.Close()
-
-	if err := store.SaveMetadata(context.Background(), *meta); err != nil {
+	if err := writeMetadataFile(dir, meta); err != nil {
 		return fmt.Errorf("save metadata: %w", err)
 	}
 
@@ -427,62 +451,20 @@ func (m *Manager) SetSessionActive(sessionID string) error {
 // Used for ephemeral executions like background jobs. Events from temporary sessions
 // are broadcast to all connected clients.
 func (m *Manager) CreateTemporary(ctx context.Context, opts SessionOptions) (*Session, error) {
-	providerName, model, err := m.config.ResolveProviderModel(opts.Provider, opts.Model)
+	sess, err := m.createSession(ctx, createParams{
+		Provider:    opts.Provider,
+		Model:       opts.Model,
+		Opts:        opts,
+		Store:       NewMemoryStore(),
+		Temporary:   true,
+		TitlePrefix: "Temporary",
+	})
 	if err != nil {
 		return nil, err
-	}
-	providerCfg := m.config.Providers[providerName]
-
-	id := uuid.New().String()
-	workspaceDir := m.workspaceDir
-
-	now := time.Now()
-	meta := Metadata{
-		ID:           id,
-		Title:        "Temporary " + id[:8],
-		CreatedAt:    now,
-		UpdatedAt:    now,
-		WorkspaceDir: workspaceDir,
-		Provider:     providerName,
-		Model:        model,
-		Temporary:    true,  // Mark as temporary
-		Active:       false, // Temporary sessions are not "active" in the client sense
-	}
-
-	// Use in-memory store instead of JSONLStore
-	store := NewMemoryStore()
-
-	systemPrompt, err := agentcontext.BuildSystemPrompt(workspaceDir)
-	if err != nil {
-		logger.Error("session create temporary context build error",
-			logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
-		return nil, fmt.Errorf("build context: %w", err)
-	}
-
-	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
-	if err != nil {
-		logger.Error("session create temporary agent error",
-			logger.BuildMetadata("session_id", id, "model", model, "error", err))
-		return nil, err
-	}
-
-	initialMessages := []agentcontext.Message{
-		{
-			Role:    agentcontext.RoleSystem,
-			Content: systemPrompt,
-		},
-	}
-	if err := store.SaveMessages(ctx, initialMessages); err != nil {
-		return nil, fmt.Errorf("save messages: %w", err)
-	}
-
-	sess, err := NewSession(meta, store, ag, systemPrompt, initialMessages, m.config)
-	if err != nil {
-		return nil, fmt.Errorf("create session instance: %w", err)
 	}
 
 	logger.Info("session create temporary success",
-		logger.BuildMetadata("session_id", id, "provider", providerName, "model", model))
+		logger.BuildMetadata("session_id", sess.Meta().ID, "provider", sess.Meta().Provider, "model", sess.Meta().Model))
 	return sess, nil
 }
 
@@ -492,29 +474,31 @@ func (m *Manager) deactivateClientSessions(clientType, clientIdentity string) er
 		return nil // Nothing to deactivate
 	}
 
-	sessions, err := m.List()
+	dir := filepath.Join(m.sessionDir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("list sessions: %w", err)
 	}
 
-	for _, meta := range sessions {
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionDir := filepath.Join(m.sessionDir, e.Name())
+		meta, err := readMetadataFile(sessionDir)
+		if err != nil || meta == nil {
+			continue
+		}
+
 		if meta.ClientType == clientType && meta.ClientIdentity == clientIdentity && meta.Active && !meta.Temporary {
 			meta.Active = false
 			meta.UpdatedAt = time.Now()
 
-			dir := filepath.Join(m.sessionDir, meta.ID)
-			store, err := NewJSONLStore(dir)
-			if err != nil {
-				logger.Warning("failed to open store for deactivation",
+			if err := writeMetadataFile(sessionDir, meta); err != nil {
+				logger.Warning("failed to deactivate session",
 					logger.BuildMetadata("session_id", meta.ID, "error", err))
 				continue
 			}
-
-			if err := store.SaveMetadata(context.Background(), meta); err != nil {
-				logger.Warning("failed to deactivate session",
-					logger.BuildMetadata("session_id", meta.ID, "error", err))
-			}
-			store.Close()
 
 			logger.Info("session deactivated",
 				logger.BuildMetadata("session_id", meta.ID, "client_type", clientType, "client_identity", clientIdentity))
@@ -522,11 +506,6 @@ func (m *Manager) deactivateClientSessions(clientType, clientIdentity string) er
 	}
 
 	return nil
-}
-
-// createProvider is a helper that delegates to the factory.
-func createProvider(cfg config.ProviderConfig) (llm.Provider, error) {
-	return factory.CreateProvider(cfg)
 }
 
 // ListProviderModels fetches available models for the given provider.
@@ -538,7 +517,7 @@ func (m *Manager) ListProviderModels(ctx context.Context, providerName string) (
 	if !ok {
 		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
 	}
-	provider, err := createProvider(providerCfg)
+	provider, err := factory.CreateProvider(providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider: %w", err)
 	}
@@ -560,18 +539,13 @@ func (m *Manager) ListProviderModels(ctx context.Context, providerName string) (
 	return models, nil
 }
 
-// createTools returns tools using the shared runtime.
-func createTools(rt *sandbox.Runtime) []llm.Tool {
-	return tools.BuildTools(rt)
-}
-
 // buildAgent creates an agent with tools using the shared runtime.
 func buildAgent(rt *sandbox.Runtime, providerCfg config.ProviderConfig, model string, b *event_bus.Bus, maxIterations int) (*llm.LLM, error) {
-	provider, err := createProvider(providerCfg)
+	provider, err := factory.CreateProvider(providerCfg)
 	if err != nil {
 		return nil, fmt.Errorf("create provider: %w", err)
 	}
-	availableTools := createTools(rt)
+	availableTools := tools.BuildTools(rt)
 	ag, err := llm.New(provider, model, availableTools, b, maxIterations)
 	if err != nil {
 		return nil, fmt.Errorf("create agent: %w", err)

@@ -162,10 +162,9 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 		}
 	}
 
-	// Ensure session has a worker in the runtime
-	sess, err = r.runtime.EnsureActiveSession(sess)
-	if err != nil {
-		return nil, fmt.Errorf("ensure active session: %w", err)
+	// Register session with the runtime
+	if err := r.runtime.RegisterSession(sess); err != nil {
+		return nil, fmt.Errorf("register session: %w", err)
 	}
 
 	// Send session attached event

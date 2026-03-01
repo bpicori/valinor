@@ -17,28 +17,28 @@ const (
 	MessagesFile = "messages.json"
 )
 
-// JSONLStore implements Store using JSONL files on disk.
-type JSONLStore struct {
+// FileStore implements Store using JSON files on disk.
+type FileStore struct {
 	dir    string
 	mu     sync.Mutex
 	closed bool
 }
 
-// NewJSONLStore opens or creates a session directory and returns a Store.
+// NewFileStore opens or creates a session directory and returns a Store.
 // The directory must already exist. Call Close when done.
-func NewJSONLStore(dir string) (*JSONLStore, error) {
+func NewFileStore(dir string) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		logger.Error("store create dir error", logger.BuildMetadata("dir", dir, "error", err))
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 
-	return &JSONLStore{
+	return &FileStore{
 		dir: dir,
 	}, nil
 }
 
 // SaveMessages writes messages atomically (write to temp, then rename).
-func (s *JSONLStore) SaveMessages(ctx context.Context, messages []agentcontext.Message) error {
+func (s *FileStore) SaveMessages(ctx context.Context, messages []agentcontext.Message) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -67,7 +67,7 @@ func (s *JSONLStore) SaveMessages(ctx context.Context, messages []agentcontext.M
 }
 
 // LoadMessages reads all persisted messages.
-func (s *JSONLStore) LoadMessages(ctx context.Context) ([]agentcontext.Message, error) {
+func (s *FileStore) LoadMessages(ctx context.Context) ([]agentcontext.Message, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -93,7 +93,7 @@ func (s *JSONLStore) LoadMessages(ctx context.Context) ([]agentcontext.Message, 
 }
 
 // SaveMetadata writes metadata atomically (write to temp, then rename).
-func (s *JSONLStore) SaveMetadata(ctx context.Context, meta Metadata) error {
+func (s *FileStore) SaveMetadata(ctx context.Context, meta Metadata) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -122,7 +122,7 @@ func (s *JSONLStore) SaveMetadata(ctx context.Context, meta Metadata) error {
 }
 
 // LoadMetadata reads metadata from metadata.json.
-func (s *JSONLStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
+func (s *FileStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -148,7 +148,7 @@ func (s *JSONLStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 }
 
 // Close releases resources. Safe to call multiple times.
-func (s *JSONLStore) Close() error {
+func (s *FileStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {

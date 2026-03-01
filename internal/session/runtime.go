@@ -16,89 +16,6 @@ import (
 // The router provides this to route events to the correct consumers.
 type EventEmitter func(sessionID string, ev event.Event)
 
-// sessionWorker owns the execution state for a single session.
-// Each worker processes commands sequentially for its session only.
-type sessionWorker struct {
-	session *Session
-
-	mu            sync.Mutex
-	runCancel     context.CancelFunc
-	runInProgress bool
-	closed        bool
-}
-
-// newSessionWorker creates a new worker for the given session.
-func newSessionWorker(sess *Session) *sessionWorker {
-	return &sessionWorker{
-		session: sess,
-	}
-}
-
-// handleUserMessage processes a user message for this session.
-// It manages its own run cancellation state independently.
-func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string, content string, bus *event_bus.Bus) error {
-	w.mu.Lock()
-	if w.closed {
-		w.mu.Unlock()
-		return fmt.Errorf("session worker closed")
-	}
-
-	// Cancel any existing run before starting a new one
-	if w.runCancel != nil {
-		w.runCancel()
-	}
-
-	runCtx, runCancel := context.WithCancel(ctx)
-	w.runCancel = runCancel
-	w.runInProgress = true
-	w.mu.Unlock()
-
-	// Execute the run
-	err := w.session.HandleUserMessage(runCtx, requestID, content)
-
-	w.mu.Lock()
-	w.runCancel = nil
-	w.runInProgress = false
-	w.mu.Unlock()
-
-	if err != nil {
-		if runCtx.Err() == context.Canceled {
-			logger.Info("session worker user message cancelled", logger.BuildMetadata("session_id", w.session.Meta().ID))
-			bus.Publish(event.Event{
-				Type:      event.AgentCancelled,
-				Payload:   event.AgentCancelledPayload{},
-				SessionID: w.session.Meta().ID,
-				RequestID: requestID,
-			})
-			return nil
-		}
-		return err
-	}
-
-	return nil
-}
-
-// cancelRun cancels any in-progress run for this session.
-func (w *sessionWorker) cancelRun() {
-	w.mu.Lock()
-	if w.runCancel != nil {
-		w.runCancel()
-		w.runCancel = nil
-	}
-	w.mu.Unlock()
-}
-
-// close marks the worker as closed and cancels any in-progress run.
-func (w *sessionWorker) close() {
-	w.mu.Lock()
-	w.closed = true
-	if w.runCancel != nil {
-		w.runCancel()
-		w.runCancel = nil
-	}
-	w.mu.Unlock()
-}
-
 // Runtime owns the session worker registry and handles command dispatch.
 // Commands are dispatched directly via HandleCommandForSession rather than through bus events.
 type Runtime struct {
@@ -144,11 +61,12 @@ func (r *Runtime) Start() {
 	r.runtimeCtx, r.runtimeCancel = context.WithCancel(r.ctx)
 }
 
-// GetOrCreateWorker gets an existing worker for the session or creates a new one.
-// Returns the worker and a bool indicating if it was created (true) or existing (false).
-func (r *Runtime) GetOrCreateWorker(sess *Session) (*sessionWorker, bool, error) {
+// RegisterSession registers a session with the runtime, creating a worker if needed.
+// If the session is already registered, it returns nil (idempotent).
+// The caller should use the returned session from GetSession for consistency.
+func (r *Runtime) RegisterSession(sess *Session) error {
 	if sess == nil {
-		return nil, false, fmt.Errorf("session is required")
+		return fmt.Errorf("session is required")
 	}
 
 	sessionID := sess.Meta().ID
@@ -157,10 +75,10 @@ func (r *Runtime) GetOrCreateWorker(sess *Session) (*sessionWorker, bool, error)
 	defer r.mu.Unlock()
 
 	if r.closed {
-		return nil, false, fmt.Errorf("session runtime closed")
+		return fmt.Errorf("session runtime closed")
 	}
 	if !r.started {
-		return nil, false, fmt.Errorf("session runtime not started")
+		return fmt.Errorf("session runtime not started")
 	}
 
 	// Check if worker already exists
@@ -170,18 +88,18 @@ func (r *Runtime) GetOrCreateWorker(sess *Session) (*sessionWorker, bool, error)
 			// Same session ID but different instance - close the new one
 			_ = sess.Close()
 		}
-		return worker, false, nil
+		return nil
 	}
 
 	// Create new worker
 	worker := newSessionWorker(sess)
 	r.workers[sessionID] = worker
 
-	return worker, true, nil
+	return nil
 }
 
-// GetWorker retrieves an existing worker by session ID.
-func (r *Runtime) GetWorker(sessionID string) (*sessionWorker, error) {
+// getWorker retrieves an existing worker by session ID (internal use only).
+func (r *Runtime) getWorker(sessionID string) (*sessionWorker, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -201,7 +119,7 @@ func (r *Runtime) GetWorker(sessionID string) (*sessionWorker, error) {
 
 // GetSession retrieves the session for a given session ID.
 func (r *Runtime) GetSession(sessionID string) (*Session, error) {
-	worker, err := r.GetWorker(sessionID)
+	worker, err := r.getWorker(sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +141,7 @@ func (r *Runtime) ListActiveSessions() []string {
 // HandleCommandForSession processes a command for a specific session.
 // This is the preferred API for router-targeted command dispatch.
 func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cmdType event.EventType, payload any) error {
-	worker, err := r.GetWorker(sessionID)
+	worker, err := r.getWorker(sessionID)
 	if err != nil {
 		return err
 	}
@@ -236,7 +154,9 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 		}
 		return worker.handleUserMessage(r.runtimeCtx, requestID, p.Content, r.bus)
 	case event.NewConversation:
-		worker.session.ResetConversation()
+		if err := worker.session.ResetConversation(r.runtimeCtx); err != nil {
+			return err
+		}
 		r.publishContextTokens(worker.session)
 		return nil
 	case event.ChangeProviderModel:
@@ -312,21 +232,20 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string, 
 		return "", nil, fmt.Errorf("create session for provider '%s' model '%s': %w", provider, model, err)
 	}
 
-	// Create worker for the new session
-	worker, _, err := r.GetOrCreateWorker(newSession)
-	if err != nil {
+	// Register the new session with the runtime
+	if err := r.RegisterSession(newSession); err != nil {
 		_ = newSession.Close()
-		return "", nil, fmt.Errorf("create worker for new session: %w", err)
+		return "", nil, fmt.Errorf("register new session: %w", err)
 	}
 
 	logger.Info("session created via runtime",
 		logger.BuildMetadata("session_id", newSession.Meta().ID, "provider", provider, "model", model))
-	return newSession.Meta().ID, worker.session, nil
+	return newSession.Meta().ID, newSession, nil
 }
 
 // CancelSessionRun cancels any in-progress run for a specific session.
 func (r *Runtime) CancelSessionRun(sessionID string) error {
-	worker, err := r.GetWorker(sessionID)
+	worker, err := r.getWorker(sessionID)
 	if err != nil {
 		return err
 	}
@@ -371,7 +290,7 @@ func (r *Runtime) Close() {
 
 // PublishContextTokens publishes context token information for the given session.
 func (r *Runtime) PublishContextTokens(sessionID string) {
-	worker, err := r.GetWorker(sessionID)
+	worker, err := r.getWorker(sessionID)
 	if err != nil {
 		return
 	}
@@ -430,34 +349,4 @@ func (r *Runtime) handleRequestProviderModels(provider string, sessionID string,
 			RequestID: requestID,
 		})
 	})
-}
-
-// EnsureActiveSession is deprecated. Use GetOrCreateWorker instead.
-// This method is kept for backward compatibility during the transition.
-func (r *Runtime) EnsureActiveSession(sess *Session) (*Session, error) {
-	worker, _, err := r.GetOrCreateWorker(sess)
-	if err != nil {
-		return nil, err
-	}
-	return worker.session, nil
-}
-
-// ActiveSession is deprecated. Use GetSession instead.
-// This method is kept for backward compatibility and returns the first available session.
-func (r *Runtime) ActiveSession() (*Session, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	if r.closed {
-		return nil, fmt.Errorf("session runtime closed")
-	}
-	if !r.started {
-		return nil, fmt.Errorf("session runtime not started")
-	}
-
-	// Return the first available session (for backward compatibility)
-	for _, w := range r.workers {
-		return w.session, nil
-	}
-	return nil, fmt.Errorf("no active session")
 }

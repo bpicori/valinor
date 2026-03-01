@@ -81,14 +81,16 @@ func (s *Session) HandleUserMessage(ctx context.Context, requestID string, conte
 }
 
 // ResetConversation clears messages to only the base system prompt.
-func (s *Session) ResetConversation() {
+func (s *Session) ResetConversation(ctx context.Context) error {
 	s.mu.Lock()
 	s.agentContext.Reset()
 	persistMessages := s.agentContext.Messages()
 	s.mu.Unlock()
-	if err := s.store.SaveMessages(context.Background(), persistMessages); err != nil {
+	if err := s.store.SaveMessages(ctx, persistMessages); err != nil {
 		logger.Error("session reset save messages error", logger.BuildMetadata("session_id", s.meta.ID, "error", err))
+		return fmt.Errorf("save messages: %w", err)
 	}
+	return nil
 }
 
 // SwitchProviderModel updates the session's model within the same provider.
