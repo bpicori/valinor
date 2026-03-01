@@ -3,32 +3,27 @@ package tools
 import (
 	"encoding/json"
 
-	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
 const writeFileName = "write_file"
 
-func writeFileDef() llm.ToolDefinition {
-	return buildToolDef(
-		writeFileName,
-		"Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]string{
-					"type":        "string",
-					"description": "Relative path to the file",
-				},
-				"content": map[string]string{
-					"type":        "string",
-					"description": "Content to write",
-				},
+func writeFileParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]string{
+				"type":        "string",
+				"description": "Relative path to the file",
 			},
-			"required":             []string{"path", "content"},
-			"additionalProperties": false,
+			"content": map[string]string{
+				"type":        "string",
+				"description": "Content to write",
+			},
 		},
-	)
+		"required":             []string{"path", "content"},
+		"additionalProperties": false,
+	}
 }
 
 func writeFileExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

@@ -5,6 +5,7 @@ import (
 
 	"valinor/internal/llm"
 	"valinor/internal/logger"
+	"valinor/internal/tools"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
@@ -53,18 +54,18 @@ func ToOpenAIMessages(messages []llm.Message) []openai.ChatCompletionMessagePara
 	return out
 }
 
-// ToOpenAITool converts a provider-agnostic tool definition to OpenAI format.
-func ToOpenAITool(tool llm.ToolDefinition) openai.ChatCompletionToolUnionParam {
+// ToOpenAITool converts a provider-agnostic tool to OpenAI format.
+func ToOpenAITool(t tools.Tool) openai.ChatCompletionToolUnionParam {
 	// Parse the JSON Schema parameters
 	var params shared.FunctionParameters
-	if err := json.Unmarshal(tool.Parameters, &params); err != nil {
-		logger.Error("openai tool conversion error", logger.BuildMetadata("tool", tool.Name, "error", err))
+	if err := json.Unmarshal(t.Parameters, &params); err != nil {
+		logger.Error("openai tool conversion error", logger.BuildMetadata("tool", t.Name, "error", err))
 		params = shared.FunctionParameters{"type": "object"}
 	}
 
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        tool.Name,
-		Description: openai.String(tool.Description),
+		Name:        t.Name,
+		Description: openai.String(t.Description),
 		Parameters:  params,
 	})
 }

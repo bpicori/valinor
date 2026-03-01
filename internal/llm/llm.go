@@ -10,6 +10,7 @@ import (
 	"valinor/internal/event"
 	"valinor/internal/event_bus"
 	"valinor/internal/logger"
+	"valinor/internal/tools"
 )
 
 const (
@@ -19,8 +20,8 @@ const (
 	RoleTool      MessageRole = "tool"
 )
 
-// New creates an LLM runtime with the given provider and tools.
-func New(provider Provider, model string, tools []Tool, b *event_bus.Bus, maxIterations int) (*LLM, error) {
+// New creates an LLM runtime with the given provider.
+func New(provider Provider, model string, b *event_bus.Bus, maxIterations int) (*LLM, error) {
 	if maxIterations <= 0 {
 		maxIterations = 20
 	}
@@ -33,18 +34,12 @@ func New(provider Provider, model string, tools []Tool, b *event_bus.Bus, maxIte
 		model:         model,
 		bus:           b,
 		maxIterations: maxIterations,
-		tools:         tools,
 	}, nil
 }
 
 // SetModel updates the model used for subsequent runs.
 func (l *LLM) SetModel(model string) {
 	l.model = model
-}
-
-// Tools returns the tools attached to this LLM (for agent rebuild).
-func (l *LLM) Tools() []Tool {
-	return l.tools
 }
 
 // MaxIterations returns the max iterations cap.
@@ -96,11 +91,8 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		// Convert to provider-agnostic messages
 		providerMessages := l.toProviderMessages(messages)
 
-		// Build tool definitions
-		toolDefs := make([]ToolDefinition, len(l.tools))
-		for i := range l.tools {
-			toolDefs[i] = l.tools[i].Def
-		}
+		// Build tool definitions from request tools
+		toolDefs := req.Tools
 
 		// Call provider stream with callback to publish deltas to the bus
 		result, err := l.provider.Stream(ctx, StreamParams{
@@ -188,7 +180,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				ToolName:   tc.Name,
 				ToolArgs:   string(args),
 			}))
-			toolResult, ok := l.executeTool(tc.Name, args)
+			toolResult, ok := l.executeTool(req.Tools, tc.Name, args)
 			if !ok {
 				toolResult = "error: tool not found"
 			}
@@ -251,8 +243,8 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 	return out
 }
 
-func (l *LLM) executeTool(toolName string, args json.RawMessage) (string, bool) {
-	for _, t := range l.tools {
+func (l *LLM) executeTool(tools []tools.Tool, toolName string, args json.RawMessage) (string, bool) {
+	for _, t := range tools {
 		if t.Name != toolName {
 			continue
 		}

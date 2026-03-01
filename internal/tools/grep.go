@@ -6,37 +6,32 @@ import (
 	"regexp"
 	"strings"
 
-	"valinor/internal/llm"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
 )
 
 const grepName = "grep"
 
-func grepDef() llm.ToolDefinition {
-	return buildToolDef(
-		grepName,
-		"Search for a regex pattern in files. Returns matching lines with file paths and line numbers.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"pattern": map[string]string{
-					"type":        "string",
-					"description": "Regular expression pattern to search for",
-				},
-				"path": map[string]string{
-					"type":        "string",
-					"description": "Relative path to search (file or directory, default \".\")",
-				},
-				"include": map[string]string{
-					"type":        "string",
-					"description": "Glob pattern to filter files (e.g. \"*.go\", \"*.txt\")",
-				},
+func grepParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"pattern": map[string]string{
+				"type":        "string",
+				"description": "Regular expression pattern to search for",
 			},
-			"required":             []string{"pattern"},
-			"additionalProperties": false,
+			"path": map[string]string{
+				"type":        "string",
+				"description": "Relative path to search (file or directory, default \".\")",
+			},
+			"include": map[string]string{
+				"type":        "string",
+				"description": "Glob pattern to filter files (e.g. \"*.go\", \"*.txt\")",
+			},
 		},
-	)
+		"required":             []string{"pattern"},
+		"additionalProperties": false,
+	}
 }
 
 func grepExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

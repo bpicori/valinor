@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"valinor/internal/cron"
-	"valinor/internal/llm"
 	"valinor/internal/logger"
 )
 
@@ -33,40 +32,36 @@ const cronAddName = "cron_add"
 const cronListName = "cron_list"
 const cronRemoveName = "cron_remove"
 
-// cronAddDef returns the tool definition for cron_add.
-func cronAddDef() llm.ToolDefinition {
-	return buildToolDef(
-		cronAddName,
-		"Create a new scheduled cron job that runs at a specified interval or one-time. Use for recurring tasks like reminders, periodic checks, or scheduled reports. Returns the created job ID.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"name": map[string]any{
-					"type":        "string",
-					"description": "Short descriptive name for the job (e.g., 'Daily Weather', 'Hourly Check')",
-				},
-				"message": map[string]any{
-					"type":        "string",
-					"description": "The message/prompt to send to the AI when the job runs. Be specific about what to do.",
-				},
-				"schedule_kind": map[string]any{
-					"type":        "string",
-					"description": "Type of schedule: 'every' for recurring intervals, 'at' for one-time specific time",
-					"enum":        []string{"every", "at"},
-				},
-				"every": map[string]any{
-					"type":        "string",
-					"description": "For 'every' schedule: interval duration like '5m', '30m', '1h', '1h30m'. Minimum 1 minute.",
-				},
-				"at": map[string]any{
-					"type":        "string",
-					"description": "For 'at' schedule: ISO8601/RFC3339 timestamp when to run once, e.g., '2026-03-01T09:00:00Z'",
-				},
+// cronAddParams returns the parameters schema for cron_add.
+func cronAddParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{
+				"type":        "string",
+				"description": "Short descriptive name for the job (e.g., 'Daily Weather', 'Hourly Check')",
 			},
-			"required":             []string{"name", "message", "schedule_kind"},
-			"additionalProperties": false,
+			"message": map[string]any{
+				"type":        "string",
+				"description": "The message/prompt to send to the AI when the job runs. Be specific about what to do.",
+			},
+			"schedule_kind": map[string]any{
+				"type":        "string",
+				"description": "Type of schedule: 'every' for recurring intervals, 'at' for one-time specific time",
+				"enum":        []string{"every", "at"},
+			},
+			"every": map[string]any{
+				"type":        "string",
+				"description": "For 'every' schedule: interval duration like '5m', '30m', '1h', '1h30m'. Minimum 1 minute.",
+			},
+			"at": map[string]any{
+				"type":        "string",
+				"description": "For 'at' schedule: ISO8601/RFC3339 timestamp when to run once, e.g., '2026-03-01T09:00:00Z'",
+			},
 		},
-	)
+		"required":             []string{"name", "message", "schedule_kind"},
+		"additionalProperties": false,
+	}
 }
 
 // cronAddExec executes the cron_add tool.
@@ -150,23 +145,19 @@ func cronAddExec(args json.RawMessage) (string, error) {
 		job.Name, job.ID, scheduleDesc, job.NextRunAt.Format("2006-01-02 15:04 MST")), nil
 }
 
-// cronListDef returns the tool definition for cron_list.
-func cronListDef() llm.ToolDefinition {
-	return buildToolDef(
-		cronListName,
-		"List scheduled cron jobs. Shows job names, IDs, schedules, and next run times. Use to see what tasks are scheduled or to find a job ID for removal.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"enabled_only": map[string]any{
-					"type":        "boolean",
-					"description": "If true, only show enabled jobs (default: true)",
-				},
+// cronListParams returns the parameters schema for cron_list.
+func cronListParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"enabled_only": map[string]any{
+				"type":        "boolean",
+				"description": "If true, only show enabled jobs (default: true)",
 			},
-			"required":             []string{},
-			"additionalProperties": false,
 		},
-	)
+		"required":             []string{},
+		"additionalProperties": false,
+	}
 }
 
 // cronListExec executes the cron_list tool.
@@ -225,23 +216,19 @@ func cronListExec(args json.RawMessage) (string, error) {
 	return sb.String(), nil
 }
 
-// cronRemoveDef returns the tool definition for cron_remove.
-func cronRemoveDef() llm.ToolDefinition {
-	return buildToolDef(
-		cronRemoveName,
-		"Remove a scheduled cron job permanently by its ID. Use cron_list first to find the job ID. This cannot be undone.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"job_id": map[string]string{
-					"type":        "string",
-					"description": "The job ID to remove (get from cron_list)",
-				},
+// cronRemoveParams returns the parameters schema for cron_remove.
+func cronRemoveParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"job_id": map[string]string{
+				"type":        "string",
+				"description": "The job ID to remove (get from cron_list)",
 			},
-			"required":             []string{"job_id"},
-			"additionalProperties": false,
 		},
-	)
+		"required":             []string{"job_id"},
+		"additionalProperties": false,
+	}
 }
 
 // cronRemoveExec executes the cron_remove tool.

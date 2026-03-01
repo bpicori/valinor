@@ -5,6 +5,7 @@ import (
 
 	"valinor/internal/llm"
 	"valinor/internal/logger"
+	"valinor/internal/tools"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
@@ -85,12 +86,12 @@ func ToAnthropicMessages(messages []llm.Message) []anthropic.MessageParam {
 	return out
 }
 
-// ToAnthropicTool converts a provider-agnostic tool definition to Anthropic format.
-func ToAnthropicTool(tool llm.ToolDefinition) anthropic.ToolParam {
+// ToAnthropicTool converts a provider-agnostic tool to Anthropic format.
+func ToAnthropicTool(t tools.Tool) anthropic.ToolParam {
 	// Parse the JSON Schema parameters
 	var inputSchema map[string]interface{}
-	if err := json.Unmarshal(tool.Parameters, &inputSchema); err != nil {
-		logger.Error("anthropic tool conversion error", logger.BuildMetadata("tool", tool.Name, "error", err))
+	if err := json.Unmarshal(t.Parameters, &inputSchema); err != nil {
+		logger.Error("anthropic tool conversion error", logger.BuildMetadata("tool", t.Name, "error", err))
 		inputSchema = map[string]interface{}{"type": "object"}
 	}
 
@@ -105,8 +106,8 @@ func ToAnthropicTool(tool llm.ToolDefinition) anthropic.ToolParam {
 	}
 
 	return anthropic.ToolParam{
-		Name:        tool.Name,
-		Description: anthropic.String(tool.Description),
+		Name:        t.Name,
+		Description: anthropic.String(t.Description),
 		InputSchema: anthropic.ToolInputSchemaParam{
 			Properties: properties,
 			Required:   requiredStrings,

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
@@ -17,41 +16,37 @@ const (
 	maxTimeoutMs     = 300000
 )
 
-func pythonExecDef() llm.ToolDefinition {
-	return buildToolDef(
-		pythonExecName,
-		"Execute Python code in a sandboxed container. Use for running Python scripts, data analysis, file processing, or Python automation.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"code": map[string]string{
-					"type":        "string",
-					"description": "Python code to execute inline. Either 'code' or 'script_path' must be provided (not both).",
-				},
-				"script_path": map[string]string{
-					"type":        "string",
-					"description": "Relative path to a Python script file in the workspace to execute. Either 'code' or 'script_path' must be provided (not both).",
-				},
-				"args": map[string]any{
-					"type":        "array",
-					"description": "Command-line arguments for script mode (ignored in inline mode)",
-					"items": map[string]string{
-						"type": "string",
-					},
-				},
-				"cwd": map[string]string{
-					"type":        "string",
-					"description": "Relative working directory within workspace (default \".\")",
-				},
-				"timeout_ms": map[string]any{
-					"type":        "integer",
-					"description": "Execution timeout in milliseconds (1-300000, default 30000)",
+func pythonExecParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"code": map[string]string{
+				"type":        "string",
+				"description": "Python code to execute inline. Either 'code' or 'script_path' must be provided (not both).",
+			},
+			"script_path": map[string]string{
+				"type":        "string",
+				"description": "Relative path to a Python script file in the workspace to execute. Either 'code' or 'script_path' must be provided (not both).",
+			},
+			"args": map[string]any{
+				"type":        "array",
+				"description": "Command-line arguments for script mode (ignored in inline mode)",
+				"items": map[string]string{
+					"type": "string",
 				},
 			},
-			"required":             []string{},
-			"additionalProperties": false,
+			"cwd": map[string]string{
+				"type":        "string",
+				"description": "Relative working directory within workspace (default \".\")",
+			},
+			"timeout_ms": map[string]any{
+				"type":        "integer",
+				"description": "Execution timeout in milliseconds (1-300000, default 30000)",
+			},
 		},
-	)
+		"required":             []string{},
+		"additionalProperties": false,
+	}
 }
 
 func pythonExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

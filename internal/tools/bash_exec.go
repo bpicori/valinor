@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
@@ -17,37 +16,33 @@ const (
 	bashMaxTimeout     = 300000
 )
 
-func bashExecDef() llm.ToolDefinition {
-	return buildToolDef(
-		bashExecName,
-		"Execute bash commands in a sandboxed container. Use for running shell commands, git operations, package management, builds, tests, and system automation. Commands run with workspace directory access.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"command": map[string]string{
-					"type":        "string",
-					"description": "The bash command to execute (e.g., 'ls', 'git status', 'npm install')",
-				},
-				"args": map[string]any{
-					"type":        "array",
-					"description": "Command-line arguments for the command",
-					"items": map[string]string{
-						"type": "string",
-					},
-				},
-				"cwd": map[string]string{
-					"type":        "string",
-					"description": "Relative working directory within workspace (default \".\")",
-				},
-				"timeout_ms": map[string]any{
-					"type":        "integer",
-					"description": "Execution timeout in milliseconds (1-300000, default 30000)",
+func bashExecParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"command": map[string]string{
+				"type":        "string",
+				"description": "The bash command to execute (e.g., 'ls', 'git status', 'npm install')",
+			},
+			"args": map[string]any{
+				"type":        "array",
+				"description": "Command-line arguments for the command",
+				"items": map[string]string{
+					"type": "string",
 				},
 			},
-			"required":             []string{"command"},
-			"additionalProperties": false,
+			"cwd": map[string]string{
+				"type":        "string",
+				"description": "Relative working directory within workspace (default \".\")",
+			},
+			"timeout_ms": map[string]any{
+				"type":        "integer",
+				"description": "Execution timeout in milliseconds (1-300000, default 30000)",
+			},
 		},
-	)
+		"required":             []string{"command"},
+		"additionalProperties": false,
+	}
 }
 
 func bashExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

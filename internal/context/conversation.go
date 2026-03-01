@@ -1,17 +1,31 @@
 package agentcontext
 
-// Context owns the in-memory conversation state for one session.
+import "valinor/internal/tools"
+
+// Context owns the in-memory conversation state and tools for one session.
 type Context struct {
 	systemPrompt string
 	messages     []Message
+	tools        []tools.Tool
 }
 
-// NewContext builds a context state with a base system prompt.
-func NewContext(systemPrompt string, initialMessages []Message) Context {
+// NewContext builds a context state with a base system prompt and tools.
+func NewContext(systemPrompt string, initialMessages []Message, tools []tools.Tool) Context {
 	return Context{
 		systemPrompt: systemPrompt,
 		messages:     CloneMessages(initialMessages),
+		tools:        tools,
 	}
+}
+
+// Tools returns the tools available in this context.
+func (c *Context) Tools() []tools.Tool {
+	return c.tools
+}
+
+// SetTools updates the tools available in this context.
+func (c *Context) SetTools(tools []tools.Tool) {
+	c.tools = tools
 }
 
 // AppendUserMessage appends a user message to the context.

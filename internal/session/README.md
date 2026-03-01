@@ -103,7 +103,7 @@ Important details:
 
 ## Provider and model semantics
 
-- `SwitchProviderModel` in `Session` supports **model change inside the same provider**
+- `SetModel` in `Session` supports **model change inside the same provider**
 - If provider changes, a **new session** must be created and activated
 - Resumed sessions re-resolve provider/model through current config for compatibility
 

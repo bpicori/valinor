@@ -5,51 +5,46 @@ import (
 	"fmt"
 	"strings"
 
-	"valinor/internal/llm"
 	"valinor/internal/sandbox"
 )
 
 const editFileName = "edit_file"
 
-func editFileDef() llm.ToolDefinition {
-	return buildToolDef(
-		editFileName,
-		"Apply multiple targeted text edits to a file. Path is relative to the workspace root. Edits are applied in order.",
-		map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"path": map[string]string{
-					"type":        "string",
-					"description": "Relative path to the file",
-				},
-				"edits": map[string]any{
-					"type":        "array",
-					"description": "List of edits to apply in order",
-					"items": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"old": map[string]string{
-								"type":        "string",
-								"description": "Exact text to find",
-							},
-							"new": map[string]string{
-								"type":        "string",
-								"description": "Replacement text",
-							},
-							"replace_all": map[string]string{
-								"type":        "boolean",
-								"description": "Replace all occurrences (default false)",
-							},
+func editFileParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path": map[string]string{
+				"type":        "string",
+				"description": "Relative path to the file",
+			},
+			"edits": map[string]any{
+				"type":        "array",
+				"description": "List of edits to apply in order",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"old": map[string]string{
+							"type":        "string",
+							"description": "Exact text to find",
 						},
-						"required":             []string{"old", "new"},
-						"additionalProperties": false,
+						"new": map[string]string{
+							"type":        "string",
+							"description": "Replacement text",
+						},
+						"replace_all": map[string]string{
+							"type":        "boolean",
+							"description": "Replace all occurrences (default false)",
+						},
 					},
+					"required":             []string{"old", "new"},
+					"additionalProperties": false,
 				},
 			},
-			"required":             []string{"path", "edits"},
-			"additionalProperties": false,
 		},
-	)
+		"required":             []string{"path", "edits"},
+		"additionalProperties": false,
+	}
 }
 
 func editFileExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {

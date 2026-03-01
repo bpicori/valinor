@@ -8,8 +8,11 @@ import (
 
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
+	"valinor/internal/event_bus"
 	"valinor/internal/llm"
+	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
+	"valinor/internal/tools"
 )
 
 // Metadata holds session metadata persisted in metadata.json.
@@ -27,42 +30,68 @@ type Metadata struct {
 	Temporary      bool      `json:"temporary,omitempty"`       // Whether this is a temporary (non-persisted) session
 }
 
-// Session owns the agent and persists conversation messages to the store.
+// Session owns the conversation context and persists messages to the store.
+// The LLM agent is created fresh for each run.
 type Session struct {
-	meta         Metadata
-	store        Store
-	agent        *llm.LLM
-	agentContext agentcontext.Context
-	config       config.Config
-	mu           sync.Mutex
+	meta            Metadata
+	store           Store
+	agentContext    agentcontext.Context
+	config          config.Config
+	bus             *event_bus.Bus
+	maxIterations   int
+	mu              sync.Mutex
 }
 
 // NewSession creates a session with one owned context state.
-func NewSession(meta Metadata, store Store, ag *llm.LLM, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config) (*Session, error) {
+func NewSession(meta Metadata, store Store, tools []tools.Tool, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config, bus *event_bus.Bus, maxIterations int) (*Session, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
-	if ag == nil {
-		return nil, fmt.Errorf("agent is required")
+	if bus == nil {
+		return nil, fmt.Errorf("event bus is required")
 	}
 	return &Session{
-		meta:         meta,
-		store:        store,
-		agent:        ag,
-		agentContext: agentcontext.NewContext(systemPrompt, initialMessages),
-		config:       cfg,
+		meta:          meta,
+		store:         store,
+		agentContext:  agentcontext.NewContext(systemPrompt, initialMessages, tools),
+		config:        cfg,
+		bus:           bus,
+		maxIterations: maxIterations,
 	}, nil
 }
 
-// HandleUserMessage appends and processes a user message through the active agent.
+// buildAgent creates a fresh LLM agent for a single run.
+func (s *Session) buildAgent() (*llm.LLM, error) {
+	providerCfg := s.config.Providers[s.meta.Provider]
+	provider, err := factory.CreateProvider(providerCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+
+	ag, err := llm.New(provider, s.meta.Model, s.bus, s.maxIterations)
+	if err != nil {
+		return nil, fmt.Errorf("create agent: %w", err)
+	}
+	return ag, nil
+}
+
+// HandleUserMessage appends and processes a user message through a fresh agent.
 func (s *Session) HandleUserMessage(ctx context.Context, requestID string, content string) error {
 	s.mu.Lock()
 	s.agentContext.AppendUserMessage(content)
 	runMessages := s.agentContext.Messages()
+	runTools := s.agentContext.Tools()
 	s.mu.Unlock()
 
-	result, err := s.agent.Run(ctx, llm.RunRequest{
+	// Build a fresh agent for this run
+	agent, err := s.buildAgent()
+	if err != nil {
+		return fmt.Errorf("build agent: %w", err)
+	}
+
+	result, err := agent.Run(ctx, llm.RunRequest{
 		Messages:  runMessages,
+		Tools:     runTools,
 		SessionID: s.meta.ID,
 		RequestID: requestID,
 	})
@@ -93,26 +122,20 @@ func (s *Session) ResetConversation(ctx context.Context) error {
 	return nil
 }
 
-// SwitchProviderModel updates the session's model within the same provider.
-func (s *Session) SwitchProviderModel(ctx context.Context, providerName, model string) error {
+// SetModel updates the session's model within the current provider.
+// Note: Changing providers requires creating a new session.
+// The model is stored in metadata and used when building the agent for each run.
+func (s *Session) SetModel(ctx context.Context, model string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if providerName == "" || model == "" {
-		return fmt.Errorf("provider and model are required")
-	}
-	if _, ok := s.config.Providers[providerName]; !ok {
-		return fmt.Errorf("provider '%s' not found in config", providerName)
-	}
-	if s.meta.Provider != providerName {
-		return fmt.Errorf("changing provider requires creating a new session")
+	if model == "" {
+		return fmt.Errorf("model is required")
 	}
 	if s.meta.Model == model {
 		return nil
 	}
 
-	// Same provider: only update model
-	s.agent.SetModel(model)
 	s.meta.Model = model
 	s.meta.UpdatedAt = time.Now()
 	if err := s.store.SaveMetadata(ctx, s.meta); err != nil {
@@ -126,7 +149,6 @@ func (s *Session) SwitchProviderModel(ctx context.Context, providerName, model s
 func (s *Session) Close() error {
 	sessionID := s.meta.ID
 	logger.Debug("session close start", logger.BuildMetadata("session_id", sessionID))
-	s.agent = nil
 
 	if s.store != nil {
 		err := s.store.Close()

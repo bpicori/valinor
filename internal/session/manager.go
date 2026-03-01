@@ -68,7 +68,6 @@ func (m *Manager) createSession(ctx context.Context, p createParams) (*Session, 
 	if err != nil {
 		return nil, err
 	}
-	providerCfg := m.config.Providers[providerName]
 
 	id := uuid.New().String()
 	workspaceDir := m.workspaceDir
@@ -118,12 +117,8 @@ func (m *Manager) createSession(ctx context.Context, p createParams) (*Session, 
 		return nil, fmt.Errorf("build context: %w", err)
 	}
 
-	ag, err := buildAgent(m.runtime, providerCfg, model, p.Opts.Bus, p.Opts.MaxAgentIterations)
-	if err != nil {
-		_ = store.Close()
-		logger.Error("session create agent error", logger.BuildMetadata("session_id", id, "model", model, "error", err))
-		return nil, err
-	}
+	// Build tools for the context (agent is created per-run)
+	toolsList := tools.BuildTools(m.runtime)
 
 	initialMessages := []agentcontext.Message{
 		{
@@ -137,7 +132,7 @@ func (m *Manager) createSession(ctx context.Context, p createParams) (*Session, 
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
 
-	sess, err := NewSession(meta, store, ag, systemPrompt, initialMessages, m.config)
+	sess, err := NewSession(meta, store, toolsList, systemPrompt, initialMessages, m.config, p.Opts.Bus, p.Opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -203,7 +198,6 @@ func (m *Manager) Resume(ctx context.Context, id string, opts SessionOptions) (*
 		_ = store.Close()
 		return nil, err
 	}
-	providerCfg := m.config.Providers[providerName]
 	// Persist resolved values for backward compatibility
 	meta.Provider = providerName
 	meta.Model = model
@@ -216,18 +210,15 @@ func (m *Manager) Resume(ctx context.Context, id string, opts SessionOptions) (*
 	}
 
 	msgs := normalizeSystemPrompt(messages, systemPrompt)
-	ag, err := buildAgent(m.runtime, providerCfg, model, opts.Bus, opts.MaxAgentIterations)
-	if err != nil {
-		_ = store.Close()
-		logger.Error("session resume agent error", logger.BuildMetadata("session_id", id, "model", model, "error", err))
-		return nil, err
-	}
+
+	// Build tools for the context (agent is created per-run)
+	toolsList := tools.BuildTools(m.runtime)
 
 	meta.UpdatedAt = time.Now()
 	_ = store.SaveMetadata(ctx, *meta)
 	_ = store.SaveMessages(ctx, msgs)
 
-	sess, err := NewSession(*meta, store, ag, systemPrompt, msgs, m.config)
+	sess, err := NewSession(*meta, store, toolsList, systemPrompt, msgs, m.config, opts.Bus, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -274,40 +265,6 @@ func writeMetadataFile(dir string, meta *Metadata) error {
 	return nil
 }
 
-// List returns metadata for all sessions, sorted by UpdatedAt descending.
-func (m *Manager) List() ([]Metadata, error) {
-	logger.Debug("session list start", nil)
-	entries, err := os.ReadDir(m.sessionDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		logger.Error("session list readdir error", logger.BuildMetadata("session_dir", m.sessionDir, "error", err))
-		return nil, fmt.Errorf("list sessions: %w", err)
-	}
-
-	var list []Metadata
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		dir := filepath.Join(m.sessionDir, e.Name())
-		meta, err := readMetadataFile(dir)
-		if err != nil || meta == nil {
-			logger.Debug("session list skip invalid", logger.BuildMetadata("entry_name", e.Name(), "error", err))
-			continue
-		}
-		list = append(list, *meta)
-	}
-
-	// Sort by UpdatedAt descending
-	sort.Slice(list, func(i, j int) bool {
-		return list[j].UpdatedAt.Before(list[i].UpdatedAt)
-	})
-	logger.Debug("session list success", logger.BuildMetadata("count", len(list)))
-	return list, nil
-}
-
 // GetMetadata returns metadata for a session by ID.
 func (m *Manager) GetMetadata(ctx context.Context, id string) (*Metadata, error) {
 	dir := filepath.Join(m.sessionDir, id)
@@ -320,42 +277,6 @@ func (m *Manager) GetMetadata(ctx context.Context, id string) (*Metadata, error)
 	}
 
 	return readMetadataFile(dir)
-}
-
-// LoadMessages returns persisted messages for a given session ID.
-func (m *Manager) LoadMessages(ctx context.Context, id string) ([]agentcontext.Message, error) {
-	dir := filepath.Join(m.sessionDir, id)
-	store, err := NewFileStore(dir)
-	if err != nil {
-		return nil, fmt.Errorf("open store: %w", err)
-	}
-	defer store.Close()
-
-	meta, err := store.LoadMetadata(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load metadata: %w", err)
-	}
-	if meta == nil {
-		return nil, fmt.Errorf("session %s not found", id)
-	}
-
-	messages, err := store.LoadMessages(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load messages: %w", err)
-	}
-	return messages, nil
-}
-
-// Delete removes a session directory and all its data.
-func (m *Manager) Delete(id string) error {
-	logger.Info("session delete start", logger.BuildMetadata("session_id", id))
-	dir := filepath.Join(m.sessionDir, id)
-	if err := os.RemoveAll(dir); err != nil {
-		logger.Error("session delete error", logger.BuildMetadata("session_id", id, "error", err))
-		return err
-	}
-	logger.Info("session delete success", logger.BuildMetadata("session_id", id))
-	return nil
 }
 
 // GetActiveSessionForClient returns the active session for a given client identity.
@@ -537,20 +458,6 @@ func (m *Manager) ListProviderModels(ctx context.Context, providerName string) (
 		return left < right
 	})
 	return models, nil
-}
-
-// buildAgent creates an agent with tools using the shared runtime.
-func buildAgent(rt *sandbox.Runtime, providerCfg config.ProviderConfig, model string, b *event_bus.Bus, maxIterations int) (*llm.LLM, error) {
-	provider, err := factory.CreateProvider(providerCfg)
-	if err != nil {
-		return nil, fmt.Errorf("create provider: %w", err)
-	}
-	availableTools := tools.BuildTools(rt)
-	ag, err := llm.New(provider, model, availableTools, b, maxIterations)
-	if err != nil {
-		return nil, fmt.Errorf("create agent: %w", err)
-	}
-	return ag, nil
 }
 
 func normalizeSystemPrompt(messages []agentcontext.Message, systemPrompt string) []agentcontext.Message {

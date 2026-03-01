@@ -5,6 +5,7 @@ import (
 
 	"valinor/internal/llm"
 	"valinor/internal/logger"
+	"valinor/internal/tools"
 
 	"google.golang.org/genai"
 )
@@ -77,18 +78,18 @@ func ToGeminiContents(messages []llm.Message, thoughtSignatures map[string][]byt
 	return contents
 }
 
-// ToGeminiFunctionDeclaration converts a provider-agnostic tool definition to Gemini format.
-func ToGeminiFunctionDeclaration(tool llm.ToolDefinition) *genai.FunctionDeclaration {
+// ToGeminiFunctionDeclaration converts a provider-agnostic tool to Gemini format.
+func ToGeminiFunctionDeclaration(t tools.Tool) *genai.FunctionDeclaration {
 	// Parse the JSON Schema parameters
 	var schema map[string]any
-	if err := json.Unmarshal(tool.Parameters, &schema); err != nil {
-		logger.Error("gemini tool conversion error", logger.BuildMetadata("tool", tool.Name, "error", err))
+	if err := json.Unmarshal(t.Parameters, &schema); err != nil {
+		logger.Error("gemini tool conversion error", logger.BuildMetadata("tool", t.Name, "error", err))
 		schema = map[string]any{"type": "object"}
 	}
 
 	return &genai.FunctionDeclaration{
-		Name:                 tool.Name,
-		Description:          tool.Description,
+		Name:                 t.Name,
+		Description:          t.Description,
 		ParametersJsonSchema: schema,
 	}
 }

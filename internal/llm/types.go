@@ -2,10 +2,10 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 
 	agentcontext "valinor/internal/context"
 	"valinor/internal/event_bus"
+	"valinor/internal/tools"
 )
 
 // StreamDelta represents a chunk of streamed content from the provider.
@@ -24,14 +24,6 @@ type LLM struct {
 	model         string
 	bus           *event_bus.Bus
 	maxIterations int
-	tools         []Tool
-}
-
-// Tool holds a tool's definition and execution function.
-type Tool struct {
-	Name string
-	Def  ToolDefinition
-	Exec func(json.RawMessage) (string, error)
 }
 
 // MessageRole represents the role of a message in a conversation.
@@ -52,14 +44,6 @@ type ToolCall struct {
 	Arguments string // JSON string
 }
 
-// ToolDefinition represents a tool schema in a provider-agnostic format.
-// The Parameters field contains a JSON Schema describing the tool's input.
-type ToolDefinition struct {
-	Name        string
-	Description string
-	Parameters  json.RawMessage // JSON Schema
-}
-
 // Usage holds token usage statistics.
 type Usage struct {
 	PromptTokens     int64
@@ -70,7 +54,7 @@ type Usage struct {
 // StreamParams contains parameters for a streaming LLM request.
 type StreamParams struct {
 	Messages  []Message
-	Tools     []ToolDefinition
+	Tools     []tools.Tool
 	Model     string
 	MaxTokens int
 	OnDelta   StreamCallback // Called during streaming for each content chunk
@@ -102,8 +86,9 @@ type Provider interface {
 // RunRequest configures a single run invocation.
 type RunRequest struct {
 	Messages  []agentcontext.Message
-	SessionID string // Optional: identifies the session for event routing.
-	RequestID string // Optional: correlation ID for request tracing.
+	Tools     []tools.Tool // Tools available for this run
+	SessionID string       // Optional: identifies the session for event routing.
+	RequestID string       // Optional: correlation ID for request tracing.
 }
 
 // RunResult returns the updated messages after the loop.

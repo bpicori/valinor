@@ -164,7 +164,7 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 		if !ok {
 			return fmt.Errorf("invalid payload for change_provider_model")
 		}
-		return worker.session.SwitchProviderModel(r.runtimeCtx, p.Provider, p.Model)
+		return worker.session.SetModel(r.runtimeCtx, p.Model)
 	case event.CancelAgentRun:
 		// Cancel is scoped to the originating session only.
 		// A cancel from session A cannot interrupt session B.
@@ -217,7 +217,7 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model string, 
 
 	// If we have an existing session with the same provider, optionally reuse it.
 	if !force && existingWorker != nil && existingWorker.session.Meta().Provider == provider {
-		if err := existingWorker.session.SwitchProviderModel(r.runtimeCtx, provider, model); err != nil {
+		if err := existingWorker.session.SetModel(r.runtimeCtx, model); err != nil {
 			return "", nil, err
 		}
 		return existingWorker.session.Meta().ID, existingWorker.session, nil
