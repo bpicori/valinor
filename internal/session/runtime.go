@@ -22,7 +22,6 @@ type Runtime struct {
 	ctx         context.Context
 	manager     *Manager
 	sessionOpts CreateSessionOptions
-	bus         *event_bus.Bus
 
 	mu            sync.RWMutex
 	workers       map[string]*sessionWorker // sessionID -> worker
@@ -38,13 +37,11 @@ func NewRuntime(
 	ctx context.Context,
 	manager *Manager,
 	sessionOpts CreateSessionOptions,
-	eventBus *event_bus.Bus,
 ) *Runtime {
 	return &Runtime{
 		ctx:         ctx,
 		manager:     manager,
 		sessionOpts: sessionOpts,
-		bus:         eventBus,
 		workers:     make(map[string]*sessionWorker),
 	}
 }
@@ -152,7 +149,7 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 		if !ok {
 			return fmt.Errorf("invalid payload for user_message")
 		}
-		return worker.handleUserMessage(r.runtimeCtx, requestID, p.Content, r.bus)
+		return worker.handleUserMessage(r.runtimeCtx, requestID, p.Content)
 	case event.NewConversation:
 		if err := worker.session.ResetConversation(r.runtimeCtx); err != nil {
 			return err
@@ -170,7 +167,7 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 		// A cancel from session A cannot interrupt session B.
 		worker.cancelRun()
 		// Emit cancelled event with session context for proper routing
-		r.bus.Publish(event.Event{
+		event_bus.Publish(event.Event{
 			Type:      event.AgentCancelled,
 			Payload:   event.AgentCancelledPayload{},
 			SessionID: sessionID,
@@ -232,7 +229,6 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model, clientT
 
 	// Create a new session with client binding
 	newSession, err := r.manager.Create(r.ctx, CreateSessionOptions{
-		Bus:                r.sessionOpts.Bus,
 		MaxAgentIterations: r.sessionOpts.MaxAgentIterations,
 		Provider:           provider,
 		Model:              model,
@@ -316,7 +312,7 @@ func (r *Runtime) publishContextTokens(sess *Session) {
 	}
 	messages := sess.agentContext.Messages()
 	promptTokens := tokens.EstimatePromptTokens(messages)
-	r.bus.Publish(event.Event{
+	event_bus.Publish(event.Event{
 		Type: event.ContextTokens,
 		Payload: event.ContextTokensPayload{
 			PromptTokens: promptTokens,
@@ -355,7 +351,7 @@ func (r *Runtime) handleRequestProviderModels(provider string, sessionID string,
 				})
 			}
 		}
-		r.bus.Publish(event.Event{
+		event_bus.Publish(event.Event{
 			Type:      event.ProviderModelsResult,
 			Payload:   payload,
 			SessionID: sessionID,

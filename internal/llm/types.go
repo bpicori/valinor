@@ -4,7 +4,6 @@ import (
 	"context"
 
 	agentcontext "valinor/internal/context"
-	"valinor/internal/event_bus"
 	"valinor/internal/tools"
 )
 
@@ -22,7 +21,6 @@ type StreamCallback func(delta StreamDelta)
 type LLM struct {
 	provider      Provider
 	model         string
-	bus           *event_bus.Bus
 	maxIterations int
 }
 

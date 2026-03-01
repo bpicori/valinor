@@ -1,3 +1,4 @@
+- [ ] For session metadata is better to use  sqlite database 
 - [ ] Review every package to simplify
 - [ ] Move config to ~/.valinor/config.toml and not anymore from dev directory
 - [ ] Create a quick wizard to create the configuration file

@@ -11,7 +11,6 @@ import (
 
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
-	"valinor/internal/event_bus"
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
@@ -24,8 +23,6 @@ import (
 // CreateSessionOptions holds parameters for creating/resuming a session.
 // For non-temporary sessions, ClientType and ClientIdentity are required.
 type CreateSessionOptions struct {
-	// Bus is the event bus for publishing session events. Required.
-	Bus *event_bus.Bus
 	// MaxAgentIterations limits the number of agent turns per request.
 	MaxAgentIterations int
 	// Provider overrides the default provider when set.
@@ -151,7 +148,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
 
-	sess, err := NewSession(meta, store, toolsList, systemPrompt, initialMessages, m.config, opts.Bus, opts.MaxAgentIterations)
+	sess, err := NewSession(meta, store, toolsList, systemPrompt, initialMessages, m.config, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -229,7 +226,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	_ = store.SaveMetadata(ctx, *meta)
 	_ = store.SaveMessages(ctx, msgs)
 
-	sess, err := NewSession(*meta, store, toolsList, systemPrompt, msgs, m.config, opts.Bus, opts.MaxAgentIterations)
+	sess, err := NewSession(*meta, store, toolsList, systemPrompt, msgs, m.config, opts.MaxAgentIterations)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)

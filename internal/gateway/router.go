@@ -23,7 +23,6 @@ type ClientEventConsumer interface {
 // Router is the central routing component that manages client connections,
 // session bindings, and routes commands/events between clients and the session core.
 type Router struct {
-	bus         *event_bus.Bus
 	runtime     *session.Runtime
 	manager     *session.Manager
 	sessionOpts session.CreateSessionOptions
@@ -44,13 +43,11 @@ type Router struct {
 
 // NewRouter creates a new router instance.
 func NewRouter(
-	b *event_bus.Bus,
 	runtime *session.Runtime,
 	manager *session.Manager,
 	sessionOpts session.CreateSessionOptions,
 ) *Router {
 	return &Router{
-		bus:             b,
 		runtime:         runtime,
 		manager:         manager,
 		sessionOpts:     sessionOpts,
@@ -71,7 +68,7 @@ func (r *Router) Start(ctx context.Context) {
 	r.ctx, r.cancel = context.WithCancel(ctx)
 
 	// Subscribe to all agent events from the bus
-	r.busSub = r.bus.Subscribe(
+	r.busSub = event_bus.Subscribe(
 		event.AgentContentDelta,
 		event.AgentContentFull,
 		event.AgentThinking,
@@ -102,7 +99,7 @@ func (r *Router) Stop() {
 		r.cancel = nil
 	}
 	if r.busSub != nil {
-		r.bus.Unsubscribe(r.busSub)
+		event_bus.Unsubscribe(r.busSub)
 		r.busSub = nil
 	}
 	r.mu.Unlock()
@@ -163,7 +160,6 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 
 		// Create a new session for this client
 		sess, err = r.manager.Create(ctx, session.CreateSessionOptions{
-			Bus:                r.sessionOpts.Bus,
 			MaxAgentIterations: r.sessionOpts.MaxAgentIterations,
 			Provider:           r.sessionOpts.Provider,
 			Model:              r.sessionOpts.Model,

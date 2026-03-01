@@ -28,7 +28,7 @@ func newSessionWorker(sess *Session) *sessionWorker {
 
 // handleUserMessage processes a user message for this session.
 // It manages its own run cancellation state independently.
-func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string, content string, bus *event_bus.Bus) error {
+func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string, content string) error {
 	w.mu.Lock()
 	// Cancel any existing run before starting a new one
 	if w.runCancel != nil {
@@ -51,7 +51,7 @@ func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string,
 	if err != nil {
 		if runCtx.Err() == context.Canceled {
 			logger.Info("session worker user message cancelled", logger.BuildMetadata("session_id", w.session.Meta().ID))
-			bus.Publish(event.Event{
+			event_bus.Publish(event.Event{
 				Type:      event.AgentCancelled,
 				Payload:   event.AgentCancelledPayload{},
 				SessionID: w.session.Meta().ID,

@@ -10,7 +10,6 @@ import (
 
 	"valinor/internal/config"
 	"valinor/internal/cron"
-	"valinor/internal/event_bus"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
@@ -128,28 +127,26 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 
 	// Initialize core components
-	b := event_bus.New()
 	sm := session.NewManager(sessionsDir, workspaceDir, cfg, rt)
 
 	// Session options used when router/runtime create or resume sessions on-demand.
 	sessionOpts := session.CreateSessionOptions{
-		Bus:                b,
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}
 
 	// Start session runtime with a worker registry.
-	runtime := session.NewRuntime(ctx, sm, sessionOpts, b)
+	runtime := session.NewRuntime(ctx, sm, sessionOpts)
 	runtime.Start()
 	defer runtime.Close()
 
 	// Create router
-	rtr := gateway.NewRouter(b, runtime, sm, sessionOpts)
+	rtr := gateway.NewRouter(runtime, sm, sessionOpts)
 	rtr.Start(ctx)
 	defer rtr.Stop()
 
 	// Start scheduler if enabled and cron service is available
 	if cfg.Scheduler.Enabled && cronService != nil {
-		sched := scheduler.New(cronService, sm, sessionOpts, b, cfg.Scheduler)
+		sched := scheduler.New(cronService, sm, sessionOpts, cfg.Scheduler)
 		sched.Start(ctx)
 		defer sched.Stop()
 		logger.Info("scheduler enabled", logger.BuildMetadata("interval", cfg.Scheduler.CheckInterval))

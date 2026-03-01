@@ -21,20 +21,16 @@ const (
 )
 
 // New creates an LLM runtime with the given provider.
-func New(provider Provider, model string, b *event_bus.Bus, maxIterations int) (*LLM, error) {
+func New(provider Provider, model string, maxIterations int) *LLM {
 	if maxIterations <= 0 {
 		maxIterations = 20
-	}
-	if b == nil {
-		return nil, fmt.Errorf("event bus is required")
 	}
 
 	return &LLM{
 		provider:      provider,
 		model:         model,
-		bus:           b,
 		maxIterations: maxIterations,
-	}, nil
+	}
 }
 
 // SetModel updates the model used for subsequent runs.
@@ -72,14 +68,14 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("llm run cancelled by user", nil)
-				l.bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
+				event_bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
 				return RunResult{Messages: messages}, nil
 			}
 			return RunResult{}, err
 		}
 
 		if iterations >= l.maxIterations {
-			l.bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{
+			event_bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{
 				Error: fmt.Errorf("max agent iterations (%d) reached; stopping to prevent runaway loop", l.maxIterations),
 			}))
 			return RunResult{}, fmt.Errorf("max agent iterations (%d) reached", l.maxIterations)
@@ -101,10 +97,10 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Model:    l.model,
 			OnDelta: func(delta StreamDelta) {
 				if delta.Content != "" {
-					l.bus.Publish(newEvent(event.AgentContentDelta, event.ContentDeltaPayload{Content: delta.Content}))
+					event_bus.Publish(newEvent(event.AgentContentDelta, event.ContentDeltaPayload{Content: delta.Content}))
 				}
 				if delta.Refusal != "" {
-					l.bus.Publish(newEvent(event.AgentRefusal, event.RefusalPayload{Content: delta.Refusal}))
+					event_bus.Publish(newEvent(event.AgentRefusal, event.RefusalPayload{Content: delta.Refusal}))
 				}
 			},
 		})
@@ -112,17 +108,17 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			// Handle user cancellation gracefully
 			if errors.Is(err, context.Canceled) {
 				logger.Info("llm stream cancelled by user", nil)
-				l.bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
+				event_bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
 				return RunResult{Messages: messages}, nil
 			}
 			logger.Error("llm stream error", logger.BuildMetadata("error", err))
-			l.bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{Error: err}))
+			event_bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{Error: err}))
 			return RunResult{}, err
 		}
 
 		// Update usage stats
 		usage = result.Usage
-		l.bus.Publish(newEvent(event.AgentStepTokens, event.StepTokenUsagePayload{
+		event_bus.Publish(newEvent(event.AgentStepTokens, event.StepTokenUsagePayload{
 			Step:             iterations,
 			PromptTokens:     usage.PromptTokens,
 			CompletionTokens: usage.CompletionTokens,
@@ -131,7 +127,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 
 		// Publish full content if present
 		if result.Message.Content != "" {
-			l.bus.Publish(newEvent(event.AgentContentFull, event.ContentFullPayload{Content: result.Message.Content}))
+			event_bus.Publish(newEvent(event.AgentContentFull, event.ContentFullPayload{Content: result.Message.Content}))
 		}
 
 		// Handle result message
@@ -141,7 +137,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Role:    agentcontext.RoleAssistant,
 				Content: result.Message.Content,
 			})
-			l.bus.Publish(newEvent(event.AgentDone, event.AgentDonePayload{
+			event_bus.Publish(newEvent(event.AgentDone, event.AgentDonePayload{
 				PromptTokens:     usage.PromptTokens,
 				CompletionTokens: usage.CompletionTokens,
 				TotalTokens:      usage.TotalTokens,
@@ -171,11 +167,11 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				args = json.RawMessage(tc.Arguments)
 			}
 			logger.Debug("llm tool call start", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
-			l.bus.Publish(newEvent(event.AgentThinking, event.ThinkingPayload{
+			event_bus.Publish(newEvent(event.AgentThinking, event.ThinkingPayload{
 				Step:    iterations,
 				Content: "executing tool: " + tc.Name,
 			}))
-			l.bus.Publish(newEvent(event.AgentToolCallStart, event.ToolCallStartPayload{
+			event_bus.Publish(newEvent(event.AgentToolCallStart, event.ToolCallStartPayload{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Name,
 				ToolArgs:   string(args),
@@ -185,7 +181,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				toolResult = "error: tool not found"
 			}
 			logger.Debug("llm tool call done", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
-			l.bus.Publish(newEvent(event.AgentToolCallDone, event.ToolCallDonePayload{
+			event_bus.Publish(newEvent(event.AgentToolCallDone, event.ToolCallDonePayload{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Name,
 				ToolResult: toolResult,

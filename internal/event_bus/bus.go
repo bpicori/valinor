@@ -13,6 +13,9 @@ type (
 	EventType = event.EventType
 )
 
+// defaultBufSize is the channel buffer size for all subscriptions.
+const defaultBufSize = 64
+
 // Subscription receives events from the bus.
 type Subscription struct {
 	ch     chan Event
@@ -32,9 +35,6 @@ type Bus struct {
 func New() *Bus {
 	return &Bus{}
 }
-
-// defaultBufSize is the channel buffer size for all subscriptions.
-const defaultBufSize = 64
 
 // Subscribe creates a subscription. Events are filtered to the given types.
 // If no types are given, all events are delivered.
@@ -87,4 +87,35 @@ func (b *Bus) Publish(ev Event) {
 			logger.Warning("bus event dropped", logger.BuildMetadata("event_type", ev.Type, "reason", "channel full"))
 		}
 	}
+}
+
+// Package-level default bus for application-wide event distribution.
+var (
+	defaultBus     *Bus
+	defaultBusOnce sync.Once
+)
+
+// bus returns the package-level default bus, creating it if needed.
+func bus() *Bus {
+	defaultBusOnce.Do(func() {
+		defaultBus = New()
+	})
+	return defaultBus
+}
+
+// Subscribe creates a subscription on the default bus.
+// Events are filtered to the given types. If no types are given, all events are delivered.
+func Subscribe(types ...EventType) *Subscription {
+	return bus().Subscribe(types...)
+}
+
+// Unsubscribe removes a subscription from the default bus and closes its channel.
+func Unsubscribe(sub *Subscription) {
+	bus().Unsubscribe(sub)
+}
+
+// Publish sends an event to all matching subscribers on the default bus.
+// Non-blocking: if a subscriber's buffer is full, the event is dropped.
+func Publish(ev Event) {
+	bus().Publish(ev)
 }

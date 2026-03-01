@@ -8,7 +8,6 @@ import (
 
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
-	"valinor/internal/event_bus"
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
@@ -22,8 +21,8 @@ type Metadata struct {
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 	WorkspaceDir   string    `json:"workspace_dir"`
-	Provider       string    `json:"provider,omitempty"` // Config key for the LLM provider
-	Model          string    `json:"model,omitempty"`    // Model ID for the session
+	Provider       string    `json:"provider,omitempty"`        // Config key for the LLM provider
+	Model          string    `json:"model,omitempty"`           // Model ID for the session
 	ClientType     string    `json:"client_type,omitempty"`     // Client type that owns this session (e.g., "tui", "telegram")
 	ClientIdentity string    `json:"client_identity,omitempty"` // Client identity that owns this session
 	Active         bool      `json:"active,omitempty"`          // Whether this is the active session for the client
@@ -33,46 +32,26 @@ type Metadata struct {
 // Session owns the conversation context and persists messages to the store.
 // The LLM agent is created fresh for each run.
 type Session struct {
-	meta            Metadata
-	store           Store
-	agentContext    agentcontext.Context
-	config          config.Config
-	bus             *event_bus.Bus
-	maxIterations   int
-	mu              sync.Mutex
+	meta          Metadata
+	store         Store
+	agentContext  agentcontext.Context
+	config        config.Config
+	maxIterations int
+	mu            sync.Mutex
 }
 
 // NewSession creates a session with one owned context state.
-func NewSession(meta Metadata, store Store, tools []tools.Tool, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config, bus *event_bus.Bus, maxIterations int) (*Session, error) {
+func NewSession(meta Metadata, store Store, tools []tools.Tool, systemPrompt string, initialMessages []agentcontext.Message, cfg config.Config, maxIterations int) (*Session, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
-	}
-	if bus == nil {
-		return nil, fmt.Errorf("event bus is required")
 	}
 	return &Session{
 		meta:          meta,
 		store:         store,
 		agentContext:  agentcontext.NewContext(systemPrompt, initialMessages, tools),
 		config:        cfg,
-		bus:           bus,
 		maxIterations: maxIterations,
 	}, nil
-}
-
-// buildAgent creates a fresh LLM agent for a single run.
-func (s *Session) buildAgent() (*llm.LLM, error) {
-	providerCfg := s.config.Providers[s.meta.Provider]
-	provider, err := factory.CreateProvider(providerCfg)
-	if err != nil {
-		return nil, fmt.Errorf("create provider: %w", err)
-	}
-
-	ag, err := llm.New(provider, s.meta.Model, s.bus, s.maxIterations)
-	if err != nil {
-		return nil, fmt.Errorf("create agent: %w", err)
-	}
-	return ag, nil
 }
 
 // RunInteraction appends a user message and processes it through a fresh agent.
@@ -83,11 +62,13 @@ func (s *Session) RunInteraction(ctx context.Context, requestID string, content 
 	runTools := s.agentContext.Tools()
 	s.mu.Unlock()
 
-	// Build a fresh agent for this run
-	agent, err := s.buildAgent()
+	providerCfg := s.config.Providers[s.meta.Provider]
+	provider, err := factory.CreateProvider(providerCfg)
 	if err != nil {
-		return fmt.Errorf("build agent: %w", err)
+		return fmt.Errorf("create provider: %w", err)
 	}
+
+	agent := llm.New(provider, s.meta.Model, s.maxIterations)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
 		Messages:  runMessages,

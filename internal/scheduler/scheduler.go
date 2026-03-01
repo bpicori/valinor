@@ -24,7 +24,6 @@ type Scheduler struct {
 	cronService *cron.Service
 	manager     *session.Manager
 	sessionOpts session.CreateSessionOptions
-	bus         *event_bus.Bus
 	interval    time.Duration
 
 	mu      sync.Mutex
@@ -34,7 +33,7 @@ type Scheduler struct {
 }
 
 // New creates a new scheduler with the given cron service.
-func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.CreateSessionOptions, b *event_bus.Bus, cfg config.SchedulerConfig) *Scheduler {
+func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.CreateSessionOptions, cfg config.SchedulerConfig) *Scheduler {
 	interval, _ := time.ParseDuration(cfg.CheckInterval)
 	if interval <= 0 {
 		interval = 30 * time.Minute
@@ -44,7 +43,6 @@ func New(cronService *cron.Service, manager *session.Manager, sessionOpts sessio
 		cronService: cronService,
 		manager:     manager,
 		sessionOpts: sessionOpts,
-		bus:         b,
 		interval:    interval,
 	}
 }
@@ -171,7 +169,6 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 
 	// Create a fresh isolated temporary session for this job execution
 	sess, err := s.manager.Create(ctx, session.CreateSessionOptions{
-		Bus:                s.sessionOpts.Bus,
 		MaxAgentIterations: s.sessionOpts.MaxAgentIterations,
 		Provider:           s.sessionOpts.Provider,
 		Model:              s.sessionOpts.Model,
@@ -188,13 +185,13 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	requestID := uuid.New().String()
 
 	// Subscribe to run events before starting execution
-	sub := s.bus.Subscribe(
+	sub := event_bus.Subscribe(
 		event.AgentContentFull,
 		event.AgentDone,
 		event.AgentError,
 		event.AgentCancelled,
 	)
-	defer s.bus.Unsubscribe(sub)
+	defer event_bus.Unsubscribe(sub)
 
 	// Execute the job message in the session
 	errChan := make(chan error, 1)
@@ -286,7 +283,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	logger.Debug("scheduler: publishing job result",
 		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "result_length", len(resultContent)))
 
-	s.bus.Publish(event.Event{
+	event_bus.Publish(event.Event{
 		Type: event.CronJobResult,
 		Payload: event.CronJobResultPayload{
 			JobID:     job.ID,
@@ -306,7 +303,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 // publishError broadcasts an error result for a job.
 func (s *Scheduler) publishError(job *cron.CronJob, execErr error) {
 	content := fmt.Sprintf("Scheduled job '%s' failed: %v", job.Name, execErr)
-	s.bus.Publish(event.Event{
+	event_bus.Publish(event.Event{
 		Type: event.CronJobResult,
 		Payload: event.CronJobResultPayload{
 			JobID:     job.ID,
