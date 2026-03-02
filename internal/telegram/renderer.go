@@ -2,7 +2,6 @@
 package telegram
 
 import (
-	"fmt"
 	"strings"
 
 	"valinor/internal/event"
@@ -11,27 +10,6 @@ import (
 
 // MaxTelegramMessageLength is Telegram's maximum message length.
 const MaxTelegramMessageLength = 4096
-
-// Pre-allocated replacer for MarkdownV2 escaping to avoid repeated allocations.
-// These are the characters that MUST be escaped in Telegram MarkdownV2.
-var mdReplacer = strings.NewReplacer(
-	"_", "\\_",
-	"[", "\\[",
-	"]", "\\]",
-	"(", "\\(",
-	")", "\\)",
-	"~", "\\~",
-	"`", "\\`",
-	">", "\\>",
-	"#", "\\#",
-	"+", "\\+",
-	"=", "\\=",
-	"|", "\\|",
-	"{", "\\{",
-	"}", "\\}",
-	".", "\\.",
-	"!", "\\!",
-)
 
 // RenderResult contains the rendered Telegram message.
 type RenderResult struct {
@@ -59,10 +37,10 @@ func NewRenderer() *Renderer {
 // This is a pure function - all state decisions are made by the caller.
 func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 	switch ev.Type {
-	case event.AgentContentDelta:
-		return r.renderContentDelta(ev.Payload)
-	case event.AgentContentFull:
-		return r.renderContentFull(ev.Payload)
+	case event.AgentContentDelta, event.AgentContentFull:
+		// Content delta/full events accumulate content in ChatState but don't trigger
+		// message updates. Only AgentDone → RenderFinalContent sends the final message.
+		return nil
 	case event.AgentThinking:
 		return r.renderThinking(ev.Payload)
 	case event.AgentDone:
@@ -84,22 +62,6 @@ func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 		// Events like AgentStepTokens, ContextTokens don't need messages
 		return nil
 	}
-}
-
-// renderContentDelta renders a streaming content delta.
-// Returns nil to skip message updates - content is accumulated but only final result is sent.
-func (r *Renderer) renderContentDelta(payload interface{}) *RenderResult {
-	// Delta chunks accumulate content in ChatState but don't trigger message updates.
-	// Only AgentDone → RenderFinalContent sends the final message.
-	return nil
-}
-
-// renderContentFull renders a full content replacement.
-// Returns nil to skip message updates - content is accumulated but only final result is sent.
-func (r *Renderer) renderContentFull(payload interface{}) *RenderResult {
-	// Full content replacements update ChatState but don't trigger message updates.
-	// Only AgentDone → RenderFinalContent sends the final message.
-	return nil
 }
 
 // renderThinking renders a thinking message.
@@ -231,46 +193,27 @@ func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 	}
 }
 
-// EscapeMarkdown escapes text for Telegram's MarkdownV2 format.
-// This escapes all special characters and should be used for plain text
-// that shouldn't have any markdown formatting interpreted.
-func EscapeMarkdown(text string) string {
-	return mdReplacer.Replace(text)
-}
-
-// EscapeMarkdownf escapes formatted text for MarkdownV2.
-func EscapeMarkdownf(format string, args ...interface{}) string {
-	text := EscapeMarkdown(format)
-	// Re-escape any args that might be strings
-	for i, arg := range args {
-		if s, ok := arg.(string); ok {
-			args[i] = EscapeMarkdown(s)
-		}
-	}
-	return fmt.Sprintf(text, args...)
-}
-
 // RenderStatus renders the current session status for the /status command.
 func (r *Renderer) RenderStatus(sessionKey, provider, model string) *RenderResult {
-	var sb strings.Builder
-	sb.WriteString("ℹ️ *Current Status*\n")
+	var text string
+	text = "ℹ️ *Current Status*\n"
 
 	if sessionKey != "" {
-		sb.WriteString(EscapeMarkdownf("• Session: %s\n", sessionKey))
+		text += EscapeMarkdownf("• Session: %s\n", sessionKey)
 	} else {
-		sb.WriteString("• Session: _not attached_\n")
+		text += "• Session: _not attached_\n"
 	}
 
 	if provider != "" {
-		sb.WriteString(EscapeMarkdownf("• Provider: %s\n", provider))
+		text += EscapeMarkdownf("• Provider: %s\n", provider)
 	}
 
 	if model != "" {
-		sb.WriteString(EscapeMarkdownf("• Model: %s", model))
+		text += EscapeMarkdownf("• Model: %s", model)
 	}
 
 	return &RenderResult{
-		Text:      sb.String(),
+		Text:      text,
 		ParseMode: "MarkdownV2",
 	}
 }
