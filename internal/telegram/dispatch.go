@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"valinor/internal/gateway"
-	"valinor/internal/logger"
 )
 
 // Command represents a parsed Telegram command ready for routing.
@@ -25,17 +24,9 @@ type Command struct {
 	IsControlCommand bool
 }
 
-// GetSequentialKey returns the appropriate sequential key for the command.
-// Control commands use a separate lane to avoid blocking regular messages.
-func (c *Command) GetSequentialKey() string {
-	if c.IsControlCommand {
-		return c.Identity.ControlLaneKey()
-	}
-	return c.Identity.SequentialKey()
-}
 
 // dispatch parses an update and returns a command if it should be processed.
-// Returns nil if the update should be ignored (e.g., not allowed, no message, etc.).
+// Returns nil if the update should be ignored (e.g., no message, etc.).
 func (b *Bot) dispatch(update Update) (*Command, error) {
 	// Extract message from update
 	msg := b.extractMessage(update)
@@ -43,18 +34,8 @@ func (b *Bot) dispatch(update Update) (*Command, error) {
 		return nil, nil // No message to process
 	}
 
-	// Check mention requirement in groups
-	if b.requireMention && b.isGroupChat(msg.Chat) && !b.isMentioned(msg) {
-		logger.Debug("telegram bot: bot not mentioned in group",
-			logger.BuildMetadata("chat_id", msg.Chat.ID))
-		return nil, nil
-	}
-
 	// Build chat identity
 	identity := FromTelegramUpdate(msg.Chat)
-	if msg.MessageThreadID != nil {
-		identity = identity.WithThreadID(*msg.MessageThreadID)
-	}
 
 	// Parse command or message
 	return b.parseCommand(identity, msg, update.UpdateID)
@@ -68,56 +49,8 @@ func (b *Bot) extractMessage(update Update) *Message {
 	if update.EditedMessage != nil {
 		return update.EditedMessage
 	}
-	if update.ChannelPost != nil {
-		return update.ChannelPost
-	}
 	// Callback queries don't have direct messages, handled separately
 	return nil
-}
-
-// isGroupChat returns true if the chat is a group or supergroup.
-func (b *Bot) isGroupChat(chat *Chat) bool {
-	if chat == nil {
-		return false
-	}
-	return chat.Type == "group" || chat.Type == "supergroup"
-}
-
-// isMentioned checks if the bot is mentioned in the message.
-func (b *Bot) isMentioned(msg *Message) bool {
-	if msg == nil || b.botUsername == "" {
-		return false
-	}
-
-	botUsernameLower := strings.ToLower(b.botUsername)
-
-	for _, entity := range msg.Entities {
-		if entity.Type == "mention" {
-			// Extract the mention text
-			start := entity.Offset
-			end := entity.Offset + entity.Length
-			if start >= 0 && end <= int64(len(msg.Text)) {
-				mention := strings.ToLower(msg.Text[start:end])
-				if mention == "@"+botUsernameLower {
-					return true
-				}
-			}
-		}
-		if entity.Type == "text_mention" {
-			// Text mention with user object
-			if entity.User != nil && strings.ToLower(entity.User.Username) == botUsernameLower {
-				return true
-			}
-		}
-	}
-
-	// Also check if message text starts with @botname
-	if strings.HasPrefix(strings.ToLower(msg.Text), "@"+botUsernameLower+" ") ||
-		strings.ToLower(msg.Text) == "@"+botUsernameLower {
-		return true
-	}
-
-	return false
 }
 
 // parseCommand parses a message into a Command.
@@ -178,7 +111,7 @@ func (b *Bot) parseCommand(identity ChatIdentity, msg *Message, updateID int64) 
 				Identity:  identity,
 				RequestID: requestID,
 				Type:      "status", // Internal command type, not sent to router
-				RawText:     msg.Text,
+				RawText:   msg.Text,
 			}, nil
 
 		default:

@@ -32,12 +32,6 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, state *ChatState, resul
 			ReplyMarkup: result.ReplyMarkup,
 		}
 
-		// Handle thread ID for forum topics
-		if identity.ThreadID != nil {
-			logger.Debug("telegram bot: editing message in thread",
-				logger.BuildMetadata("chat_id", identity.ChatID, "thread_id", *identity.ThreadID, "message_id", state.GetStreamingMessageID()))
-		}
-
 		_, err := b.client.EditMessageText(b.ctx, req)
 		if err != nil {
 			// If editing fails (e.g., message too old), fall back to sending new message
@@ -61,11 +55,6 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, state *ChatState, result *Re
 		Text:        result.Text,
 		ParseMode:   result.ParseMode,
 		ReplyMarkup: result.ReplyMarkup,
-	}
-
-	// Handle thread ID for forum topics
-	if identity.ThreadID != nil {
-		req.MessageThreadID = identity.ThreadID
 	}
 
 	msg, err := b.client.SendMessage(b.ctx, req)
@@ -99,9 +88,6 @@ func (b *Bot) sendTypingAction(identity ChatIdentity, state *ChatState) error {
 	req := SendChatActionRequest{
 		ChatID: identity.ChatID,
 		Action: "typing",
-	}
-	if identity.ThreadID != nil {
-		req.MessageThreadID = identity.ThreadID
 	}
 
 	if err := b.client.SendChatAction(b.ctx, req); err != nil {

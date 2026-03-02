@@ -38,34 +38,11 @@ type WorkItem struct {
 	Identity ChatIdentity
 }
 
-// IsControlCommand returns true if this work item is a control command.
-func (wi *WorkItem) IsControlCommand() bool {
-	if wi.Type != WorkItemCommand || wi.Command == nil {
-		return false
-	}
-	return wi.Command.IsControlCommand
-}
-
-// GetSequentialKey returns the appropriate sequential key for this work item.
-func (wi *WorkItem) GetSequentialKey() string {
-	switch wi.Type {
-	case WorkItemCommand:
-		if wi.Command != nil {
-			return wi.Command.GetSequentialKey()
-		}
-	case WorkItemEvent:
-		// Events are pre-routed with their identity
-		// They use the same sequential key as commands for ordering
-		return wi.Identity.SequentialKey()
-	}
-	return ""
-}
-
 // WorkItemFunc is the function type for processing a work item.
 type WorkItemFunc func(ctx context.Context, item *WorkItem) error
 
 // Sequencer ensures ordered processing of work items within each chat.
-// Each chat key (including control lanes) gets its own sequential worker queue.
+// Each chat key gets its own sequential worker queue.
 // This mirrors TUI's single-threaded Update() loop but adapted for multi-chat.
 type Sequencer struct {
 	workFn WorkItemFunc

@@ -179,7 +179,7 @@ func (b *Bot) onTelegramUpdate(update Update) error {
 	}
 
 	// Submit to sequencer for ordered processing
-	key := cmd.GetSequentialKey()
+	key := cmd.Identity.SequentialKey()
 	if !b.sequencer.Submit(item, key) {
 		return fmt.Errorf("sequencer queue full for %s", key)
 	}
@@ -452,7 +452,7 @@ func (b *Bot) preCreateBridgesFromSessions() {
 
 		if err != nil {
 			logger.Warning("telegram bot: failed to pre-create bridge from session",
-				logger.BuildMetadata("error", err, "chat_id", identity.ChatID, "thread_id", identity.ThreadID))
+				logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
 			failed++
 		} else {
 			created++
