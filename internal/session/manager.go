@@ -233,6 +233,38 @@ func (m *Manager) GetMetadata(ctx context.Context, id string) (*Metadata, error)
 	return readMetadataFile(dir)
 }
 
+// ListAllMetadata returns metadata for all sessions (excluding temporary ones).
+// This scans the session directory and reads metadata from each session.
+func (m *Manager) ListAllMetadata(ctx context.Context) ([]Metadata, error) {
+	dir := filepath.Join(m.sessionDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+
+	var result []Metadata
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sessionDir := filepath.Join(m.sessionDir, e.Name())
+		meta, err := readMetadataFile(sessionDir)
+		if err != nil || meta == nil {
+			continue
+		}
+		// Skip temporary sessions - they don't have persistent client binding
+		if meta.Temporary {
+			continue
+		}
+		result = append(result, *meta)
+	}
+
+	return result, nil
+}
+
 // GetActiveSessionForClient returns the active session for a given client identity.
 // Returns nil if no active session exists for this client.
 func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, clientIdentity string, opts CreateSessionOptions) (*Session, error) {
