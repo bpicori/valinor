@@ -122,13 +122,15 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.preCreateBridgesForKnownChats()
 
 	// Initialize poller
-	b.poller = NewPoller(b.client, b.store, b.onTelegramUpdate)
+	b.poller = NewPoller(b.client, DefaultPollLimit)
 	if b.config.PollTimeout > 0 {
 		b.poller.SetPollTimeout(b.config.PollTimeout)
 	}
 
-	// Start poller
+	// Start poller and update consumer
 	b.poller.Start(b.ctx)
+	b.wg.Add(1)
+	go b.consumeUpdates(b.store.Get() + 1)
 
 	b.ready.Store(true)
 	logger.Info("telegram bot: started", nil)
@@ -193,6 +195,40 @@ func (b *Bot) onTelegramUpdate(ctx context.Context, update Update) error {
 	}
 
 	return nil
+}
+
+// consumeUpdates reads updates from the poller's channel and processes them.
+// It tracks the offset for deduplication and persists it to disk.
+func (b *Bot) consumeUpdates(offset int64) {
+	defer b.wg.Done()
+
+	for {
+		select {
+		case <-b.ctx.Done():
+			return
+		case update, ok := <-b.poller.Updates:
+			if !ok {
+				return // Channel closed
+			}
+
+			// Track offset for deduplication
+			if update.UpdateID >= offset {
+				offset = update.UpdateID + 1
+			}
+
+			// Persist offset
+			if err := b.store.Set(update.UpdateID); err != nil {
+				logger.Warning("telegram bot: failed to persist offset",
+					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+			}
+
+			// Process update
+			if err := b.onTelegramUpdate(b.ctx, update); err != nil {
+				logger.Error("telegram bot: failed to process update",
+					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+			}
+		}
+	}
 }
 
 // handleGatewayEvent is called by the bridge when a gateway event is received.
@@ -470,9 +506,8 @@ func (b *Bot) GetStats() BotStats {
 	}
 	b.bridgesMu.RUnlock()
 
-	if b.poller != nil {
-		stats.Polling = b.poller.IsRunning()
-	}
+	// Polling is considered active if poller exists and bot is ready
+	stats.Polling = b.poller != nil && b.ready.Load()
 
 	return stats
 }
