@@ -3,6 +3,7 @@ package agentcontext
 import (
 	"fmt"
 
+	"valinor/internal/memory"
 	"valinor/internal/sandbox"
 	"valinor/internal/tools"
 )
@@ -15,7 +16,7 @@ type Context struct {
 }
 
 // New creates a fresh context with a built system prompt and tools.
-func New(workspaceDir string, runtime *sandbox.Runtime) (Context, error) {
+func New(workspaceDir, sessionID string, runtime *sandbox.Runtime, memoryService memory.Service) (Context, error) {
 	systemPrompt, err := BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		return Context{}, fmt.Errorf("build system prompt: %w", err)
@@ -23,12 +24,12 @@ func New(workspaceDir string, runtime *sandbox.Runtime) (Context, error) {
 	return Context{
 		systemPrompt: systemPrompt,
 		messages:     []Message{{Role: RoleSystem, Content: systemPrompt}},
-		tools:        tools.BuildTools(runtime),
+		tools:        tools.BuildTools(runtime, memoryService, workspaceDir, sessionID),
 	}, nil
 }
 
 // Resume creates a context from persisted messages, normalizing the system prompt.
-func Resume(workspaceDir string, runtime *sandbox.Runtime, messages []Message) (Context, error) {
+func Resume(workspaceDir, sessionID string, runtime *sandbox.Runtime, memoryService memory.Service, messages []Message) (Context, error) {
 	systemPrompt, err := BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		return Context{}, fmt.Errorf("build system prompt: %w", err)
@@ -36,7 +37,7 @@ func Resume(workspaceDir string, runtime *sandbox.Runtime, messages []Message) (
 	return Context{
 		systemPrompt: systemPrompt,
 		messages:     normalizeSystemPrompt(CloneMessages(messages), systemPrompt),
-		tools:        tools.BuildTools(runtime),
+		tools:        tools.BuildTools(runtime, memoryService, workspaceDir, sessionID),
 	}, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
+	"valinor/internal/memory"
 	"valinor/internal/sandbox"
 
 	"github.com/google/uuid"
@@ -44,6 +45,7 @@ type Manager struct {
 	config        config.Config
 	runtime       *sandbox.Runtime // shared sandbox runtime for all sessions
 	metadataStore MetadataRepository
+	memoryService memory.Service
 }
 
 // Message history lifecycle:
@@ -52,7 +54,7 @@ type Manager struct {
 // - On resume, persisted messages are loaded and system prompt is rebuilt.
 
 // NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
-func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime) (*Manager, error) {
+func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime, memoryService memory.Service) (*Manager, error) {
 	metadataStore, err := NewSQLiteMetadataRepository(sessionDir)
 	if err != nil {
 		return nil, fmt.Errorf("create session metadata repository: %w", err)
@@ -63,6 +65,7 @@ func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.
 		config:        cfg,
 		runtime:       rt,
 		metadataStore: metadataStore,
+		memoryService: memoryService,
 	}, nil
 }
 
@@ -134,7 +137,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	agentCtx, err := agentcontext.New(workspaceDir, m.runtime)
+	agentCtx, err := agentcontext.New(workspaceDir, id, m.runtime, m.memoryService)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -208,7 +211,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	meta.Provider = providerName
 	meta.Model = model
 
-	agentCtx, err := agentcontext.Resume(workspaceDir, m.runtime, messages)
+	agentCtx, err := agentcontext.Resume(workspaceDir, id, m.runtime, m.memoryService, messages)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
