@@ -1,207 +1,74 @@
-// Package telegram provides per-chat state management.
+// Package telegram provides minimal per-chat message tracking.
 package telegram
 
 import (
 	"strings"
-	"sync"
 	"time"
-
-	"valinor/internal/gateway"
 )
 
-// ChatState tracks the state for a single chat conversation.
-// This mirrors TUI's Model but is scoped to a single chat session.
-type ChatState struct {
-	Identity ChatIdentity
-
-	// Message tracking (similar to TUI's lastMessage pattern)
-	LastMessageID      int64 // Most recent message sent (any type)
-	StreamingMessageID int64 // Message ID currently being streamed/edited
-
-	// Streaming state
-	IsStreaming bool
-
-	// Request tracking for response routing
-	CurrentRequestID string
-
-	// Content accumulation during streaming using strings.Builder for O(n) efficiency.
-	streamingBuf strings.Builder
-
-	// Typing action pacing to avoid Telegram 429 rate limits.
-	NextTypingActionAt time.Time
-
-	// Tool calls tracking (similar to TUI's chatMessage.ToolCalls)
-	ActiveToolCalls []ToolCallInfo
-
-	// Session info (mirrors TUI's sessionKey, providerName, modelName)
-	SessionKey   string
-	ProviderName string
-	ModelName    string
-
-	// Final state
-	Usage PromptTokenUsage
+// messageTracker tracks the state for a single chat's current streaming message.
+// This is intentionally minimal - session info lives in the Bridge, not here.
+type messageTracker struct {
+	streamingMsgID int64
+	busy           bool
+	requestID      string
+	contentBuf     strings.Builder
+	nextTypingAt   time.Time
 }
 
-// ToolCallInfo tracks an active tool call during streaming.
-type ToolCallInfo struct {
-	ID     string
-	Name   string
-	Args   string
-	Result string
-	Done   bool
+// isBusy returns true if the chat is currently processing a request.
+func (t *messageTracker) isBusy() bool {
+	return t.busy
 }
 
-// PromptTokenUsage tracks token usage for display.
-type PromptTokenUsage struct {
-	PromptTokens     int64
-	CompletionTokens int64
-	TotalTokens      int64
+// markBusy sets the tracker as busy with the given request ID.
+func (t *messageTracker) markBusy(requestID string) {
+	t.busy = true
+	t.requestID = requestID
+	t.contentBuf.Reset()
+	t.streamingMsgID = 0
+	t.nextTypingAt = time.Time{}
 }
 
-// CanStartNewRequest returns true if the chat is ready for a new request.
-// This provides TUI-like state guarding - prevents starting a new request while streaming.
-func (cs *ChatState) CanStartNewRequest() bool {
-	return !cs.IsStreaming
+// markIdle clears the busy state and resets transient fields.
+func (t *messageTracker) markIdle() {
+	t.busy = false
+	t.requestID = ""
+	t.contentBuf.Reset()
+	t.streamingMsgID = 0
 }
 
-// StartStreaming marks the chat as streaming with the given request ID.
-func (cs *ChatState) StartStreaming(requestID string) {
-	cs.IsStreaming = true
-	cs.CurrentRequestID = requestID
-	cs.streamingBuf.Reset()
-	cs.ActiveToolCalls = nil
-	cs.NextTypingActionAt = time.Time{}
+// appendContent adds delta content during streaming.
+func (t *messageTracker) appendContent(delta string) {
+	t.contentBuf.WriteString(delta)
 }
 
-// FinalizeStreaming marks streaming as complete and clears transient state.
-func (cs *ChatState) FinalizeStreaming() {
-	cs.IsStreaming = false
-	cs.CurrentRequestID = ""
-	cs.streamingBuf.Reset()
-	cs.ActiveToolCalls = nil
-	cs.StreamingMessageID = 0
-	cs.NextTypingActionAt = time.Time{}
+// getContent returns the accumulated streaming content.
+func (t *messageTracker) getContent() string {
+	return t.contentBuf.String()
 }
 
-// AppendContent adds delta content during streaming.
-func (cs *ChatState) AppendContent(delta string) {
-	cs.streamingBuf.WriteString(delta)
+// setStreamingMsgID sets the message ID for the current streaming session.
+func (t *messageTracker) setStreamingMsgID(id int64) {
+	t.streamingMsgID = id
 }
 
-// GetStreamingContent returns the accumulated streaming content.
-func (cs *ChatState) GetStreamingContent() string {
-	return cs.streamingBuf.String()
+// getStreamingMsgID returns the current streaming message ID.
+func (t *messageTracker) getStreamingMsgID() int64 {
+	return t.streamingMsgID
 }
 
-// SetStreamingContent replaces the accumulated streaming content.
-func (cs *ChatState) SetStreamingContent(content string) {
-	cs.streamingBuf.Reset()
-	cs.streamingBuf.WriteString(content)
+// canSendTyping returns true if typing can be sent now (rate limiting).
+func (t *messageTracker) canSendTyping(now time.Time) bool {
+	return !now.Before(t.nextTypingAt)
 }
 
-// CanSendTypingAction returns true if typing can be sent now.
-func (cs *ChatState) CanSendTypingAction(now time.Time) bool {
-	return !now.Before(cs.NextTypingActionAt)
+// markTypingSent sets the next allowed typing action time.
+func (t *messageTracker) markTypingSent(now time.Time, interval time.Duration) {
+	t.nextTypingAt = now.Add(interval)
 }
 
-// MarkTypingActionSent sets the next allowed typing action time.
-func (cs *ChatState) MarkTypingActionSent(now time.Time, interval time.Duration) {
-	cs.NextTypingActionAt = now.Add(interval)
-}
-
-// BackoffTypingAction delays typing actions after rate limit responses.
-func (cs *ChatState) BackoffTypingAction(now time.Time, retryAfter time.Duration) {
-	cs.NextTypingActionAt = now.Add(retryAfter)
-}
-
-// SetStreamingMessageID sets the message ID for the current streaming session.
-func (cs *ChatState) SetStreamingMessageID(id int64) {
-	cs.StreamingMessageID = id
-}
-
-// GetStreamingMessageID returns the current streaming message ID.
-func (cs *ChatState) GetStreamingMessageID() int64 {
-	return cs.StreamingMessageID
-}
-
-// UpdateLastMessageID updates the last message ID.
-func (cs *ChatState) UpdateLastMessageID(id int64) {
-	cs.LastMessageID = id
-}
-
-// AddToolCall adds a new tool call.
-func (cs *ChatState) AddToolCall(call ToolCallInfo) {
-	cs.ActiveToolCalls = append(cs.ActiveToolCalls, call)
-}
-
-// MarkToolCallDone marks a tool call as complete with its result.
-func (cs *ChatState) MarkToolCallDone(toolCallID, result string) {
-	for i := range cs.ActiveToolCalls {
-		if cs.ActiveToolCalls[i].ID == toolCallID {
-			cs.ActiveToolCalls[i].Done = true
-			cs.ActiveToolCalls[i].Result = result
-			break
-		}
-	}
-}
-
-// UpdateUsage updates token usage statistics.
-func (cs *ChatState) UpdateUsage(usage PromptTokenUsage) {
-	cs.Usage = usage
-}
-
-// UpdateSessionInfo updates the session key, provider, and model.
-func (cs *ChatState) UpdateSessionInfo(sessionKey, provider, model string) {
-	cs.SessionKey = sessionKey
-	cs.ProviderName = provider
-	cs.ModelName = model
-}
-
-// ChatStateStore manages chat states for all conversations.
-type ChatStateStore struct {
-	states map[string]*ChatState
-	mu     sync.RWMutex
-}
-
-// NewChatStateStore creates a new chat state store.
-func NewChatStateStore() *ChatStateStore {
-	return &ChatStateStore{
-		states: make(map[string]*ChatState),
-	}
-}
-
-// GetOrCreate returns the chat state for the given identity, creating it if needed.
-func (store *ChatStateStore) GetOrCreate(identity ChatIdentity) *ChatState {
-	key := identity.SequentialKey()
-
-	store.mu.RLock()
-	if state, ok := store.states[key]; ok {
-		store.mu.RUnlock()
-		return state
-	}
-	store.mu.RUnlock()
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if state, ok := store.states[key]; ok {
-		return state
-	}
-
-	state := &ChatState{
-		Identity: identity,
-	}
-	store.states[key] = state
-	return state
-}
-
-// StoreProviderInfo is a convenience method to store session info from a gateway event.
-func (store *ChatStateStore) StoreProviderInfo(identity ChatIdentity, ev gateway.Event) {
-	state := store.GetOrCreate(identity)
-	if ev.Type == "session_attached" {
-		if payload, ok := ev.Payload.(gateway.SessionAttachedPayload); ok {
-			state.UpdateSessionInfo(payload.SessionKey, payload.Provider, payload.Model)
-		}
-	}
+// backoffTyping delays typing actions after rate limit responses.
+func (t *messageTracker) backoffTyping(now time.Time, retryAfter time.Duration) {
+	t.nextTypingAt = now.Add(retryAfter)
 }

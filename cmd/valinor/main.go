@@ -245,10 +245,6 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("resolve valinor dir: %w", err)
 	}
-	sessionDir, err := cfg.ResolveSessionDir()
-	if err != nil {
-		return fmt.Errorf("resolve session dir: %w", err)
-	}
 
 	logPath, closeLogger, err := logger.Init(valinorDir, []logger.TransportType{logger.TransportFile, logger.TransportStdout})
 	if err != nil {
@@ -267,12 +263,10 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 
 	// Create bot configuration
 	botCfg := telegram.Config{
-		BotToken:       cfg.Telegram.BotToken,
-		GatewayURL:     gatewayURL,
-		StorageDir:     valinorDir,
-		SessionDir:     sessionDir,
-		PollTimeout:    cfg.Telegram.PollTimeout,
-		RequireMention: cfg.Telegram.RequireMention,
+		BotToken:    cfg.Telegram.BotToken,
+		GatewayURL:  gatewayURL,
+		StorageDir:  valinorDir,
+		PollTimeout: cfg.Telegram.PollTimeout,
 	}
 
 	// Create and start bot

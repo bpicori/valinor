@@ -22,6 +22,7 @@ type Poller struct {
 	client      *Client
 	pollTimeout int
 	limit       int
+	startOffset int64
 
 	// Updates is the channel where received updates are sent.
 	// Consumers should read from this channel to process updates.
@@ -34,7 +35,7 @@ type Poller struct {
 }
 
 // NewPoller creates a new update poller with a buffered update channel.
-func NewPoller(client *Client, bufferSize int) *Poller {
+func NewPoller(client *Client, bufferSize int, startOffset int64) *Poller {
 	if bufferSize <= 0 {
 		bufferSize = DefaultPollLimit
 	}
@@ -43,6 +44,7 @@ func NewPoller(client *Client, bufferSize int) *Poller {
 		Updates:     make(chan Update, bufferSize),
 		pollTimeout: DefaultLongPollTimeout,
 		limit:       DefaultPollLimit,
+		startOffset: startOffset,
 	}
 }
 
@@ -66,6 +68,7 @@ func (p *Poller) Start(ctx context.Context) {
 	logger.Info("telegram poller: started", logger.BuildMetadata(
 		"poll_timeout", p.pollTimeout,
 		"limit", p.limit,
+		"start_offset", p.startOffset,
 	))
 }
 
@@ -81,7 +84,7 @@ func (p *Poller) Stop() {
 func (p *Poller) pollLoop() {
 	defer p.wg.Done()
 
-	offset := int64(0) // Start from 0, bot will track actual offset
+	offset := p.startOffset
 
 	for {
 		select {
@@ -94,7 +97,7 @@ func (p *Poller) pollLoop() {
 			Offset:         offset,
 			Limit:          p.limit,
 			Timeout:        p.pollTimeout,
-			AllowedUpdates: []string{"message", "edited_message", "callback_query"},
+			AllowedUpdates: []string{"message", "edited_message"},
 		}
 
 		updates, err := p.client.GetUpdates(p.ctx, req)

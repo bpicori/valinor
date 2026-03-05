@@ -27,18 +27,21 @@ const (
 	initialReconnectBackoff = 1 * time.Second
 )
 
-// EventHandler is called when an event is received from the gateway.
-type EventHandler func(ev gateway.Event)
+// chatEvent wraps a gateway event with its source identity for routing.
+type chatEvent struct {
+	identity ChatIdentity
+	event    gateway.Event
+}
 
 // Bridge manages WebSocket communication with the gateway.
 type Bridge struct {
 	// Connection
 	conn       *websocket.Conn
 	gatewayURL string
-	identity   string // Telegram client identity (chat-based)
+	identity   ChatIdentity // Telegram client identity (chat-based)
 
-	// Event handler
-	eventHandler EventHandler
+	// Event channel (shared across all bridges, owned by Bot)
+	eventsChan chan<- chatEvent
 
 	// Outgoing channel for commands to gateway
 	outgoing chan *gateway.WireEnvelope
@@ -60,12 +63,12 @@ type Bridge struct {
 }
 
 // NewBridge creates a new WebSocket bridge for Telegram.
-func NewBridge(gatewayURL, identity string, handler EventHandler) *Bridge {
+func NewBridge(gatewayURL string, identity ChatIdentity, eventsChan chan<- chatEvent) *Bridge {
 	return &Bridge{
-		gatewayURL:   gatewayURL,
-		identity:     identity,
-		eventHandler: handler,
-		outgoing:     make(chan *gateway.WireEnvelope, gateway.OutgoingQueueSize),
+		gatewayURL: gatewayURL,
+		identity:   identity,
+		eventsChan: eventsChan,
+		outgoing:   make(chan *gateway.WireEnvelope, gateway.OutgoingQueueSize),
 	}
 }
 
@@ -190,7 +193,7 @@ func (b *Bridge) connect() error {
 	helloPayload := gateway.ClientHelloPayload{
 		ProtocolVersion: gateway.ProtocolVersion,
 		ClientType:      gateway.ClientTypeTelegram,
-		ClientIdentity:  b.identity,
+		ClientIdentity:  b.identity.ToClientIdentity(),
 	}
 
 	helloData, _ := json.Marshal(helloPayload)
@@ -259,7 +262,7 @@ func (b *Bridge) connect() error {
 	return nil
 }
 
-// readLoop reads messages from the WebSocket and forwards to the event handler.
+// readLoop reads messages from the WebSocket and forwards to the shared events channel.
 func (b *Bridge) readLoop() {
 	defer b.wg.Done()
 	defer logger.Debug("telegram bridge: read loop exited", nil)
@@ -291,15 +294,17 @@ func (b *Bridge) readLoop() {
 		// Handle different message kinds
 		switch env.Kind {
 		case gateway.KindEvent:
-			// Convert to router event and forward
+			// Convert to router event and push to shared channel
 			ev, err := b.parseEvent(env)
 			if err != nil {
 				logger.Warning("telegram bridge: failed to parse event",
 					logger.BuildMetadata("error", err, "type", env.Type))
 				continue
 			}
-			if b.eventHandler != nil {
-				b.eventHandler(ev)
+			select {
+			case b.eventsChan <- chatEvent{identity: b.identity, event: ev}:
+			case <-b.ctx.Done():
+				return
 			}
 
 		case gateway.KindError:
@@ -338,7 +343,7 @@ func (b *Bridge) writeLoop() {
 					return
 				}
 
-				// Retry sending the message
+			// Retry sending the message
 				if err := b.conn.WriteJSON(env); err != nil {
 					logger.Warning("telegram bridge: retry write failed, dropping message",
 						logger.BuildMetadata("error", err))

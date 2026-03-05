@@ -1,4 +1,4 @@
-// Package telegram provides event-to-message rendering for Telegram.
+// Package telegram provides Markdown to Telegram MarkdownV2 conversion.
 package telegram
 
 import (
@@ -154,7 +154,7 @@ func processPlaceholders(md string, elements map[string]string) string {
 // escapeTelegramMarkdownV2CodeBlocks escapes special characters inside code blocks.
 func escapeTelegramMarkdownV2CodeBlocks(text string) string {
 	// First handle special backslash patterns
-	backslashRegex := regexp.MustCompile(`\([^ ]|\|$)`)
+	backslashRegex := regexp.MustCompile(`\\[()|]`)
 
 	text = backslashRegex.ReplaceAllStringFunc(text, func(match string) string {
 		if len(match) > 1 {

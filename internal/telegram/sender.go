@@ -16,17 +16,15 @@ const (
 
 // sendTelegramMessage sends a message via the Telegram API.
 // Supports both sending new messages and editing existing ones for streaming updates.
-// This now uses ChatState for determining edit vs new message (TUI-like lastMessage pattern).
-func (b *Bot) sendTelegramMessage(identity ChatIdentity, state *ChatState, result *RenderResult) error {
+func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker, result *RenderResult) error {
 	// Determine if we should edit or send a new message
-	// TUI-like pattern: edit the streaming message if we're in streaming mode
-	shouldEdit := result.IsStreaming && state.GetStreamingMessageID() != 0
+	shouldEdit := result.IsStreaming && tracker.getStreamingMsgID() != 0
 
 	if shouldEdit {
 		// Edit existing streaming message
 		req := EditMessageTextRequest{
 			ChatID:      identity.ChatID,
-			MessageID:   state.GetStreamingMessageID(),
+			MessageID:   tracker.getStreamingMsgID(),
 			Text:        result.Text,
 			ParseMode:   result.ParseMode,
 			ReplyMarkup: result.ReplyMarkup,
@@ -37,19 +35,19 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, state *ChatState, resul
 			// If editing fails (e.g., message too old), fall back to sending new message
 			logger.Warning("telegram bot: edit failed, sending new message",
 				logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
-			return b.sendNewMessage(identity, state, result)
+			return b.sendNewMessage(identity, tracker, result)
 		}
 
 		return nil
 	}
 
 	// Send new message
-	return b.sendNewMessage(identity, state, result)
+	return b.sendNewMessage(identity, tracker, result)
 }
 
 // sendNewMessage sends a new Telegram message.
 // Sets the streaming message ID if this is the first message during streaming.
-func (b *Bot) sendNewMessage(identity ChatIdentity, state *ChatState, result *RenderResult) error {
+func (b *Bot) sendNewMessage(identity ChatIdentity, tracker *messageTracker, result *RenderResult) error {
 	req := SendMessageRequest{
 		ChatID:      identity.ChatID,
 		Text:        result.Text,
@@ -62,13 +60,9 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, state *ChatState, result *Re
 		return fmt.Errorf("send message to chat %d: %w", identity.ChatID, err)
 	}
 
-	// Update state with new message ID
-	state.UpdateLastMessageID(msg.MessageID)
-
 	// Set as streaming message ID if we're in streaming mode and don't have one yet
-	// This ensures subsequent deltas edit this message (TUI-like pattern)
-	if result.IsStreaming && state.GetStreamingMessageID() == 0 {
-		state.SetStreamingMessageID(msg.MessageID)
+	if tracker.isBusy() && tracker.getStreamingMsgID() == 0 {
+		tracker.setStreamingMsgID(msg.MessageID)
 	}
 
 	logger.Debug("telegram bot: message sent",
@@ -79,9 +73,9 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, state *ChatState, result *Re
 
 // sendTypingAction updates the chat with Telegram's typing indicator.
 // It uses per-chat pacing/backoff to avoid Telegram 429 rate limits.
-func (b *Bot) sendTypingAction(identity ChatIdentity, state *ChatState) error {
+func (b *Bot) sendTypingAction(identity ChatIdentity, tracker *messageTracker) error {
 	now := time.Now()
-	if !state.CanSendTypingAction(now) {
+	if !tracker.canSendTyping(now) {
 		return nil
 	}
 
@@ -98,10 +92,10 @@ func (b *Bot) sendTypingAction(identity ChatIdentity, state *ChatState) error {
 				retryAfter = time.Duration(apiErr.Parameters.RetryAfter) * time.Second
 			}
 		}
-		state.BackoffTypingAction(now, retryAfter)
+		tracker.backoffTyping(now, retryAfter)
 		return err
 	}
 
-	state.MarkTypingActionSent(now, typingActionInterval)
+	tracker.markTypingSent(now, typingActionInterval)
 	return nil
 }

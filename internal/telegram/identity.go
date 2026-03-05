@@ -6,9 +6,6 @@ import (
 	"strconv"
 )
 
-// KeyPrefix is the prefix for all sequential keys.
-const KeyPrefix = "telegram"
-
 // ChatIdentity uniquely identifies a Telegram DM chat for session binding.
 type ChatIdentity struct {
 	ChatID   int64  `json:"chat_id"`            // Telegram chat ID
@@ -19,12 +16,6 @@ type ChatIdentity struct {
 // The identity string is formatted as "{chatID}".
 func (ci ChatIdentity) ToClientIdentity() string {
 	return strconv.FormatInt(ci.ChatID, 10)
-}
-
-// SequentialKey returns the key for per-chat sequential processing.
-// This is used as the worker queue key to ensure ordered message handling.
-func (ci ChatIdentity) SequentialKey() string {
-	return fmt.Sprintf("%s:%d", KeyPrefix, ci.ChatID)
 }
 
 // ParseChatIdentity parses a client identity string into ChatIdentity.

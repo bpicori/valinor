@@ -7,16 +7,13 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"valinor/internal/config"
+	"valinor/internal/event"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/session"
 )
 
 // Bot is the main Telegram bot orchestrator.
-// It coordinates the poller, dispatcher, sequencer, bridge, and renderer.
-// Flow architecture mirrors TUI: all work items (commands + events) flow through
-// per-chat sequential processing for state consistency.
+// It coordinates the poller, bridge, and renderer through a single event loop.
 type Bot struct {
 	// Configuration
 	config Config
@@ -25,21 +22,16 @@ type Bot struct {
 	client   *Client
 	store    *offsetStore
 	poller   *Poller
-	sequencer *Sequencer
 	bridges  map[string]*Bridge
 	renderer *Renderer
 
-	// Per-chat state management (replaces old chatStates map)
-	stateStore *ChatStateStore
+	// Shared event channel - all bridges push events here
+	events chan chatEvent
 
-	// Request tracking for routing gateway events to chats
-	requestChats map[string]ChatIdentity
-	requestMu    sync.RWMutex
-	bridgesMu    sync.RWMutex
+	// Per-chat message trackers (single goroutine access, no mutex needed)
+	trackers map[int64]*messageTracker
 
-	// Dispatch state
-	botUsername    string // Bot's username for mention checking
-	requireMention bool   // Require bot mention in groups
+	bridgesMu sync.RWMutex
 
 	// Lifecycle
 	ctx    context.Context
@@ -56,12 +48,8 @@ type Config struct {
 	GatewayURL string
 	// StorageDir is the directory for persisting offset (optional, defaults to ~/.valinor)
 	StorageDir string
-	// SessionDir is the directory containing session metadata for pre-creating bridges (optional)
-	SessionDir string
 	// PollTimeout is the long-polling timeout in seconds (default: 30)
 	PollTimeout int
-	// RequireMention requires bot mention in groups (default: false)
-	RequireMention bool
 }
 
 // NewBot creates a new Telegram bot instance.
@@ -74,10 +62,10 @@ func NewBot(cfg Config) (*Bot, error) {
 	}
 
 	return &Bot{
-		config:       cfg,
-		stateStore:   NewChatStateStore(),
-		requestChats: make(map[string]ChatIdentity),
-		bridges:      make(map[string]*Bridge),
+		config:   cfg,
+		bridges:  make(map[string]*Bridge),
+		events:   make(chan chatEvent, 100),
+		trackers: make(map[int64]*messageTracker),
 	}, nil
 }
 
@@ -103,30 +91,19 @@ func (b *Bot) Start(ctx context.Context) error {
 	}
 	b.store = store
 
-	// Initialize dispatch state
-	b.botUsername = me.Username
-	b.requireMention = b.config.RequireMention
-
 	// Initialize stateless renderer
 	b.renderer = NewRenderer()
 
-	// Initialize sequencer with unified work processor
-	// This is key: both commands AND events go through the same sequential path
-	b.sequencer = NewSequencer(b.processWorkItem)
-
-	// Pre-create bridges for all telegram sessions so they can receive cron results
-	b.preCreateBridgesFromSessions()
-
-	// Initialize poller
-	b.poller = NewPoller(b.client, DefaultPollLimit)
+	// Initialize poller with persisted offset
+	b.poller = NewPoller(b.client, DefaultPollLimit, b.store.Get())
 	if b.config.PollTimeout > 0 {
 		b.poller.SetPollTimeout(b.config.PollTimeout)
 	}
 
-	// Start poller and update consumer
+	// Start poller and bot main loop
 	b.poller.Start(b.ctx)
 	b.wg.Add(1)
-	go b.consumeUpdates(b.store.Get() + 1)
+	go b.run()
 
 	b.ready.Store(true)
 	logger.Info("telegram bot: started", nil)
@@ -149,9 +126,9 @@ func (b *Bot) Stop() {
 		b.poller.Stop()
 	}
 	b.stopAllBridges()
-	if b.sequencer != nil {
-		b.sequencer.Stop()
-	}
+
+	// Close events channel to signal run() to exit
+	close(b.events)
 
 	b.wg.Wait()
 	b.ready.Store(false)
@@ -159,37 +136,9 @@ func (b *Bot) Stop() {
 	logger.Info("telegram bot: stopped", nil)
 }
 
-// onTelegramUpdate is called by the poller for each received Telegram update.
-func (b *Bot) onTelegramUpdate(update Update) error {
-	// Dispatch the update to get a command
-	cmd, err := b.dispatch(update)
-	if err != nil {
-		return fmt.Errorf("dispatch update %d: %w", update.UpdateID, err)
-	}
-	if cmd == nil {
-		// Update was filtered out (no message, etc.)
-		return nil
-	}
-
-	// Create work item for the command
-	item := &WorkItem{
-		Type:      WorkItemCommand,
-		Command:   cmd,
-		RequestID: cmd.RequestID,
-	}
-
-	// Submit to sequencer for ordered processing
-	key := cmd.Identity.SequentialKey()
-	if !b.sequencer.Submit(item, key) {
-		return fmt.Errorf("sequencer queue full for %s", key)
-	}
-
-	return nil
-}
-
-// consumeUpdates reads updates from the poller's channel and processes them.
-// It tracks the offset for deduplication and persists it to disk.
-func (b *Bot) consumeUpdates(offset int64) {
+// run is the single main event loop that processes both Telegram updates and gateway events.
+// This ensures all per-chat state access is naturally serialized.
+func (b *Bot) run() {
 	defer b.wg.Done()
 
 	for {
@@ -198,103 +147,81 @@ func (b *Bot) consumeUpdates(offset int64) {
 			return
 		case update, ok := <-b.poller.Updates:
 			if !ok {
-				return // Channel closed
+				return
 			}
-
-			// Track offset for deduplication
-			if update.UpdateID >= offset {
-				offset = update.UpdateID + 1
+			b.persistOffset(update)
+			b.onUpdate(update)
+		case ev, ok := <-b.events:
+			if !ok {
+				return
 			}
-
-			// Persist offset
-			if err := b.store.Set(update.UpdateID); err != nil {
-				logger.Warning("telegram bot: failed to persist offset",
-					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
-			}
-
-			// Process update
-			if err := b.onTelegramUpdate(update); err != nil {
-				logger.Error("telegram bot: failed to process update",
-					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
-			}
+			b.onEvent(ev)
 		}
 	}
 }
 
-// handleGatewayEvent is called by the bridge when a gateway event is received.
-// The event is converted to a work item and routed through the sequencer
-// to ensure per-chat serialization (matching TUI's single-threaded Update() flow).
-func (b *Bot) handleGatewayEvent(sourceIdentity ChatIdentity, ev gateway.Event) {
-	// Get chat identity from request tracking, or from session setup events
-	identity, ok := b.getChatForRequest(ev.RequestID)
-	if !ok {
-		// For events without request correlation (for example SessionAttached),
-		// use the bridge-bound chat identity.
-		identity = sourceIdentity
+// persistOffset saves the update ID to avoid reprocessing on restart.
+func (b *Bot) persistOffset(update Update) {
+	if err := b.store.Set(update.UpdateID); err != nil {
+		logger.Warning("telegram bot: failed to persist offset",
+			logger.BuildMetadata("error", err, "update_id", update.UpdateID))
 	}
+}
 
-	if identity.ChatID == 0 {
-		logger.Warning("telegram bot: received event for unknown request",
-			logger.BuildMetadata("request_id", ev.RequestID, "event_type", ev.Type))
+// getOrCreateTracker returns the message tracker for a chat, creating it if needed.
+func (b *Bot) getOrCreateTracker(chatID int64) *messageTracker {
+	if t, ok := b.trackers[chatID]; ok {
+		return t
+	}
+	t := &messageTracker{}
+	b.trackers[chatID] = t
+	return t
+}
+
+// onUpdate handles a Telegram update from the poller.
+func (b *Bot) onUpdate(update Update) {
+	cmd, err := parseUpdate(update)
+	if err != nil {
+		logger.Error("telegram bot: failed to parse update",
+			logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+		return
+	}
+	if cmd == nil {
 		return
 	}
 
-	// Create work item for the event
-	item := &WorkItem{
-		Type:      WorkItemEvent,
-		Event:     ev,
-		RequestID: ev.RequestID,
-		Identity:  identity,
-	}
+	tracker := b.getOrCreateTracker(cmd.Identity.ChatID)
 
-	// Determine sequential key (control lane for final events if we want priority)
-	// For now, use regular sequential key to preserve order
-	key := identity.SequentialKey()
-
-	// Submit to sequencer for ordered processing alongside commands
-	// This is the key change: events now flow through the same sequential path
-	if !b.sequencer.Submit(item, key) {
-		logger.Warning("telegram bot: event dropped, sequencer queue full",
-			logger.BuildMetadata("request_id", ev.RequestID, "key", key))
-	}
-
-	// Note: Final event cleanup happens in processWorkItem to ensure proper sequencing
-}
-
-// processWorkItem is the unified work processor called by the sequencer.
-// This mirrors TUI's Update() - all state changes happen sequentially per chat.
-func (b *Bot) processWorkItem(ctx context.Context, item *WorkItem) error {
-	switch item.Type {
-	case WorkItemCommand:
-		return b.processCommand(ctx, item)
-	case WorkItemEvent:
-		return b.processEvent(ctx, item)
-	default:
-		return fmt.Errorf("unknown work item type: %v", item.Type)
+	if err := b.processCommand(cmd, tracker); err != nil {
+		logger.Error("telegram bot: failed to process command",
+			logger.BuildMetadata("error", err, "chat_id", cmd.Identity.ChatID))
 	}
 }
 
-// processCommand handles command work items.
-// Similar to TUI's command handling in handleKeyMsg/handleSubmit.
-func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
-	cmd := item.Command
-	if cmd == nil {
-		return fmt.Errorf("nil command in work item")
+// onEvent handles a gateway event from a bridge.
+func (b *Bot) onEvent(ev chatEvent) {
+	if ev.identity.ChatID == 0 {
+		logger.Warning("telegram bot: received event for unknown chat",
+			logger.BuildMetadata("request_id", ev.event.RequestID, "event_type", ev.event.Type))
+		return
 	}
 
-	// Get or create chat state (like TUI's model initialization)
-	state := b.stateStore.GetOrCreate(cmd.Identity)
+	tracker := b.getOrCreateTracker(ev.identity.ChatID)
+
+	if err := b.processEvent(ev, tracker); err != nil {
+		logger.Error("telegram bot: failed to process event",
+			logger.BuildMetadata("error", err, "chat_id", ev.identity.ChatID))
+	}
+}
+
+// processCommand handles a user command.
+func (b *Bot) processCommand(cmd *Command, tracker *messageTracker) error {
 	bridge, err := b.getOrCreateBridge(cmd.Identity)
 	if err != nil {
 		return fmt.Errorf("get bridge for chat: %w", err)
 	}
-	b.hydrateStateFromBridge(state, bridge)
 
-	// Track this request for response routing
-	b.trackRequest(cmd.RequestID, cmd.Identity)
-
-	// For control commands (cancel), send immediately without state checks
-	// This maintains the fast-path for cancellation
+	// Handle control commands directly
 	if cmd.IsControlCommand {
 		if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
 			return fmt.Errorf("failed to send control command")
@@ -302,61 +229,150 @@ func (b *Bot) processCommand(_ context.Context, item *WorkItem) error {
 		return nil
 	}
 
-	// Handle local status command (doesn't go to gateway)
+	// Handle status command locally
 	if cmd.Type == "status" {
-		result := b.renderer.RenderStatus(state.SessionKey, state.ProviderName, state.ModelName)
-		return b.sendTelegramMessage(cmd.Identity, state, result)
+		sessionKey, provider, model, _ := bridge.SessionInfo()
+		result := b.renderer.RenderStatus(sessionKey, provider, model)
+		return b.sendTelegramMessage(cmd.Identity, tracker, result)
 	}
 
-	// TUI-like state guarding: check if we can start a new request
-	if !state.CanStartNewRequest() {
-		// Send a notice that we're busy
+	// Check if chat is busy
+	if tracker.isBusy() {
 		notice := &RenderResult{
-			Text:      "⏳ Please wait for the current response to complete\\.",
+			Text:      "\u23f3 Please wait for the current response to complete\\.",
 			ParseMode: "MarkdownV2",
 		}
-		return b.sendTelegramMessage(cmd.Identity, state, notice)
+		return b.sendTelegramMessage(cmd.Identity, tracker, notice)
 	}
 
-	// Handle new conversation command
+	// Finalize any existing streaming before starting new conversation
 	if cmd.Type == gateway.CommandNewConversation {
-		// Reset streaming state (like TUI's handleNewConversation)
-		state.FinalizeStreaming()
+		tracker.markIdle()
 	}
 
-	// Send command to gateway
+	// Mark as busy before sending
+	tracker.markBusy(cmd.RequestID)
+
 	if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
+		tracker.markIdle()
 		return fmt.Errorf("failed to send command")
-	}
-
-	// Mark as streaming for user messages
-	if cmd.Type == gateway.CommandUserMessage {
-		state.StartStreaming(cmd.RequestID)
 	}
 
 	return nil
 }
 
-// trackRequest maps a request ID to a chat identity for response routing.
-func (b *Bot) trackRequest(requestID string, identity ChatIdentity) {
-	b.requestMu.Lock()
-	defer b.requestMu.Unlock()
-	b.requestChats[requestID] = identity
+// processEvent handles a gateway event.
+func (b *Bot) processEvent(ev chatEvent, tracker *messageTracker) error {
+	switch ev.event.Type {
+	case event.AgentContentDelta:
+		return b.handleContentDelta(ev, tracker)
+	case event.AgentContentFull:
+		return b.handleContentFull(ev, tracker)
+	case event.AgentDone:
+		return b.handleAgentDone(ev, tracker)
+	case event.AgentError:
+		return b.handleAgentError(ev, tracker)
+	case event.AgentCancelled:
+		return b.handleAgentCancelled(ev, tracker)
+	case event.SessionAttached:
+		return b.handleSessionAttached(ev, tracker)
+	case event.ChangeModelEvent:
+		return b.handleModelChanged(ev, tracker)
+	case event.CronJobResult:
+		return b.handleCronJobResult(ev, tracker)
+	default:
+		// Other events (thinking, tool calls, tokens) - render if needed
+		result := b.renderer.RenderEvent(ev.event)
+		if result != nil {
+			return b.sendTelegramMessage(ev.identity, tracker, result)
+		}
+		return nil
+	}
 }
 
-// getChatForRequest retrieves the chat identity for a request ID.
-func (b *Bot) getChatForRequest(requestID string) (ChatIdentity, bool) {
-	b.requestMu.RLock()
-	defer b.requestMu.RUnlock()
-	identity, ok := b.requestChats[requestID]
-	return identity, ok
+// handleContentDelta accumulates streamed content.
+func (b *Bot) handleContentDelta(ev chatEvent, tracker *messageTracker) error {
+	if payload, ok := ev.event.Payload.(gateway.ContentDeltaPayload); ok {
+		tracker.appendContent(payload.Content)
+	}
+	if err := b.sendTypingAction(ev.identity, tracker); err != nil {
+		logger.Warning("telegram bot: send typing action failed",
+			logger.BuildMetadata("error", err, "chat_id", ev.identity.ChatID))
+	}
+	return nil
 }
 
-// cleanupRequest removes a request from tracking.
-func (b *Bot) cleanupRequest(requestID string) {
-	b.requestMu.Lock()
-	defer b.requestMu.Unlock()
-	delete(b.requestChats, requestID)
+// handleContentFull replaces accumulated content.
+func (b *Bot) handleContentFull(ev chatEvent, tracker *messageTracker) error {
+	if payload, ok := ev.event.Payload.(gateway.ContentFullPayload); ok {
+		tracker.contentBuf.Reset()
+		tracker.appendContent(payload.Content)
+	}
+	if err := b.sendTypingAction(ev.identity, tracker); err != nil {
+		logger.Warning("telegram bot: send typing action failed",
+			logger.BuildMetadata("error", err, "chat_id", ev.identity.ChatID))
+	}
+	return nil
+}
+
+// handleAgentDone processes the final agent completion.
+func (b *Bot) handleAgentDone(ev chatEvent, tracker *messageTracker) error {
+	result := b.renderer.RenderFinalContent(tracker.getContent())
+	tracker.markIdle()
+
+	if result != nil {
+		if err := b.sendTelegramMessage(ev.identity, tracker, result); err != nil {
+			return fmt.Errorf("send final message: %w", err)
+		}
+	}
+	return nil
+}
+
+// handleAgentError processes agent errors.
+func (b *Bot) handleAgentError(ev chatEvent, tracker *messageTracker) error {
+	tracker.markIdle()
+	result := b.renderer.RenderEvent(ev.event)
+	if result != nil {
+		return b.sendTelegramMessage(ev.identity, tracker, result)
+	}
+	return nil
+}
+
+// handleAgentCancelled processes agent cancellation.
+func (b *Bot) handleAgentCancelled(ev chatEvent, tracker *messageTracker) error {
+	tracker.markIdle()
+	result := b.renderer.RenderEvent(ev.event)
+	if result != nil {
+		return b.sendTelegramMessage(ev.identity, tracker, result)
+	}
+	return nil
+}
+
+// handleSessionAttached renders session attachment notification.
+func (b *Bot) handleSessionAttached(ev chatEvent, tracker *messageTracker) error {
+	result := b.renderer.RenderEvent(ev.event)
+	if result != nil {
+		return b.sendTelegramMessage(ev.identity, tracker, result)
+	}
+	return nil
+}
+
+// handleModelChanged renders model change notification.
+func (b *Bot) handleModelChanged(ev chatEvent, tracker *messageTracker) error {
+	result := b.renderer.RenderEvent(ev.event)
+	if result != nil {
+		return b.sendTelegramMessage(ev.identity, tracker, result)
+	}
+	return nil
+}
+
+// handleCronJobResult sends scheduled job results to the chat.
+func (b *Bot) handleCronJobResult(ev chatEvent, tracker *messageTracker) error {
+	result := b.renderer.RenderEvent(ev.event)
+	if result != nil {
+		return b.sendTelegramMessage(ev.identity, tracker, result)
+	}
+	return nil
 }
 
 // getOrCreateBridge returns a started bridge bound to the specific chat identity.
@@ -373,7 +389,6 @@ func (b *Bot) getOrCreateBridge(identity ChatIdentity) (*Bridge, error) {
 	b.bridgesMu.Lock()
 	defer b.bridgesMu.Unlock()
 
-	// Double-check under write lock.
 	if existing := b.bridges[identityKey]; existing != nil {
 		return existing, nil
 	}
@@ -382,14 +397,11 @@ func (b *Bot) getOrCreateBridge(identity ChatIdentity) (*Bridge, error) {
 }
 
 // createBridgeLocked creates a new bridge for the given identity.
-// Must be called with b.bridgesMu held for writing.
 func (b *Bot) createBridgeLocked(identity ChatIdentity, identityKey string) (*Bridge, error) {
 	chatBridge := NewBridge(
 		b.config.GatewayURL,
-		identityKey,
-		func(ev gateway.Event) {
-			b.handleGatewayEvent(identity, ev)
-		},
+		identity,
+		b.events,
 	)
 	if err := chatBridge.Start(b.ctx); err != nil {
 		return nil, fmt.Errorf("start bridge for %s: %w", identityKey, err)
@@ -397,70 +409,6 @@ func (b *Bot) createBridgeLocked(identity ChatIdentity, identityKey string) (*Br
 
 	b.bridges[identityKey] = chatBridge
 	return chatBridge, nil
-}
-
-// preCreateBridgesFromSessions creates a minimal session manager and pre-creates bridges
-// for all telegram sessions. This ensures cron results are delivered to all chats
-// that have sessions, not just those that are currently active.
-func (b *Bot) preCreateBridgesFromSessions() {
-	if b.config.SessionDir == "" {
-		logger.Debug("telegram bot: no session directory configured, skipping bridge pre-creation", nil)
-		return
-	}
-
-	sessionManager := session.NewManager(b.config.SessionDir, "", config.Config{}, nil)
-	sessions, err := sessionManager.ListAllMetadata(b.ctx)
-	if err != nil {
-		logger.Warning("telegram bot: failed to list sessions",
-			logger.BuildMetadata("error", err))
-		return
-	}
-
-	created := 0
-	failed := 0
-	filtered := 0
-
-	for _, sess := range sessions {
-		// Skip temporary sessions and non-telegram sessions
-		if sess.Temporary || sess.ClientType != "telegram" || sess.ClientIdentity == "" {
-			continue
-		}
-		filtered++
-
-		// Parse the client identity to get chat identity
-		identity, err := ParseChatIdentity(sess.ClientIdentity)
-		if err != nil {
-			logger.Warning("telegram bot: failed to parse session identity",
-				logger.BuildMetadata("error", err, "identity", sess.ClientIdentity))
-			failed++
-			continue
-		}
-
-		// Skip if bridge already exists
-		identityKey := identity.ToClientIdentity()
-		b.bridgesMu.RLock()
-		exists := b.bridges[identityKey] != nil
-		b.bridgesMu.RUnlock()
-		if exists {
-			continue
-		}
-
-		// Create bridge for this chat
-		b.bridgesMu.Lock()
-		_, err = b.createBridgeLocked(identity, identityKey)
-		b.bridgesMu.Unlock()
-
-		if err != nil {
-			logger.Warning("telegram bot: failed to pre-create bridge from session",
-				logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
-			failed++
-		} else {
-			created++
-		}
-	}
-
-	logger.Info("telegram bot: pre-created bridges from sessions",
-		logger.BuildMetadata("created", created, "failed", failed, "telegram_sessions", filtered))
 }
 
 // stopAllBridges stops and clears all per-chat bridges.
@@ -478,33 +426,13 @@ func (b *Bot) stopAllBridges() {
 	}
 }
 
-// hydrateStateFromBridge seeds chat state from bridge handshake data.
-func (b *Bot) hydrateStateFromBridge(state *ChatState, bridge *Bridge) {
-	sessionKey, provider, model, ok := bridge.SessionInfo()
-	if !ok {
-		return
-	}
-	if state.SessionKey == "" {
-		state.SessionKey = sessionKey
-	}
-	if state.ProviderName == "" {
-		state.ProviderName = provider
-	}
-	if state.ModelName == "" {
-		state.ModelName = model
-	}
-}
-
 // GetStats returns bot statistics for monitoring.
 func (b *Bot) GetStats() BotStats {
 	stats := BotStats{
 		Ready: b.ready.Load(),
 	}
 
-	if b.sequencer != nil {
-		stats.ActiveChats = b.sequencer.ActiveKeys()
-		stats.TotalQueued = b.sequencer.TotalQueued()
-	}
+	stats.ActiveChats = len(b.trackers)
 
 	b.bridgesMu.RLock()
 	for _, bridge := range b.bridges {
@@ -515,7 +443,6 @@ func (b *Bot) GetStats() BotStats {
 	}
 	b.bridgesMu.RUnlock()
 
-	// Polling is considered active if poller exists and bot is ready
 	stats.Polling = b.poller != nil && b.ready.Load()
 
 	return stats
@@ -527,5 +454,4 @@ type BotStats struct {
 	Connected   bool
 	Polling     bool
 	ActiveChats int
-	TotalQueued int
 }
