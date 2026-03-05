@@ -37,6 +37,7 @@ var (
 // These are the characters that MUST be escaped in Telegram MarkdownV2.
 var mdReplacer = strings.NewReplacer(
 	"_", "\\_",
+	"*", "\\*",
 	"[", "\\[",
 	"]", "\\]",
 	"(", "\\(",
@@ -46,6 +47,7 @@ var mdReplacer = strings.NewReplacer(
 	">", "\\>",
 	"#", "\\#",
 	"+", "\\+",
+	"-", "\\-",
 	"=", "\\=",
 	"|", "\\|",
 	"{", "\\{",
