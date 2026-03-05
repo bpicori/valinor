@@ -137,7 +137,8 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	agentCtx, err := agentcontext.New(workspaceDir, id, m.runtime, m.memoryService)
+	providerCfg := m.config.Providers[providerName]
+	agentCtx, err := agentcontext.New(workspaceDir, id, m.runtime, m.memoryService, providerCfg, model)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -149,7 +150,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
 
-	sess, err := NewSession(meta, store, agentCtx, m.config, opts.MaxAgentIterations)
+	sess, err := NewSession(meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime, m.memoryService)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -211,7 +212,8 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	meta.Provider = providerName
 	meta.Model = model
 
-	agentCtx, err := agentcontext.Resume(workspaceDir, id, m.runtime, m.memoryService, messages)
+	providerCfg := m.config.Providers[providerName]
+	agentCtx, err := agentcontext.Resume(workspaceDir, id, m.runtime, m.memoryService, providerCfg, model, messages)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -222,7 +224,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	_ = store.SaveMetadata(ctx, *meta)
 	_ = store.SaveMessages(ctx, agentCtx.Messages())
 
-	sess, err := NewSession(*meta, store, agentCtx, m.config, opts.MaxAgentIterations)
+	sess, err := NewSession(*meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime, m.memoryService)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)

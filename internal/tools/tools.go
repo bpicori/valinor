@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"valinor/internal/config"
 	"valinor/internal/logger"
 	"valinor/internal/memory"
 	"valinor/internal/sandbox"
@@ -54,8 +55,8 @@ func buildTool(name, description string, parameters map[string]any, exec func(js
 	}
 }
 
-// BuildTools returns tool definitions for the given runtime.
-func BuildTools(rt *sandbox.Runtime, memoryService memory.Service, workspaceDir, sessionID string) []Tool {
+// BuildTools returns base tools plus any provider-specific tools for the run.
+func BuildTools(rt *sandbox.Runtime, memoryService memory.Service, workspaceDir, sessionID string, providerCfg config.ProviderConfig, model string) ([]Tool, error) {
 	result := []Tool{
 		buildTool(readFileName, "Read the contents of a file. Path is relative to the workspace root.", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }),
 		buildTool(writeFileName, "Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }),
@@ -76,5 +77,23 @@ func BuildTools(rt *sandbox.Runtime, memoryService memory.Service, workspaceDir,
 		buildTool(memoryListName, "List stored workspace memories, optionally filtered by kind or tags. Use when you need to inspect what durable context is already saved.", memoryListParams(), func(a json.RawMessage) (string, error) { return memoryListExec(memoryService, workspaceDir, a) }),
 		buildTool(memoryDeleteName, "Delete an incorrect or outdated workspace memory by ID to avoid stale or contradictory future recall.", memoryDeleteParams(), func(a json.RawMessage) (string, error) { return memoryDeleteExec(memoryService, workspaceDir, a) }),
 	}
-	return result
+
+	providerTools, err := buildProviderTools(providerCfg, model)
+	if err != nil {
+		return nil, err
+	}
+	return append(result, providerTools...), nil
+}
+
+func buildProviderTools(providerCfg config.ProviderConfig, model string) ([]Tool, error) {
+	switch providerCfg.Type {
+	case "gemini":
+		searchTool, err := BuildGeminiGoogleSearchTool(providerCfg.APIKey, model)
+		if err != nil {
+			return nil, err
+		}
+		return []Tool{searchTool}, nil
+	default:
+		return nil, nil
+	}
 }

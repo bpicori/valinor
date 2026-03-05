@@ -11,6 +11,9 @@ import (
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
+	"valinor/internal/memory"
+	"valinor/internal/sandbox"
+	agenttools "valinor/internal/tools"
 )
 
 // Metadata holds session metadata persisted in SQLite.
@@ -36,11 +39,13 @@ type Session struct {
 	agentContext  agentcontext.Context
 	config        config.Config
 	maxIterations int
+	runtime       *sandbox.Runtime
+	memoryService memory.Service
 	mu            sync.Mutex
 }
 
 // NewSession creates a session with the provided agent context.
-func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context, cfg config.Config, maxIterations int) (*Session, error) {
+func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context, cfg config.Config, maxIterations int, runtime *sandbox.Runtime, memoryService memory.Service) (*Session, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
@@ -50,6 +55,8 @@ func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context, cfg c
 		agentContext:  agentCtx,
 		config:        cfg,
 		maxIterations: maxIterations,
+		runtime:       runtime,
+		memoryService: memoryService,
 	}, nil
 }
 
@@ -112,6 +119,13 @@ func (s *Session) SetModel(ctx context.Context, model string) error {
 	if s.meta.Model == model {
 		return nil
 	}
+
+	providerCfg := s.config.Providers[s.meta.Provider]
+	builtTools, err := agenttools.BuildTools(s.runtime, s.memoryService, s.meta.WorkspaceDir, s.meta.ID, providerCfg, model)
+	if err != nil {
+		return fmt.Errorf("build tools: %w", err)
+	}
+	s.agentContext.SetTools(builtTools)
 
 	s.meta.Model = model
 	s.meta.UpdatedAt = time.Now()
