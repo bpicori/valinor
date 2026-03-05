@@ -13,27 +13,30 @@ import (
 )
 
 const (
-	MetadataFile = "metadata.json"
 	MessagesFile = "messages.json"
 )
 
 // FileStore implements Store using JSON files on disk.
 type FileStore struct {
-	dir    string
-	mu     sync.Mutex
-	closed bool
+	dir          string
+	sessionID    string
+	metadataRepo MetadataRepository
+	mu           sync.Mutex
+	closed       bool
 }
 
 // NewFileStore opens or creates a session directory and returns a Store.
 // The directory must already exist. Call Close when done.
-func NewFileStore(dir string) (*FileStore, error) {
+func NewFileStore(dir string, metadataRepo MetadataRepository) (*FileStore, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		logger.Error("store create dir error", logger.BuildMetadata("dir", dir, "error", err))
 		return nil, fmt.Errorf("create session dir: %w", err)
 	}
 
 	return &FileStore{
-		dir: dir,
+		dir:          dir,
+		sessionID:    filepath.Base(dir),
+		metadataRepo: metadataRepo,
 	}, nil
 }
 
@@ -92,7 +95,7 @@ func (s *FileStore) LoadMessages(ctx context.Context) ([]agentcontext.Message, e
 	return messages, nil
 }
 
-// SaveMetadata writes metadata atomically (write to temp, then rename).
+// SaveMetadata stores metadata in SQLite.
 func (s *FileStore) SaveMetadata(ctx context.Context, meta Metadata) error {
 	select {
 	case <-ctx.Done():
@@ -100,28 +103,17 @@ func (s *FileStore) SaveMetadata(ctx context.Context, meta Metadata) error {
 	default:
 	}
 
-	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		logger.Error("store save metadata marshal error", logger.BuildMetadata("dir", s.dir, "session_id", meta.ID, "error", err))
-		return fmt.Errorf("marshal metadata: %w", err)
+	if s.metadataRepo == nil {
+		return fmt.Errorf("metadata repository is not configured")
 	}
-
-	tmpPath := filepath.Join(s.dir, MetadataFile+".tmp")
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		logger.Error("store save metadata write error", logger.BuildMetadata("dir", s.dir, "session_id", meta.ID, "error", err))
-		return fmt.Errorf("write metadata: %w", err)
-	}
-
-	metaPath := filepath.Join(s.dir, MetadataFile)
-	if err := os.Rename(tmpPath, metaPath); err != nil {
-		_ = os.Remove(tmpPath)
-		logger.Error("store save metadata rename error", logger.BuildMetadata("dir", s.dir, "session_id", meta.ID, "error", err))
-		return fmt.Errorf("rename metadata: %w", err)
+	if err := s.metadataRepo.Upsert(ctx, meta); err != nil {
+		logger.Error("store save metadata error", logger.BuildMetadata("dir", s.dir, "session_id", meta.ID, "error", err))
+		return fmt.Errorf("save metadata: %w", err)
 	}
 	return nil
 }
 
-// LoadMetadata reads metadata from metadata.json.
+// LoadMetadata reads metadata from SQLite.
 func (s *FileStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 	select {
 	case <-ctx.Done():
@@ -129,22 +121,15 @@ func (s *FileStore) LoadMetadata(ctx context.Context) (*Metadata, error) {
 	default:
 	}
 
-	metaPath := filepath.Join(s.dir, MetadataFile)
-	data, err := os.ReadFile(metaPath)
+	if s.metadataRepo == nil {
+		return nil, fmt.Errorf("metadata repository is not configured")
+	}
+	meta, err := s.metadataRepo.GetByID(ctx, s.sessionID)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		logger.Error("store load metadata read error", logger.BuildMetadata("dir", s.dir, "error", err))
-		return nil, fmt.Errorf("read metadata: %w", err)
+		logger.Error("store load metadata error", logger.BuildMetadata("dir", s.dir, "session_id", s.sessionID, "error", err))
+		return nil, fmt.Errorf("load metadata: %w", err)
 	}
-
-	var meta Metadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		logger.Error("store load metadata unmarshal error", logger.BuildMetadata("dir", s.dir, "error", err))
-		return nil, fmt.Errorf("unmarshal metadata: %w", err)
-	}
-	return &meta, nil
+	return meta, nil
 }
 
 // Close releases resources. Safe to call multiple times.

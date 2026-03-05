@@ -2,9 +2,7 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -41,10 +39,11 @@ type CreateSessionOptions struct {
 
 // Manager manages session lifecycle.
 type Manager struct {
-	sessionDir   string
-	workspaceDir string
-	config       config.Config
-	runtime      *sandbox.Runtime // shared sandbox runtime for all sessions
+	sessionDir    string
+	workspaceDir  string
+	config        config.Config
+	runtime       *sandbox.Runtime // shared sandbox runtime for all sessions
+	metadataStore MetadataRepository
 }
 
 // Message history lifecycle:
@@ -53,8 +52,18 @@ type Manager struct {
 // - On resume, persisted messages are loaded and system prompt is rebuilt.
 
 // NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
-func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime) *Manager {
-	return &Manager{sessionDir: sessionDir, workspaceDir: workspaceDir, config: cfg, runtime: rt}
+func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime) (*Manager, error) {
+	metadataStore, err := NewSQLiteMetadataRepository(sessionDir)
+	if err != nil {
+		return nil, fmt.Errorf("create session metadata repository: %w", err)
+	}
+	return &Manager{
+		sessionDir:    sessionDir,
+		workspaceDir:  workspaceDir,
+		config:        cfg,
+		runtime:       rt,
+		metadataStore: metadataStore,
+	}, nil
 }
 
 // Create creates a new session with a fresh agent and empty transcript.
@@ -111,7 +120,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		store = NewMemoryStore()
 	} else {
 		dir := filepath.Join(m.sessionDir, id)
-		fs, err := NewFileStore(dir)
+		fs, err := NewFileStore(dir, m.metadataStore)
 		if err != nil {
 			logger.Error("session create store error", logger.BuildMetadata("session_id", id, "error", err))
 			return nil, fmt.Errorf("create store: %w", err)
@@ -160,13 +169,13 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptions) (*Session, error) {
 	dir := filepath.Join(m.sessionDir, id)
 	logger.Debug("session resume start", logger.BuildMetadata("session_id", id))
-	store, err := NewFileStore(dir)
+	store, err := NewFileStore(dir, m.metadataStore)
 	if err != nil {
 		logger.Error("session resume store open error", logger.BuildMetadata("session_id", id, "error", err))
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
-	meta, err := store.LoadMetadata(ctx)
+	meta, err := m.metadataStore.GetByID(ctx, id)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume metadata load error", logger.BuildMetadata("session_id", id, "error", err))
@@ -195,7 +204,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 		_ = store.Close()
 		return nil, err
 	}
-	// Persist resolved values for backward compatibility
+	// Persist resolved provider/model values.
 	meta.Provider = providerName
 	meta.Model = model
 
@@ -221,78 +230,33 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 
 // GetMetadata returns metadata for a session by ID.
 func (m *Manager) GetMetadata(ctx context.Context, id string) (*Metadata, error) {
-	dir := filepath.Join(m.sessionDir, id)
-
-	// Check if directory exists
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return nil, nil // Session doesn't exist on disk
-	} else if err != nil {
-		return nil, fmt.Errorf("check session dir: %w", err)
+	meta, err := m.metadataStore.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("get metadata: %w", err)
 	}
-
-	return readMetadataFile(dir)
+	return meta, nil
 }
 
 // ListAllMetadata returns metadata for all sessions (excluding temporary ones).
-// This scans the session directory and reads metadata from each session.
 func (m *Manager) ListAllMetadata(ctx context.Context) ([]Metadata, error) {
-	dir := filepath.Join(m.sessionDir)
-	entries, err := os.ReadDir(dir)
+	result, err := m.metadataStore.ListAll(ctx)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("list sessions: %w", err)
+		return nil, fmt.Errorf("list metadata: %w", err)
 	}
-
-	var result []Metadata
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		sessionDir := filepath.Join(m.sessionDir, e.Name())
-		meta, err := readMetadataFile(sessionDir)
-		if err != nil || meta == nil {
-			continue
-		}
-		// Skip temporary sessions - they don't have persistent client binding
-		if meta.Temporary {
-			continue
-		}
-		result = append(result, *meta)
-	}
-
 	return result, nil
 }
 
 // GetActiveSessionForClient returns the active session for a given client identity.
 // Returns nil if no active session exists for this client.
 func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, clientIdentity string, opts CreateSessionOptions) (*Session, error) {
-	dir := filepath.Join(m.sessionDir)
-	entries, err := os.ReadDir(dir)
+	meta, err := m.metadataStore.GetActiveForClient(ctx, clientType, clientIdentity)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("list sessions: %w", err)
+		return nil, fmt.Errorf("get active session metadata: %w", err)
 	}
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		sessionDir := filepath.Join(m.sessionDir, e.Name())
-		meta, err := readMetadataFile(sessionDir)
-		if err != nil || meta == nil {
-			continue
-		}
-
-		if meta.ClientType == clientType && meta.ClientIdentity == clientIdentity && meta.Active && !meta.Temporary {
-			return m.Resume(ctx, meta.ID, opts)
-		}
+	if meta == nil {
+		return nil, nil
 	}
-
-	return nil, nil // No active session found
+	return m.Resume(ctx, meta.ID, opts)
 }
 
 // SetSessionActive marks a session as active for its client, deactivating any other
@@ -307,18 +271,8 @@ func (m *Manager) SetSessionActive(sessionID string) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	// Deactivate other sessions for this client
-	if err := m.DeactivateClientSessions(meta.ClientType, meta.ClientIdentity); err != nil {
-		return fmt.Errorf("deactivate existing sessions: %w", err)
-	}
-
-	// Activate this session
-	meta.Active = true
-	meta.UpdatedAt = time.Now()
-
-	dir := filepath.Join(m.sessionDir, sessionID)
-	if err := writeMetadataFile(dir, meta); err != nil {
-		return fmt.Errorf("save metadata: %w", err)
+	if err := m.metadataStore.SetSessionActive(context.Background(), sessionID); err != nil {
+		return fmt.Errorf("set session active: %w", err)
 	}
 
 	logger.Info("session activated",
@@ -334,35 +288,8 @@ func (m *Manager) DeactivateClientSessions(clientType, clientIdentity string) er
 		return nil // Nothing to deactivate
 	}
 
-	dir := filepath.Join(m.sessionDir)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return fmt.Errorf("list sessions: %w", err)
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		sessionDir := filepath.Join(m.sessionDir, e.Name())
-		meta, err := readMetadataFile(sessionDir)
-		if err != nil || meta == nil {
-			continue
-		}
-
-		if meta.ClientType == clientType && meta.ClientIdentity == clientIdentity && meta.Active && !meta.Temporary {
-			meta.Active = false
-			meta.UpdatedAt = time.Now()
-
-			if err := writeMetadataFile(sessionDir, meta); err != nil {
-				logger.Warning("failed to deactivate session",
-					logger.BuildMetadata("session_id", meta.ID, "error", err))
-				continue
-			}
-
-			logger.Info("session deactivated",
-				logger.BuildMetadata("session_id", meta.ID, "client_type", clientType, "client_identity", clientIdentity))
-		}
+	if err := m.metadataStore.DeactivateClientSessions(context.Background(), clientType, clientIdentity); err != nil {
+		return fmt.Errorf("deactivate client sessions: %w", err)
 	}
 
 	return nil
@@ -397,42 +324,4 @@ func (m *Manager) ListProviderModels(ctx context.Context, providerName string) (
 		return left < right
 	})
 	return models, nil
-}
-
-// readMetadataFile reads metadata directly from a session directory without creating a full store.
-func readMetadataFile(dir string) (*Metadata, error) {
-	metaPath := filepath.Join(dir, MetadataFile)
-	data, err := os.ReadFile(metaPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read metadata file: %w", err)
-	}
-
-	var meta Metadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("unmarshal metadata: %w", err)
-	}
-	return &meta, nil
-}
-
-// writeMetadataFile writes metadata directly to a session directory without creating a full store.
-func writeMetadataFile(dir string, meta *Metadata) error {
-	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal metadata: %w", err)
-	}
-
-	tmpPath := filepath.Join(dir, MetadataFile+".tmp")
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write metadata temp file: %w", err)
-	}
-
-	metaPath := filepath.Join(dir, MetadataFile)
-	if err := os.Rename(tmpPath, metaPath); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("rename metadata file: %w", err)
-	}
-	return nil
 }

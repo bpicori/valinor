@@ -1,4 +1,3 @@
-- [ ] Review telegram package to simplify
 - [ ] For session metadata is better to use  sqlite database 
 - [ ] Move config to ~/.valinor/config.toml and not anymore from dev directory
 - [ ] Create a quick wizard to create the configuration file
@@ -14,3 +13,4 @@ Done:
 - [x] Add Telegram support
 - [x] Add cron commands execution
 - [x] Try sandbox with podman container
+- [x] Review telegram package to simplify

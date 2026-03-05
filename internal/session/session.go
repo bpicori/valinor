@@ -13,7 +13,7 @@ import (
 	"valinor/internal/logger"
 )
 
-// Metadata holds session metadata persisted in metadata.json.
+// Metadata holds session metadata persisted in SQLite.
 type Metadata struct {
 	ID             string    `json:"id"`
 	Title          string    `json:"title"`

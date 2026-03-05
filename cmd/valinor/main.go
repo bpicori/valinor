@@ -127,7 +127,10 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	}
 
 	// Initialize core components
-	sm := session.NewManager(sessionsDir, workspaceDir, cfg, rt)
+	sm, err := session.NewManager(sessionsDir, workspaceDir, cfg, rt)
+	if err != nil {
+		return fmt.Errorf("create session manager: %w", err)
+	}
 
 	// Session options used when router/runtime create or resume sessions on-demand.
 	sessionOpts := session.CreateSessionOptions{

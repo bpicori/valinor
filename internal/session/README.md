@@ -6,13 +6,13 @@ This package owns conversation session lifecycle, persistence, and active runtim
 
 A session is represented by:
 
-- `Metadata` (`metadata.json`): session id, title, timestamps, workspace, provider, model, client ownership, active status, temporary flag
+- `Metadata` (`metadata.db`): session id, title, timestamps, workspace, provider, model, client ownership, active status, temporary flag
 - `Messages` (`messages.json`): full conversation history (system + user + assistant/tool messages)
 - `Session` in-memory state: active LLM instance + agent context used while processing messages
 
 Session data is stored under:
 
-- `<session_dir>/<session_id>/metadata.json`
+- `<session_dir>/metadata.db`
 - `<session_dir>/<session_id>/messages.json`
 
 ## Core components
@@ -21,7 +21,7 @@ Session data is stored under:
 - `Session`: owns one conversation state and persists message history after each turn
 - `Runtime`: owns session workers and handles command dispatch
 - `Store`: persistence contract used by session lifecycle operations
-- `JSONLStore`: file-backed `Store` implementation for metadata and messages
+- `FileStore`: file-backed `Store` implementation for messages and SQLite-backed metadata operations
 - `MemoryStore`: in-memory `Store` implementation for temporary sessions
 
 ## Session Metadata and Ownership
@@ -64,13 +64,13 @@ CreateSessionOptions fields:
 
 `Manager.Resume(...)`:
 1. Opens the existing session directory by id
-2. Loads metadata + messages
-3. Re-resolves provider/model for compatibility
+2. Loads metadata from SQLite + messages from JSON
+3. Re-resolves provider/model
 4. Rebuilds current system prompt for the workspace
 5. Normalizes messages so the first system message is updated (or inserted if missing)
 6. Rebuilds agent + tools and returns a ready session
 
-This means an old session can be resumed even after app restart, as long as session files exist.
+This means a session can be resumed after app restart as long as metadata exists in SQLite and messages exist on disk.
 
 ## Session behavior during a turn
 
@@ -99,11 +99,11 @@ Important details:
 
 - `SetModel` in `Session` supports **model change inside the same provider**
 - If provider changes, a **new session** must be created and activated
-- Resumed sessions re-resolve provider/model through current config for compatibility
+- Resumed sessions re-resolve provider/model through current config
 
 ## Persistence model and file contract
 
-### `metadata.json`
+### `metadata.db` (`sessions` table)
 
 Holds stable session attributes, timestamps, and ownership:
 - `id`, `title`
@@ -120,7 +120,7 @@ Stores full ordered conversation state used to resume:
 - system prompt message first (normalized on resume)
 - user/assistant/tool messages after that
 
-Both metadata and messages are written atomically by writing a temp file and renaming.
+Metadata is persisted in SQLite. Messages are written atomically by writing a temp file and renaming.
 
 ## Public manager operations
 
@@ -130,8 +130,6 @@ Both metadata and messages are written atomically by writing a temp file and ren
 - `SetSessionActive(sessionID)`: mark a session as active (deactivates others for same client)
 - `List()`: list all sessions sorted by most recently updated
 - `GetMetadata(ctx, id)`: fetch metadata only
-- `LoadMessages(ctx, id)`: fetch persisted messages
-- `Delete(id)`: remove full session directory
 
 ## Startup behavior (gateway mode)
 
@@ -148,3 +146,4 @@ In gateway mode:
 - Changing provider creates a new session; same-provider model switch updates existing session metadata
 - Temporary sessions are used for background jobs and do not persist to disk
 - Events from temporary sessions are broadcast to all connected clients
+- Fresh-app assumption: no metadata.json migration or compatibility layer
