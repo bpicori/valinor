@@ -10,7 +10,7 @@ import (
 // Pre-compiled regexps for performance.
 var (
 	// Placeholder removal
-	placeholderRegex = regexp.MustCompile(`ELEMENTPLACEHOLDER\d+|CODEBLOCKPLACEHOLDER\d+|INLINECODEPLACEHOLDER\d+|LINKPLACEHOLDER\d`)
+	placeholderRegex = regexp.MustCompile(`ELEMENTPLACEHOLDER\d+|CODEBLOCKPLACEHOLDER\d+|INLINECODEPLACEHOLDER\d+|LINKPLACEHOLDER\d+|BOLDPLACEHOLDER\d+|ITALICPLACEHOLDER\d+|STRIKEPLACEHOLDER\d+`)
 
 	// Element detection
 	codeBlockRegex  = regexp.MustCompile("```(?s:.*?)```")
@@ -21,10 +21,11 @@ var (
 	urlRegex = regexp.MustCompile(`\bhttps?://[a-zA-Z0-9-.]+(.[a-zA-Z]{2,})(:[0-9]{1,5})?(/[a-zA-Z0-9-_.~%/?#=&+]*)?\b`)
 
 	// Style conversions
-	boldRegex        = regexp.MustCompile(`\*\*(.*?)\*\*`)
-	italicAsterisk   = regexp.MustCompile(`\*(.*?)\*`)
-	italicUnderscore = regexp.MustCompile(`_(.*?)_`)
-	strikeRegex      = regexp.MustCompile(`~~(.*?)~~`)
+	boldRegex           = regexp.MustCompile(`\*\*(.*?)\*\*`)
+	boldUnderscore      = regexp.MustCompile(`__(.*?)__`)
+	italicAsterisk      = regexp.MustCompile(`\*(.*?)\*`)
+	italicUnderscore    = regexp.MustCompile(`_(.*?)_`)
+	strikeRegex         = regexp.MustCompile(`~~(.*?)~~`)
 
 	// Code block language extraction
 	codeBlockLangRegex = regexp.MustCompile("(?s)```([a-zA-Z]*)\\n(.*?)\\n```")
@@ -170,24 +171,123 @@ func escapeTelegramMarkdownV2CodeBlocks(text string) string {
 	return text
 }
 
+// escapeMarkdownExcept preserves formatting chars but escapes all others.
+// Used for text inside bold/italic/strikethrough that needs escaping but
+// not the formatting characters themselves.
+func escapeMarkdownExcept(text string, preserve []rune) string {
+	var result strings.Builder
+	preserveMap := make(map[rune]bool)
+	for _, r := range preserve {
+		preserveMap[r] = true
+	}
+
+	replacements := map[rune]string{
+		'_':  "\\_",
+		'*':  "\\*",
+		'[':  "\\[",
+		']':  "\\]",
+		'(':  "\\(",
+		')':  "\\)",
+		'~':  "\\~",
+		'`':  "\\`",
+		'>':  "\\>",
+		'#':  "\\#",
+		'+':  "\\+",
+		'-':  "\\-",
+		'=':  "\\=",
+		'|':  "\\|",
+		'{':  "\\{",
+		'}':  "\\}",
+		'.':  "\\.",
+		'!':  "\\!",
+	}
+
+	for _, r := range text {
+		if preserveMap[r] {
+			result.WriteRune(r)
+		} else if repl, ok := replacements[r]; ok {
+			result.WriteString(repl)
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
 // processStyles converts markdown formatting to Telegram MarkdownV2 format.
-func processStyles(md string) string {
-	// bold text: convert **text** to *text*
-	md = boldRegex.ReplaceAllString(md, "*$1*")
+// It converts styles to Telegram format and uses placeholders to protect
+// the resulting formatting characters from being escaped.
+func processStyles(md string, elements map[string]string) string {
+	// Bold first: convert **text** and __text__ to placeholders containing *text*
+	// We use placeholders to protect the asterisks from being escaped.
+	// The text content inside is escaped except for * which is the format char.
+	md = boldRegex.ReplaceAllStringFunc(md, func(match string) string {
+		matches := boldRegex.FindStringSubmatch(match)
+		if len(matches) > 1 {
+			placeholder := fmt.Sprintf("BOLDPLACEHOLDER%d", len(elements))
+			escaped := escapeMarkdownExcept(matches[1], []rune{'*'})
+			elements[placeholder] = "*" + escaped + "*"
+			return placeholder
+		}
+		return match
+	})
 
-	// italic text: convert *text* or _text_ to _text_
-	md = italicAsterisk.ReplaceAllString(md, "_${1}_")
-	md = italicUnderscore.ReplaceAllString(md, "_${1}_")
+	md = boldUnderscore.ReplaceAllStringFunc(md, func(match string) string {
+		matches := boldUnderscore.FindStringSubmatch(match)
+		if len(matches) > 1 {
+			placeholder := fmt.Sprintf("BOLDPLACEHOLDER%d", len(elements))
+			escaped := escapeMarkdownExcept(matches[1], []rune{'*'})
+			elements[placeholder] = "*" + escaped + "*"
+			return placeholder
+		}
+		return match
+	})
 
-	// strikethrough text: convert ~~text~~ to ~text~
-	md = strikeRegex.ReplaceAllString(md, "~$1~")
+	// Italic: convert *text* or _text_ to placeholders containing _text_
+	// (Telegram italic). We use placeholders to protect underscores from escaping.
+	// The text content inside is escaped except for _ which is the format char.
+	md = italicAsterisk.ReplaceAllStringFunc(md, func(match string) string {
+		matches := italicAsterisk.FindStringSubmatch(match)
+		if len(matches) > 1 {
+			placeholder := fmt.Sprintf("ITALICPLACEHOLDER%d", len(elements))
+			escaped := escapeMarkdownExcept(matches[1], []rune{'_'})
+			elements[placeholder] = "_" + escaped + "_"
+			return placeholder
+		}
+		return match
+	})
+
+	md = italicUnderscore.ReplaceAllStringFunc(md, func(match string) string {
+		matches := italicUnderscore.FindStringSubmatch(match)
+		if len(matches) > 1 {
+			placeholder := fmt.Sprintf("ITALICPLACEHOLDER%d", len(elements))
+			escaped := escapeMarkdownExcept(matches[1], []rune{'_'})
+			elements[placeholder] = "_" + escaped + "_"
+			return placeholder
+		}
+		return match
+	})
+
+	// Strikethrough: convert ~~text~~ to placeholders containing ~text~
+	// (Telegram strikethrough). We use placeholders to protect ~ from escaping.
+	// The text content inside is escaped except for ~ which is the format char.
+	md = strikeRegex.ReplaceAllStringFunc(md, func(match string) string {
+		matches := strikeRegex.FindStringSubmatch(match)
+		if len(matches) > 1 {
+			placeholder := fmt.Sprintf("STRIKEPLACEHOLDER%d", len(elements))
+			escaped := escapeMarkdownExcept(matches[1], []rune{'~'})
+			elements[placeholder] = "~" + escaped + "~"
+			return placeholder
+		}
+		return match
+	})
 
 	return md
 }
 
 // ConvertMarkdownToTelegram converts standard markdown to Telegram MarkdownV2 format.
 // It handles:
-//   - Converting **bold** to *bold* (Telegram bold)
+//   - Converting **bold** and __bold__ to *bold* (Telegram bold)
 //   - Converting *italic* and _italic_ to _italic_ (Telegram italic)
 //   - Preserving code blocks and inline code with proper escaping
 //   - Auto-wrapping unwrapped URLs in markdown links
@@ -201,9 +301,12 @@ func ConvertMarkdownToTelegram(md string) string {
 	md = wrapLinksInMarkdown(md)
 	md, elements = addPlaceholders(md, elements)
 
-	md = EscapeMarkdown(md)
+	// Process markdown styles BEFORE escaping.
+	// Bold (** and __) is processed first and wrapped in placeholders to protect
+	// the asterisks from being escaped. Then italic (* and _) is processed.
+	md = processStyles(md, elements)
 
-	md = processStyles(md)
+	md = EscapeMarkdown(md)
 
 	md = processPlaceholders(md, elements)
 
