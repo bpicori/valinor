@@ -42,6 +42,11 @@ type Session struct {
 	mu            sync.Mutex
 }
 
+// RunInteractionOptions controls how an interaction is executed.
+type RunInteractionOptions struct {
+	EmitEvents bool
+}
+
 // NewSession creates a session with the provided agent context.
 func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context, cfg config.Config, maxIterations int, runtime *sandbox.Runtime) (*Session, error) {
 	if store == nil {
@@ -59,6 +64,14 @@ func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context, cfg c
 
 // RunInteraction appends a user message and processes it through a fresh agent.
 func (s *Session) RunInteraction(ctx context.Context, requestID string, message string) error {
+	_, err := s.RunInteractionWithOptions(ctx, requestID, message, RunInteractionOptions{
+		EmitEvents: true,
+	})
+	return err
+}
+
+// RunInteractionWithOptions appends a user message and processes it through a fresh agent.
+func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID string, message string, opts RunInteractionOptions) (llm.RunResult, error) {
 	s.mu.Lock()
 	runData := s.agentContext.PrepareRun(message)
 	s.mu.Unlock()
@@ -66,28 +79,29 @@ func (s *Session) RunInteraction(ctx context.Context, requestID string, message 
 	providerCfg := s.config.Providers[s.meta.Provider]
 	provider, err := factory.CreateProvider(providerCfg)
 	if err != nil {
-		return fmt.Errorf("create provider: %w", err)
+		return llm.RunResult{}, fmt.Errorf("create provider: %w", err)
 	}
 
 	agent := llm.New(provider, s.meta.Model, s.maxIterations)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
-		Messages:  runData.Messages,
-		Tools:     runData.Tools,
-		SessionID: s.meta.ID,
-		RequestID: requestID,
+		Messages:   runData.Messages,
+		Tools:      runData.Tools,
+		SessionID:  s.meta.ID,
+		RequestID:  requestID,
+		EmitEvents: opts.EmitEvents,
 	})
 	if err != nil {
-		return fmt.Errorf("agent run: %w", err)
+		return llm.RunResult{}, fmt.Errorf("agent run: %w", err)
 	}
 
 	s.mu.Lock()
 	persistMessages := s.agentContext.CompleteRun(result.Messages)
 	s.mu.Unlock()
 	if err := s.store.SaveMessages(ctx, persistMessages); err != nil {
-		return fmt.Errorf("save messages: %w", err)
+		return llm.RunResult{}, fmt.Errorf("save messages: %w", err)
 	}
-	return nil
+	return result, nil
 }
 
 // ResetConversation clears messages to only the base system prompt.

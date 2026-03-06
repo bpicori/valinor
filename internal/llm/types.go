@@ -87,6 +87,7 @@ type RunRequest struct {
 	Tools     []tools.Tool // Tools available for this run
 	SessionID string       // Optional: identifies the session for event routing.
 	RequestID string       // Optional: correlation ID for request tracing.
+	EmitEvents bool        // Controls whether agent lifecycle events are published.
 }
 
 // RunResult returns the updated messages after the loop.

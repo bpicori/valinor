@@ -58,6 +58,8 @@ func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 		return r.renderSessionAttached(ev.Payload)
 	case event.ChangeModelEvent:
 		return r.renderModelChanged(ev.Payload)
+	case event.CronJobResult:
+		return r.renderCronJobResult(ev.Payload)
 	default:
 		// Events like AgentStepTokens, ContextTokens don't need messages
 		return nil
@@ -171,6 +173,30 @@ func (r *Renderer) renderModelChanged(payload interface{}) *RenderResult {
 	return &RenderResult{
 		Text:      text,
 		ParseMode: "MarkdownV2",
+	}
+}
+
+// renderCronJobResult renders a scheduled job alert.
+func (r *Renderer) renderCronJobResult(payload interface{}) *RenderResult {
+	p, ok := payload.(gateway.CronJobResultPayload)
+	if !ok {
+		return nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("⏰ *Scheduled Alert*\n")
+	sb.WriteString(EscapeMarkdownf("Job: %s\n\n", p.JobName))
+
+	message := p.Content
+	if len(message) > MaxTelegramMessageLength-100 {
+		message = message[:MaxTelegramMessageLength-103] + "..."
+	}
+	sb.WriteString(EscapeMarkdown(message))
+
+	return &RenderResult{
+		Text:      sb.String(),
+		ParseMode: "MarkdownV2",
+		IsFinal:   true,
 	}
 }
 

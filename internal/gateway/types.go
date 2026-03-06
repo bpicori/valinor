@@ -74,6 +74,7 @@ const (
 	EventSessionAttached      = string(event.SessionAttached)
 	EventNewConversation      = string(event.NewConversation)
 	EventChangeProviderModel  = string(event.ChangeModelEvent)
+	EventCronJobResult        = string(event.CronJobResult)
 )
 
 // Handshake types.

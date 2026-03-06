@@ -43,7 +43,7 @@ func cronAddParams() map[string]any {
 			},
 			"message": map[string]any{
 				"type":        "string",
-				"description": "The message/prompt to send to the AI when the job runs. Be specific about what to do.",
+				"description": "What to check on each run and when to alert. Be specific about the condition to evaluate and what should trigger a notification. Scheduled background runs should return a message only when the alert condition is met, and otherwise stay silent.",
 			},
 			"schedule_kind": map[string]any{
 				"type":        "string",

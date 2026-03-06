@@ -62,22 +62,28 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			RequestID: req.RequestID,
 		}
 	}
+	publishEvent := func(eventType event.EventType, payload any) {
+		if !req.EmitEvents {
+			return
+		}
+		event_bus.Publish(newEvent(eventType, payload))
+	}
 
 	for {
 		// Check for cancellation before each iteration
 		if err := ctx.Err(); err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("llm run cancelled by user", nil)
-				event_bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
+				publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
 				return RunResult{Messages: messages}, nil
 			}
 			return RunResult{}, err
 		}
 
 		if iterations >= l.maxIterations {
-			event_bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{
+			publishEvent(event.AgentError, event.AgentErrorPayload{
 				Error: fmt.Errorf("max agent iterations (%d) reached; stopping to prevent runaway loop", l.maxIterations),
-			}))
+			})
 			return RunResult{}, fmt.Errorf("max agent iterations (%d) reached", l.maxIterations)
 		}
 		iterations++
@@ -97,10 +103,10 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			Model:    l.model,
 			OnDelta: func(delta StreamDelta) {
 				if delta.Content != "" {
-					event_bus.Publish(newEvent(event.AgentContentDelta, event.ContentDeltaPayload{Content: delta.Content}))
+					publishEvent(event.AgentContentDelta, event.ContentDeltaPayload{Content: delta.Content})
 				}
 				if delta.Refusal != "" {
-					event_bus.Publish(newEvent(event.AgentRefusal, event.RefusalPayload{Content: delta.Refusal}))
+					publishEvent(event.AgentRefusal, event.RefusalPayload{Content: delta.Refusal})
 				}
 			},
 		})
@@ -108,26 +114,26 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			// Handle user cancellation gracefully
 			if errors.Is(err, context.Canceled) {
 				logger.Info("llm stream cancelled by user", nil)
-				event_bus.Publish(newEvent(event.AgentCancelled, event.AgentCancelledPayload{}))
+				publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
 				return RunResult{Messages: messages}, nil
 			}
 			logger.Error("llm stream error", logger.BuildMetadata("error", err))
-			event_bus.Publish(newEvent(event.AgentError, event.AgentErrorPayload{Error: err}))
+			publishEvent(event.AgentError, event.AgentErrorPayload{Error: err})
 			return RunResult{}, err
 		}
 
 		// Update usage stats
 		usage = result.Usage
-		event_bus.Publish(newEvent(event.AgentStepTokens, event.StepTokenUsagePayload{
+		publishEvent(event.AgentStepTokens, event.StepTokenUsagePayload{
 			Step:             iterations,
 			PromptTokens:     usage.PromptTokens,
 			CompletionTokens: usage.CompletionTokens,
 			TotalTokens:      usage.TotalTokens,
-		}))
+		})
 
 		// Publish full content if present
 		if result.Message.Content != "" {
-			event_bus.Publish(newEvent(event.AgentContentFull, event.ContentFullPayload{Content: result.Message.Content}))
+			publishEvent(event.AgentContentFull, event.ContentFullPayload{Content: result.Message.Content})
 		}
 
 		// Handle result message
@@ -137,11 +143,11 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Role:    agentcontext.RoleAssistant,
 				Content: result.Message.Content,
 			})
-			event_bus.Publish(newEvent(event.AgentDone, event.AgentDonePayload{
+			publishEvent(event.AgentDone, event.AgentDonePayload{
 				PromptTokens:     usage.PromptTokens,
 				CompletionTokens: usage.CompletionTokens,
 				TotalTokens:      usage.TotalTokens,
-			}))
+			})
 			logger.Debug("llm iteration done", logger.BuildMetadata("iteration", iterations))
 			return RunResult{Messages: messages}, nil
 		}
@@ -167,25 +173,25 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				args = json.RawMessage(tc.Arguments)
 			}
 			logger.Debug("llm tool call start", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "args", string(args)))
-			event_bus.Publish(newEvent(event.AgentThinking, event.ThinkingPayload{
+			publishEvent(event.AgentThinking, event.ThinkingPayload{
 				Step:    iterations,
 				Content: "executing tool: " + tc.Name,
-			}))
-			event_bus.Publish(newEvent(event.AgentToolCallStart, event.ToolCallStartPayload{
+			})
+			publishEvent(event.AgentToolCallStart, event.ToolCallStartPayload{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Name,
 				ToolArgs:   string(args),
-			}))
+			})
 			toolResult, ok := l.executeTool(req.Tools, tc.Name, args)
 			if !ok {
 				toolResult = "error: tool not found"
 			}
 			logger.Debug("llm tool call done", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
-			event_bus.Publish(newEvent(event.AgentToolCallDone, event.ToolCallDonePayload{
+			publishEvent(event.AgentToolCallDone, event.ToolCallDonePayload{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Name,
 				ToolResult: toolResult,
-			}))
+			})
 			messages = append(messages, agentcontext.Message{
 				Role:       agentcontext.RoleTool,
 				ToolCallID: tc.ID,

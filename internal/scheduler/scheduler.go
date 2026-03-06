@@ -6,8 +6,11 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+
+	agentcontext "valinor/internal/context"
 
 	"github.com/google/uuid"
 
@@ -31,6 +34,23 @@ type Scheduler struct {
 	wg      sync.WaitGroup
 	running bool
 }
+
+// cronPromptWrapper is the system instruction prepended to scheduled job prompts.
+// It instructs the model to return alert text only when the condition is met.
+const cronPromptWrapper = `You are a scheduled monitoring agent. Your task is to evaluate a condition and decide whether to alert.
+
+INSTRUCTIONS:
+1. Evaluate the user's request below
+2. Decide if the condition is met (e.g., price threshold reached, status changed, etc.)
+3. If the condition is met, return ONLY one line that starts with "ALERT: " followed by the alert message
+4. If the condition is not met, return an empty response with no text at all
+5. Never explain why there is no alert
+6. Do not include JSON, markdown wrappers, explanations, status messages, or any extra text
+
+USER REQUEST:
+%s`
+
+const cronAlertPrefix = "ALERT: "
 
 // New creates a new scheduler with the given cron service.
 func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.CreateSessionOptions, cfg config.SchedulerConfig) *Scheduler {
@@ -177,94 +197,19 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	if err != nil {
 		logger.Error("scheduler: failed to create session for job",
 			logger.BuildMetadata("job_id", job.ID, "error", err))
-		s.publishError(job, fmt.Errorf("failed to create session: %w", err))
 		return
 	}
 
 	// Generate request ID for this execution
 	requestID := uuid.New().String()
 
-	// Subscribe to run events before starting execution
-	sub := event_bus.Subscribe(
-		event.AgentContentFull,
-		event.AgentDone,
-		event.AgentError,
-		event.AgentCancelled,
-	)
-	defer event_bus.Unsubscribe(sub)
+	// Wrap the job message with the cron decision contract
+	wrappedMessage := fmt.Sprintf(cronPromptWrapper, job.Message)
 
-	// Execute the job message in the session
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- sess.RunInteraction(ctx, requestID, job.Message)
-	}()
-
-	// Collect the response for this specific session/request
-	var resultContent string
-	var execErr error
-	done := false
-	runReturned := false
-	runCompletedAt := time.Time{}
-	runEventWait := 2 * time.Second
-
-	for !done {
-		select {
-		case <-ctx.Done():
-			logger.Debug("scheduler job cancelled", logger.BuildMetadata("job_id", job.ID))
-			sess.Close()
-			return
-
-		case err := <-errChan:
-			runReturned = true
-			runCompletedAt = time.Now()
-			execErr = err
-			if err != nil {
-				logger.Error("scheduler: job execution error",
-					logger.BuildMetadata("job_id", job.ID, "error", err))
-				done = true
-				break
-			}
-			// Success path: normally AgentDone arrives and ends the loop.
-			if !runCompletedAt.IsZero() && time.Since(runCompletedAt) >= runEventWait {
-				done = true
-			}
-
-		case ev, ok := <-sub.Ch():
-			if !ok {
-				done = true
-				break
-			}
-			// Filter to this job's session
-			if ev.SessionID == sess.Meta().ID && ev.RequestID == requestID {
-				switch ev.Type {
-				case event.AgentContentFull:
-					if payload, ok := ev.Payload.(event.ContentFullPayload); ok {
-						resultContent = payload.Content
-					}
-				case event.AgentDone:
-					done = true
-				case event.AgentError:
-					if payload, ok := ev.Payload.(event.AgentErrorPayload); ok && payload.Error != nil {
-						execErr = payload.Error
-					}
-					done = true
-				case event.AgentCancelled:
-					execErr = context.Canceled
-					done = true
-				}
-			}
-		case <-time.After(250 * time.Millisecond):
-			// Poll-style fallback
-			if runReturned && !runCompletedAt.IsZero() && time.Since(runCompletedAt) >= runEventWait {
-				done = true
-			}
-		}
-	}
-
-	// If there was an execution error and no content, report the error
-	if execErr != nil && resultContent == "" {
-		resultContent = fmt.Sprintf("Error executing scheduled job '%s': %v", job.Name, execErr)
-	}
+	result, execErr := sess.RunInteractionWithOptions(ctx, requestID, wrappedMessage, session.RunInteractionOptions{
+		EmitEvents: false,
+	})
+	resultContent := lastAssistantContent(result.Messages)
 
 	// Close the session
 	if err := sess.Close(); err != nil {
@@ -272,23 +217,45 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 			logger.BuildMetadata("job_id", job.ID, "error", err))
 	}
 
-	// If we got no content at all, don't broadcast
+	// If there was an execution error, report it
+	if execErr != nil {
+		logger.Warning("scheduler: job execution failed without notification",
+			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "error", execErr))
+		return
+	}
+
+	resultContent = strings.TrimSpace(resultContent)
+
+	// If we got no content at all, nothing to do
 	if resultContent == "" {
 		logger.Debug("scheduler: empty job result",
 			logger.BuildMetadata("job_id", job.ID))
 		return
 	}
 
+	if !strings.HasPrefix(resultContent, cronAlertPrefix) {
+		logger.Warning("scheduler: ignoring non-alert cron output",
+			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "raw", resultContent))
+		return
+	}
+
+	alertMessage := strings.TrimSpace(strings.TrimPrefix(resultContent, cronAlertPrefix))
+	if alertMessage == "" {
+		logger.Warning("scheduler: ignoring empty alert payload",
+			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
+		return
+	}
+
 	// Publish CronJobResult event (no session ID = broadcast to all clients)
 	logger.Debug("scheduler: publishing job result",
-		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "result_length", len(resultContent)))
+		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(alertMessage)))
 
 	event_bus.Publish(event.Event{
 		Type: event.CronJobResult,
 		Payload: event.CronJobResultPayload{
 			JobID:     job.ID,
 			JobName:   job.Name,
-			Content:   resultContent,
+			Content:   alertMessage,
 			Timestamp: time.Now(),
 		},
 		// Explicitly broadcast to all clients (not session-targeted)
@@ -296,22 +263,15 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 		RequestID: job.ID, // Use job ID for correlation
 	})
 
-	logger.Info("scheduler: job completed",
+	logger.Info("scheduler: job completed with alert",
 		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
 }
 
-// publishError broadcasts an error result for a job.
-func (s *Scheduler) publishError(job *cron.CronJob, execErr error) {
-	content := fmt.Sprintf("Scheduled job '%s' failed: %v", job.Name, execErr)
-	event_bus.Publish(event.Event{
-		Type: event.CronJobResult,
-		Payload: event.CronJobResultPayload{
-			JobID:     job.ID,
-			JobName:   job.Name,
-			Content:   content,
-			Timestamp: time.Now(),
-		},
-		SessionID: "",
-		RequestID: job.ID,
-	})
+func lastAssistantContent(messages []agentcontext.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == agentcontext.RoleAssistant {
+			return messages[i].Content
+		}
+	}
+	return ""
 }
