@@ -7,7 +7,6 @@ import (
 
 	"valinor/internal/config"
 	"valinor/internal/logger"
-	"valinor/internal/memory"
 	"valinor/internal/sandbox"
 )
 
@@ -56,7 +55,7 @@ func buildTool(name, description string, parameters map[string]any, exec func(js
 }
 
 // BuildTools returns base tools plus any provider-specific tools for the run.
-func BuildTools(rt *sandbox.Runtime, memoryService memory.Service, workspaceDir, sessionID string, providerCfg config.ProviderConfig, model string) ([]Tool, error) {
+func BuildTools(rt *sandbox.Runtime, workspaceDir string, providerCfg config.ProviderConfig, model string) ([]Tool, error) {
 	result := []Tool{
 		buildTool(readFileName, "Read the contents of a file. Path is relative to the workspace root.", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }),
 		buildTool(writeFileName, "Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }),
@@ -69,13 +68,6 @@ func BuildTools(rt *sandbox.Runtime, memoryService memory.Service, workspaceDir,
 		buildTool(cronAddName, "Create a new scheduled cron job that runs at a specified interval or one-time. Use for recurring tasks like reminders, periodic checks, or scheduled reports. Returns the created job ID.", cronAddParams(), cronAddExec),
 		buildTool(cronListName, "List scheduled cron jobs. Shows job names, IDs, schedules, and next run times. Use to see what tasks are scheduled or to find a job ID for removal.", cronListParams(), cronListExec),
 		buildTool(cronRemoveName, "Remove a scheduled cron job permanently by its ID. Use cron_list first to find the job ID. This cannot be undone.", cronRemoveParams(), cronRemoveExec),
-		// Memory tools
-		buildTool(memorySaveName, "Save a durable workspace memory when the information is likely to matter in future conversations, such as preferences, project conventions, constraints, or important facts. Do not store secrets or temporary tool output.", memorySaveParams(), func(a json.RawMessage) (string, error) {
-			return memorySaveExec(memoryService, workspaceDir, sessionID, a)
-		}),
-		buildTool(memorySearchName, "Search workspace memories before answering questions that depend on prior preferences, project decisions, recurring constraints, or facts saved earlier.", memorySearchParams(), func(a json.RawMessage) (string, error) { return memorySearchExec(memoryService, workspaceDir, a) }),
-		buildTool(memoryListName, "List stored workspace memories, optionally filtered by kind or tags. Use when you need to inspect what durable context is already saved.", memoryListParams(), func(a json.RawMessage) (string, error) { return memoryListExec(memoryService, workspaceDir, a) }),
-		buildTool(memoryDeleteName, "Delete an incorrect or outdated workspace memory by ID to avoid stale or contradictory future recall.", memoryDeleteParams(), func(a json.RawMessage) (string, error) { return memoryDeleteExec(memoryService, workspaceDir, a) }),
 	}
 
 	providerTools, err := buildProviderTools(providerCfg, model)

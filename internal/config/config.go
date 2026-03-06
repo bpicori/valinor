@@ -287,15 +287,6 @@ func (c Config) ResolveCronDir() (string, error) {
 	return filepath.Join(baseDir, "cron"), nil
 }
 
-// ResolveMemoryDir returns the absolute path for durable memory storage.
-func (c Config) ResolveMemoryDir() (string, error) {
-	baseDir, err := c.ResolveValinorDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(baseDir, "memory"), nil
-}
-
 // GatewayWebSocketURL returns the WebSocket URL for the gateway.
 func (c Config) GatewayWebSocketURL() string {
 	return fmt.Sprintf("ws://%s:%d%s", c.GatewayHost, c.GatewayPort, c.GatewayPath)

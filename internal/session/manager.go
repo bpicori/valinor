@@ -12,7 +12,6 @@ import (
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
-	"valinor/internal/memory"
 	"valinor/internal/sandbox"
 
 	"github.com/google/uuid"
@@ -45,7 +44,6 @@ type Manager struct {
 	config        config.Config
 	runtime       *sandbox.Runtime // shared sandbox runtime for all sessions
 	metadataStore MetadataRepository
-	memoryService memory.Service
 }
 
 // Message history lifecycle:
@@ -54,7 +52,7 @@ type Manager struct {
 // - On resume, persisted messages are loaded and system prompt is rebuilt.
 
 // NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
-func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime, memoryService memory.Service) (*Manager, error) {
+func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime) (*Manager, error) {
 	metadataStore, err := NewSQLiteMetadataRepository(sessionDir)
 	if err != nil {
 		return nil, fmt.Errorf("create session metadata repository: %w", err)
@@ -65,7 +63,6 @@ func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.
 		config:        cfg,
 		runtime:       rt,
 		metadataStore: metadataStore,
-		memoryService: memoryService,
 	}, nil
 }
 
@@ -138,7 +135,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 	}
 
 	providerCfg := m.config.Providers[providerName]
-	agentCtx, err := agentcontext.New(workspaceDir, id, m.runtime, m.memoryService, providerCfg, model)
+	agentCtx, err := agentcontext.New(workspaceDir, m.runtime, providerCfg, model)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -150,7 +147,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
 
-	sess, err := NewSession(meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime, m.memoryService)
+	sess, err := NewSession(meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -213,7 +210,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	meta.Model = model
 
 	providerCfg := m.config.Providers[providerName]
-	agentCtx, err := agentcontext.Resume(workspaceDir, id, m.runtime, m.memoryService, providerCfg, model, messages)
+	agentCtx, err := agentcontext.Resume(workspaceDir, m.runtime, providerCfg, model, messages)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -224,7 +221,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	_ = store.SaveMetadata(ctx, *meta)
 	_ = store.SaveMessages(ctx, agentCtx.Messages())
 
-	sess, err := NewSession(*meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime, m.memoryService)
+	sess, err := NewSession(*meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)

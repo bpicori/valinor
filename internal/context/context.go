@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"valinor/internal/logger"
@@ -13,6 +14,13 @@ import (
 
 const IdentityFile = "IDENTITY.md"
 const SkillsDir = "skills"
+
+const MemoryFile = "MEMORY.md"
+const MemoryDir = "memory"
+const MemoryDailyDir = "daily"
+const MaxMemoryMainChars = 15000
+const MaxMemoryDailyChars = 5000
+const MemoryDailyLookbackDays = 7
 
 var (
 	skillHeaderRE      = regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---`)
@@ -93,9 +101,14 @@ func BuildSystemPrompt(workspaceDir string) (string, error) {
 		logger.Error("context build skills failed", logger.BuildMetadata("workspace_dir", workspaceDir, "error", err))
 		return "", fmt.Errorf("load skills: %w", err)
 	}
+	memoryContent, err := LoadMemory(workspaceDir)
+	if err != nil {
+		logger.Error("context build memory failed", logger.BuildMetadata("workspace_dir", workspaceDir, "error", err))
+		return "", fmt.Errorf("load memory: %w", err)
+	}
 
-	prompt := composeSystemPrompt(SystemPrompt(), identity, skills)
-	logger.Info("context build success", logger.BuildMetadata("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills)))
+	prompt := composeSystemPrompt(SystemPrompt(), identity, skills, memoryContent)
+	logger.Info("context build success", logger.BuildMetadata("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills), "memory_size", len(memoryContent)))
 	return prompt, nil
 }
 
@@ -151,6 +164,97 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 	return out, nil
 }
 
+// LoadMemory reads MEMORY.md and recent daily memory files from the workspace.
+// Returns combined content suitable for injection into the system prompt.
+// Missing files/directories are silently ignored (empty string returned).
+func LoadMemory(workspaceDir string) (string, error) {
+	var sb strings.Builder
+
+	// Load main MEMORY.md
+	mainPath := filepath.Join(workspaceDir, MemoryFile)
+	mainData, err := os.ReadFile(mainPath)
+	if err != nil && !os.IsNotExist(err) {
+		logger.Error("context load memory read failed", logger.BuildMetadata("path", mainPath, "error", err))
+		return "", fmt.Errorf("read memory file: %w", err)
+	}
+	mainContent := strings.TrimSpace(string(mainData))
+	if len(mainContent) > MaxMemoryMainChars {
+		mainContent = mainContent[:MaxMemoryMainChars] + "\n\n... (truncated)"
+	}
+	if mainContent != "" {
+		sb.WriteString("### MEMORY.md\n\n")
+		sb.WriteString(mainContent)
+		sb.WriteString("\n\n")
+	}
+
+	// Load recent daily memory files (last N days, newest first)
+	dailyDir := filepath.Join(workspaceDir, MemoryDir, MemoryDailyDir)
+	dailyContent := loadRecentDailyMemories(dailyDir, MemoryDailyLookbackDays, MaxMemoryDailyChars)
+	if dailyContent != "" {
+		sb.WriteString("### Recent Daily Memories\n\n")
+		sb.WriteString(dailyContent)
+	}
+
+	return strings.TrimSpace(sb.String()), nil
+}
+
+// loadRecentDailyMemories reads up to lookbackDays recent daily memory files,
+// collecting content up to maxChars total. Files are named YYYY-MM-DD.md and
+// sorted newest-first. Missing directory returns empty string.
+func loadRecentDailyMemories(dailyDir string, lookbackDays int, maxChars int) string {
+	entries, err := os.ReadDir(dailyDir)
+	if err != nil {
+		return ""
+	}
+
+	// Collect .md files, sort descending (newest first)
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".md") {
+			files = append(files, name)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(files)))
+
+	var sb strings.Builder
+	totalChars := 0
+	count := 0
+	for _, name := range files {
+		if count >= lookbackDays {
+			break
+		}
+		data, err := os.ReadFile(filepath.Join(dailyDir, name))
+		if err != nil {
+			continue
+		}
+		content := strings.TrimSpace(string(data))
+		if content == "" {
+			continue
+		}
+		if totalChars+len(content) > maxChars {
+			remaining := maxChars - totalChars
+			if remaining > 100 {
+				content = content[:remaining] + "\n... (truncated)"
+			} else {
+				break
+			}
+		}
+		dateName := strings.TrimSuffix(name, filepath.Ext(name))
+		sb.WriteString("#### ")
+		sb.WriteString(dateName)
+		sb.WriteString("\n\n")
+		sb.WriteString(content)
+		sb.WriteString("\n\n")
+		totalChars += len(content)
+		count++
+	}
+	return sb.String()
+}
+
 // loadNestedSkill attempts to load a SKILL.md file from a nested directory.
 // Returns nil if no valid skill is found.
 func loadNestedSkill(skillsDir, subdir string) *Skill {
@@ -177,7 +281,7 @@ func loadNestedSkill(skillsDir, subdir string) *Skill {
 	}
 }
 
-func composeSystemPrompt(basePrompt, identity string, skills []Skill) string {
+func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory string) string {
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(basePrompt))
 
@@ -202,6 +306,14 @@ func composeSystemPrompt(basePrompt, identity string, skills []Skill) string {
 			sb.WriteString(skill.Path)
 			sb.WriteString(")\n")
 		}
+	}
+
+	sb.WriteString("\n## LoadedMemory\n")
+	if strings.TrimSpace(memory) == "" {
+		sb.WriteString("No memory files found. Use write_file to create MEMORY.md when you have important information to remember.\n")
+	} else {
+		sb.WriteString(memory)
+		sb.WriteString("\n")
 	}
 
 	return strings.TrimSpace(sb.String())

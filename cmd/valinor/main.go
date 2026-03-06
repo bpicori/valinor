@@ -12,7 +12,6 @@ import (
 	"valinor/internal/cron"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
-	"valinor/internal/memory"
 	"valinor/internal/sandbox"
 	"valinor/internal/scheduler"
 	"valinor/internal/session"
@@ -89,10 +88,6 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("resolve cron dir: %w", err)
 	}
-	memoryDir, err := cfg.ResolveMemoryDir()
-	if err != nil {
-		return fmt.Errorf("resolve memory dir: %w", err)
-	}
 
 	// Ensure workspace directory exists (required for sandbox operations)
 	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
@@ -131,15 +126,8 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		logger.Info("cron service initialized", logger.BuildMetadata("dir", cronDir))
 	}
 
-	memoryRepo, err := memory.NewSQLiteRepository(memoryDir)
-	if err != nil {
-		return fmt.Errorf("create memory repository: %w", err)
-	}
-	memoryService := memory.NewService(memoryRepo)
-	logger.Info("memory service initialized", logger.BuildMetadata("dir", memoryDir))
-
 	// Initialize core components
-	sm, err := session.NewManager(sessionsDir, workspaceDir, cfg, rt, memoryService)
+	sm, err := session.NewManager(sessionsDir, workspaceDir, cfg, rt)
 	if err != nil {
 		return fmt.Errorf("create session manager: %w", err)
 	}
