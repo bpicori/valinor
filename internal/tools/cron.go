@@ -43,7 +43,7 @@ func cronAddParams() map[string]any {
 			},
 			"message": map[string]any{
 				"type":        "string",
-				"description": "What to check on each run and when to alert. Be specific about the condition to evaluate and what should trigger a notification. Scheduled background runs should return a message only when the alert condition is met, and otherwise stay silent.",
+				"description": "The instruction to execute on each scheduled run. Must be self-contained and specific. For conditional checks (e.g. price alerts, status monitoring), include the exact condition and instruct to only respond when the condition is met. For recurring reports or tasks, describe what information to gather or action to perform.",
 			},
 			"schedule_kind": map[string]any{
 				"type":        "string",

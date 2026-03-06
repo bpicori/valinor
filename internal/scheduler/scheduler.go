@@ -35,22 +35,12 @@ type Scheduler struct {
 	running bool
 }
 
-// cronPromptWrapper is the system instruction prepended to scheduled job prompts.
-// It instructs the model to return alert text only when the condition is met.
-const cronPromptWrapper = `You are a scheduled monitoring agent. Your task is to evaluate a condition and decide whether to alert.
-
-INSTRUCTIONS:
-1. Evaluate the user's request below
-2. Decide if the condition is met (e.g., price threshold reached, status changed, etc.)
-3. If the condition is met, return ONLY one line that starts with "ALERT: " followed by the alert message
-4. If the condition is not met, return an empty response with no text at all
-5. Never explain why there is no alert
-6. Do not include JSON, markdown wrappers, explanations, status messages, or any extra text
-
-USER REQUEST:
-%s`
-
-const cronAlertPrefix = "ALERT: "
+// buildJobMessage wraps the cron job message with identifying metadata.
+// The agent runs with full context (system prompt, skills, memory, tools) and
+// decides based on the job message whether to respond or stay silent.
+func buildJobMessage(job *cron.CronJob) string {
+	return fmt.Sprintf("[Scheduled Job: %q | ID: %s]\n\n%s", job.Name, job.ID, job.Message)
+}
 
 // New creates a new scheduler with the given cron service.
 func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.CreateSessionOptions, cfg config.SchedulerConfig) *Scheduler {
@@ -203,10 +193,10 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	// Generate request ID for this execution
 	requestID := uuid.New().String()
 
-	// Wrap the job message with the cron decision contract
-	wrappedMessage := fmt.Sprintf(cronPromptWrapper, job.Message)
+	// Build the job message with metadata for the agent
+	jobMessage := buildJobMessage(job)
 
-	result, execErr := sess.RunInteractionWithOptions(ctx, requestID, wrappedMessage, session.RunInteractionOptions{
+	result, execErr := sess.RunInteractionWithOptions(ctx, requestID, jobMessage, session.RunInteractionOptions{
 		EmitEvents: false,
 	})
 	resultContent := lastAssistantContent(result.Messages)
@@ -226,36 +216,23 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 
 	resultContent = strings.TrimSpace(resultContent)
 
-	// If we got no content at all, nothing to do
+	// If we got no content at all, the agent decided not to notify (condition not met)
 	if resultContent == "" {
-		logger.Debug("scheduler: empty job result",
-			logger.BuildMetadata("job_id", job.ID))
-		return
-	}
-
-	if !strings.HasPrefix(resultContent, cronAlertPrefix) {
-		logger.Warning("scheduler: ignoring non-alert cron output",
-			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "raw", resultContent))
-		return
-	}
-
-	alertMessage := strings.TrimSpace(strings.TrimPrefix(resultContent, cronAlertPrefix))
-	if alertMessage == "" {
-		logger.Warning("scheduler: ignoring empty alert payload",
+		logger.Debug("scheduler: job completed with no output (condition not met or silent run)",
 			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
 		return
 	}
 
 	// Publish CronJobResult event (no session ID = broadcast to all clients)
 	logger.Debug("scheduler: publishing job result",
-		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(alertMessage)))
+		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(resultContent)))
 
 	event_bus.Publish(event.Event{
 		Type: event.CronJobResult,
 		Payload: event.CronJobResultPayload{
 			JobID:     job.ID,
 			JobName:   job.Name,
-			Content:   alertMessage,
+			Content:   resultContent,
 			Timestamp: time.Now(),
 		},
 		// Explicitly broadcast to all clients (not session-targeted)
@@ -263,7 +240,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 		RequestID: job.ID, // Use job ID for correlation
 	})
 
-	logger.Info("scheduler: job completed with alert",
+	logger.Info("scheduler: job completed with notification",
 		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
 }
 
