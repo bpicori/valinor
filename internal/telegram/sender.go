@@ -31,6 +31,11 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker
 		}
 
 		_, err := b.client.EditMessageText(b.ctx, req)
+		if shouldRetryWithPlainText(err, result) {
+			req.Text = result.FallbackText
+			req.ParseMode = ""
+			_, err = b.client.EditMessageText(b.ctx, req)
+		}
 		if err != nil {
 			// If editing fails (e.g., message too old), fall back to sending new message
 			logger.Warning("telegram bot: edit failed, sending new message",
@@ -56,6 +61,11 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, tracker *messageTracker, res
 	}
 
 	msg, err := b.client.SendMessage(b.ctx, req)
+	if shouldRetryWithPlainText(err, result) {
+		req.Text = result.FallbackText
+		req.ParseMode = ""
+		msg, err = b.client.SendMessage(b.ctx, req)
+	}
 	if err != nil {
 		return fmt.Errorf("send message to chat %d: %w", identity.ChatID, err)
 	}
@@ -98,4 +108,13 @@ func (b *Bot) sendTypingAction(identity ChatIdentity, tracker *messageTracker) e
 
 	tracker.markTypingSent(now, typingActionInterval)
 	return nil
+}
+
+func shouldRetryWithPlainText(err error, result *RenderResult) bool {
+	if err == nil || result == nil || result.ParseMode == "" || result.FallbackText == "" {
+		return false
+	}
+
+	apiErr, ok := err.(*APIResponse)
+	return ok && apiErr.IsParseError()
 }

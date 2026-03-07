@@ -3,6 +3,7 @@ package telegram
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"valinor/internal/event"
 	"valinor/internal/gateway"
@@ -13,9 +14,10 @@ const MaxTelegramMessageLength = 4096
 
 // RenderResult contains the rendered Telegram message.
 type RenderResult struct {
-	Text        string
-	ParseMode   string
-	ReplyMarkup *InlineKeyboardMarkup
+	Text         string
+	ParseMode    string
+	FallbackText string
+	ReplyMarkup  *InlineKeyboardMarkup
 	// IsStreaming indicates this is a streaming delta that should edit
 	// the existing streaming message if one exists
 	IsStreaming bool
@@ -201,22 +203,30 @@ func (r *Renderer) renderCronJobResult(payload interface{}) *RenderResult {
 }
 
 // RenderFinalContent renders the final assistant content as a single Telegram message.
-// Converts standard markdown to Telegram MarkdownV2 format.
+// Converts standard markdown to Telegram-safe HTML with a plain-text fallback.
 func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 	if content == "" {
 		return nil
 	}
 
-	text := content
-	if len(text) > MaxTelegramMessageLength {
-		text = text[:MaxTelegramMessageLength-3] + "..."
+	formatted := FormatTelegramMarkdown(content)
+	plainText := truncateTelegramText(formatted.PlainText, MaxTelegramMessageLength)
+	if plainText == "" {
+		plainText = truncateTelegramText(content, MaxTelegramMessageLength)
 	}
 
-	return &RenderResult{
-		Text:      ConvertMarkdownToTelegram(text),
-		ParseMode: "MarkdownV2",
-		IsFinal:   true,
+	result := &RenderResult{
+		Text:         plainText,
+		FallbackText: plainText,
+		IsFinal:      true,
 	}
+
+	if formatted.HTML != "" && utf8.RuneCountInString(formatted.HTML) <= MaxTelegramMessageLength {
+		result.Text = formatted.HTML
+		result.ParseMode = "HTML"
+	}
+
+	return result
 }
 
 // RenderStatus renders the current session status for the /status command.
@@ -242,4 +252,19 @@ func (r *Renderer) RenderStatus(sessionKey, provider, model string) *RenderResul
 		Text:      text,
 		ParseMode: "MarkdownV2",
 	}
+}
+
+func truncateTelegramText(text string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-3]) + "..."
 }

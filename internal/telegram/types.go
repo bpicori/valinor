@@ -4,6 +4,7 @@ package telegram
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // Update represents a Telegram update received via getUpdates.
@@ -195,6 +196,17 @@ func (r *APIResponse) IsRecoverableError() bool {
 		return true
 	}
 	return false
+}
+
+// IsParseError returns true when Telegram rejected the payload because it could
+// not parse the provided markup entities.
+func (r *APIResponse) IsParseError() bool {
+	if r == nil || r.OK || r.ErrorCode != 400 {
+		return false
+	}
+
+	description := strings.ToLower(r.Description)
+	return strings.Contains(description, "can't parse entities")
 }
 
 // Error implements the error interface.

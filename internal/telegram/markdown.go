@@ -1,37 +1,17 @@
-// Package telegram provides Markdown to Telegram MarkdownV2 conversion.
+// Package telegram provides markdown rendering helpers for Telegram.
 package telegram
 
 import (
 	"fmt"
-	"regexp"
+	stdhtml "html"
+	"net/url"
 	"strings"
-)
 
-// Pre-compiled regexps for performance.
-var (
-	// Placeholder removal
-	placeholderRegex = regexp.MustCompile(`ELEMENTPLACEHOLDER\d+|CODEBLOCKPLACEHOLDER\d+|INLINECODEPLACEHOLDER\d+|LINKPLACEHOLDER\d+|BOLDPLACEHOLDER\d+|ITALICPLACEHOLDER\d+|STRIKEPLACEHOLDER\d+`)
-
-	// Element detection
-	codeBlockRegex  = regexp.MustCompile("```(?s:.*?)```")
-	inlineCodeRegex = regexp.MustCompile("`[^`]+`")
-	linkRegex       = regexp.MustCompile(`\[[^\]]+\]\([^\)]+\)`)
-
-	// URL wrapping
-	urlRegex = regexp.MustCompile(`\bhttps?://[a-zA-Z0-9-.]+(.[a-zA-Z]{2,})(:[0-9]{1,5})?(/[a-zA-Z0-9-_.~%/?#=&+]*)?\b`)
-
-	// Style conversions
-	boldRegex           = regexp.MustCompile(`\*\*(.*?)\*\*`)
-	boldUnderscore      = regexp.MustCompile(`__(.*?)__`)
-	italicAsterisk      = regexp.MustCompile(`\*(.*?)\*`)
-	italicUnderscore    = regexp.MustCompile(`_(.*?)_`)
-	strikeRegex         = regexp.MustCompile(`~~(.*?)~~`)
-
-	// Code block language extraction
-	codeBlockLangRegex = regexp.MustCompile("(?s)```([a-zA-Z]*)\\n(.*?)\\n```")
-
-	// Inline code extraction
-	inlineCodeExtractRegex = regexp.MustCompile("`([^`]+)`")
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	extensionast "github.com/yuin/goldmark/extension/ast"
+	gmtext "github.com/yuin/goldmark/text"
 )
 
 // mdReplacer escapes special characters for Telegram MarkdownV2.
@@ -57,6 +37,16 @@ var mdReplacer = strings.NewReplacer(
 	"!", "\\!",
 )
 
+type telegramFormattedMarkdown struct {
+	HTML      string
+	PlainText string
+}
+
+type telegramRenderState struct {
+	sb        strings.Builder
+	listDepth int
+}
+
 // EscapeMarkdown escapes text for Telegram's MarkdownV2 format.
 // This escapes all special characters and should be used for plain text
 // that shouldn't have any markdown formatting interpreted.
@@ -76,239 +66,333 @@ func EscapeMarkdownf(format string, args ...interface{}) string {
 	return fmt.Sprintf(text, args...)
 }
 
-// wrapLinksInMarkdown wraps unwrapped URLs in markdown link format.
-func wrapLinksInMarkdown(text string) string {
-	return urlRegex.ReplaceAllStringFunc(text, func(link string) string {
-		if strings.Contains(link, "](http") || strings.Contains(link, "[http") {
-			return link
+// FormatTelegramMarkdown parses markdown with goldmark and renders a Telegram-safe
+// HTML subset plus a plain-text fallback that can be used when Telegram rejects
+// formatted content.
+func FormatTelegramMarkdown(md string) telegramFormattedMarkdown {
+	parser := goldmark.New(
+		goldmark.WithExtensions(extension.GFM),
+	)
+	source := []byte(md)
+	doc := parser.Parser().Parse(gmtext.NewReader(source))
+
+	return telegramFormattedMarkdown{
+		HTML:      strings.TrimSpace(renderTelegramHTML(doc, source)),
+		PlainText: strings.TrimSpace(renderTelegramPlainText(doc, source)),
+	}
+}
+
+func renderTelegramHTML(node ast.Node, source []byte) string {
+	state := &telegramRenderState{}
+	renderTelegramHTMLNode(node, source, state)
+	return state.sb.String()
+}
+
+func renderTelegramHTMLNode(node ast.Node, source []byte, state *telegramRenderState) {
+	switch n := node.(type) {
+	case *ast.Document:
+		renderTelegramHTMLChildren(node, source, state)
+	case *ast.Heading:
+		state.sb.WriteString("<b>")
+		renderTelegramHTMLChildren(node, source, state)
+		state.sb.WriteString("</b>")
+		writeHTMLBlockBreak(node, state)
+	case *ast.Paragraph:
+		renderTelegramHTMLChildren(node, source, state)
+		writeHTMLBlockBreak(node, state)
+	case *ast.Text:
+		state.sb.WriteString(escapeTelegramHTML(string(n.Value(source))))
+		if n.HardLineBreak() || n.SoftLineBreak() {
+			state.sb.WriteString("\n")
 		}
-		return fmt.Sprintf("[%s](%s)", link, link)
-	})
+	case *ast.String:
+		state.sb.WriteString(escapeTelegramHTML(string(n.Value)))
+	case *ast.Emphasis:
+		tag := "i"
+		if n.Level >= 2 {
+			tag = "b"
+		}
+		state.sb.WriteString("<")
+		state.sb.WriteString(tag)
+		state.sb.WriteString(">")
+		renderTelegramHTMLChildren(node, source, state)
+		state.sb.WriteString("</")
+		state.sb.WriteString(tag)
+		state.sb.WriteString(">")
+	case *extensionast.Strikethrough:
+		state.sb.WriteString("<s>")
+		renderTelegramHTMLChildren(node, source, state)
+		state.sb.WriteString("</s>")
+	case *ast.CodeSpan:
+		state.sb.WriteString("<code>")
+		state.sb.WriteString(escapeTelegramHTML(renderTelegramPlainText(node, source)))
+		state.sb.WriteString("</code>")
+	case *ast.FencedCodeBlock:
+		state.sb.WriteString("<pre>")
+		state.sb.WriteString(escapeTelegramHTML(string(n.Text(source))))
+		state.sb.WriteString("</pre>")
+		writeHTMLBlockBreak(node, state)
+	case *ast.CodeBlock:
+		state.sb.WriteString("<pre>")
+		state.sb.WriteString(escapeTelegramHTML(string(n.Text(source))))
+		state.sb.WriteString("</pre>")
+		writeHTMLBlockBreak(node, state)
+	case *ast.Blockquote:
+		quote := strings.Trim(renderTelegramPlainText(node, source), "\n")
+		if quote != "" {
+			state.sb.WriteString(escapeTelegramHTML(prefixLines(quote, "> ")))
+			writeHTMLBlockBreak(node, state)
+		}
+	case *ast.List:
+		renderTelegramHTMLList(n, source, state)
+	case *ast.Link:
+		dest := sanitizeTelegramURL(string(n.Destination))
+		if dest == "" {
+			renderTelegramHTMLChildren(node, source, state)
+			return
+		}
+		state.sb.WriteString("<a href=\"")
+		state.sb.WriteString(escapeTelegramHTMLAttr(dest))
+		state.sb.WriteString("\">")
+		renderTelegramHTMLChildren(node, source, state)
+		state.sb.WriteString("</a>")
+	case *ast.AutoLink:
+		dest := sanitizeTelegramURL(string(n.URL(source)))
+		label := string(n.Label(source))
+		if dest == "" {
+			state.sb.WriteString(escapeTelegramHTML(label))
+			return
+		}
+		state.sb.WriteString("<a href=\"")
+		state.sb.WriteString(escapeTelegramHTMLAttr(dest))
+		state.sb.WriteString("\">")
+		state.sb.WriteString(escapeTelegramHTML(label))
+		state.sb.WriteString("</a>")
+	case *ast.RawHTML:
+		state.sb.WriteString(escapeTelegramHTML(string(n.Text(source))))
+	case *ast.HTMLBlock:
+		state.sb.WriteString(escapeTelegramHTML(string(n.Text(source))))
+		writeHTMLBlockBreak(node, state)
+	case *ast.ThematicBreak:
+		state.sb.WriteString("----")
+		writeHTMLBlockBreak(node, state)
+	case *ast.Image:
+		alt := strings.TrimSpace(renderTelegramPlainText(node, source))
+		if alt != "" {
+			state.sb.WriteString(escapeTelegramHTML(alt))
+		}
+	default:
+		renderTelegramHTMLChildren(node, source, state)
+	}
 }
 
-// removePlaceholders removes any existing placeholders from text.
-func removePlaceholders(text string) string {
-	return placeholderRegex.ReplaceAllString(text, "")
+func renderTelegramHTMLChildren(node ast.Node, source []byte, state *telegramRenderState) {
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		renderTelegramHTMLNode(child, source, state)
+	}
 }
 
-// addPlaceholders replaces code blocks, inline code, and links with placeholders.
-func addPlaceholders(text string, elements map[string]string) (string, map[string]string) {
-	elementsRegex := regexp.MustCompile(fmt.Sprintf("%s|%s|%s", codeBlockRegex.String(), inlineCodeRegex.String(), linkRegex.String()))
+func renderTelegramHTMLList(list *ast.List, source []byte, state *telegramRenderState) {
+	index := list.Start
+	if index == 0 {
+		index = 1
+	}
 
-	matches := elementsRegex.FindAllString(text, -1)
-	for i, match := range matches {
-		placeholder := fmt.Sprintf("ELEMENTPLACEHOLDER%d", len(elements)+i)
+	for item := list.FirstChild(); item != nil; item = item.NextSibling() {
+		indent := strings.Repeat("  ", state.listDepth)
+		marker := "• "
+		if list.IsOrdered() {
+			marker = fmt.Sprintf("%d. ", index)
+			index++
+		}
 
-		// Determine element type and add appropriate marker
+		state.sb.WriteString(indent)
+		state.sb.WriteString(marker)
+
+		itemState := &telegramRenderState{listDepth: state.listDepth + 1}
+		renderTelegramHTMLChildren(item, source, itemState)
+		body := strings.Trim(itemState.sb.String(), "\n")
+		state.sb.WriteString(indentContinuation(body, indent+strings.Repeat(" ", len(marker))))
+
+		if item.NextSibling() != nil {
+			state.sb.WriteString("\n")
+		}
+	}
+
+	writeHTMLBlockBreak(list, state)
+}
+
+func renderTelegramPlainText(node ast.Node, source []byte) string {
+	state := &telegramRenderState{}
+	renderTelegramPlainTextNode(node, source, state)
+	return state.sb.String()
+}
+
+func renderTelegramPlainTextNode(node ast.Node, source []byte, state *telegramRenderState) {
+	switch n := node.(type) {
+	case *ast.Document:
+		renderTelegramPlainTextChildren(node, source, state)
+	case *ast.Heading:
+		renderTelegramPlainTextChildren(node, source, state)
+		writePlainBlockBreak(node, state)
+	case *ast.Paragraph:
+		renderTelegramPlainTextChildren(node, source, state)
+		writePlainBlockBreak(node, state)
+	case *ast.Text:
+		state.sb.WriteString(string(n.Value(source)))
+		if n.HardLineBreak() || n.SoftLineBreak() {
+			state.sb.WriteString("\n")
+		}
+	case *ast.String:
+		state.sb.WriteString(string(n.Value))
+	case *ast.Emphasis:
+		renderTelegramPlainTextChildren(node, source, state)
+	case *extensionast.Strikethrough:
+		renderTelegramPlainTextChildren(node, source, state)
+	case *ast.CodeSpan:
+		state.sb.WriteString(renderTelegramPlainTextChildrenToString(node, source))
+	case *ast.FencedCodeBlock:
+		state.sb.WriteString(string(n.Text(source)))
+		writePlainBlockBreak(node, state)
+	case *ast.CodeBlock:
+		state.sb.WriteString(string(n.Text(source)))
+		writePlainBlockBreak(node, state)
+	case *ast.Blockquote:
+		quote := strings.Trim(renderTelegramPlainTextChildrenToString(node, source), "\n")
+		if quote != "" {
+			state.sb.WriteString(prefixLines(quote, "> "))
+			writePlainBlockBreak(node, state)
+		}
+	case *ast.List:
+		renderTelegramPlainTextList(n, source, state)
+	case *ast.Link:
+		label := strings.TrimSpace(renderTelegramPlainTextChildrenToString(node, source))
+		dest := sanitizeTelegramURL(string(n.Destination))
 		switch {
-		case codeBlockRegex.MatchString(match):
-			placeholder = fmt.Sprintf("CODEBLOCKPLACEHOLDER%d", len(elements)+i)
-		case inlineCodeRegex.MatchString(match):
-			placeholder = fmt.Sprintf("INLINECODEPLACEHOLDER%d", len(elements)+i)
-		case linkRegex.MatchString(match):
-			placeholder = fmt.Sprintf("LINKPLACEHOLDER%d", len(elements)+i)
+		case label == "":
+			state.sb.WriteString(dest)
+		case dest == "":
+			state.sb.WriteString(label)
+		case label == dest:
+			state.sb.WriteString(label)
+		default:
+			state.sb.WriteString(label)
+			state.sb.WriteString(" (")
+			state.sb.WriteString(dest)
+			state.sb.WriteString(")")
 		}
-
-		elements[placeholder] = match
-		text = strings.Replace(text, match, placeholder, 1)
+	case *ast.AutoLink:
+		state.sb.WriteString(string(n.URL(source)))
+	case *ast.RawHTML:
+		state.sb.WriteString(string(n.Text(source)))
+	case *ast.HTMLBlock:
+		state.sb.WriteString(string(n.Text(source)))
+		writePlainBlockBreak(node, state)
+	case *ast.ThematicBreak:
+		state.sb.WriteString("----")
+		writePlainBlockBreak(node, state)
+	case *ast.Image:
+		alt := strings.TrimSpace(renderTelegramPlainTextChildrenToString(node, source))
+		if alt != "" {
+			state.sb.WriteString(alt)
+		}
+	default:
+		renderTelegramPlainTextChildren(node, source, state)
 	}
-	return text, elements
 }
 
-// processPlaceholders restores placeholders with properly escaped content.
-func processPlaceholders(md string, elements map[string]string) string {
-	for placeholder, element := range elements {
-		if strings.HasPrefix(placeholder, "LINKPLACEHOLDER") {
-			parts := strings.SplitN(element, "](", 2)
-			linkText := parts[0][1:]
-			linkURL := parts[1][:len(parts[1])-1]
-
-			linkText = EscapeMarkdown(linkText)
-			element = "[" + linkText + "](" + linkURL + ")"
-		}
-
-		if strings.HasPrefix(placeholder, "CODEBLOCKPLACEHOLDER") {
-			element = codeBlockLangRegex.ReplaceAllStringFunc(element, func(block string) string {
-				matches := codeBlockLangRegex.FindStringSubmatch(block)
-				if len(matches) > 2 {
-					language := matches[1]
-					return fmt.Sprintf("```%s\n%s\n```", language, escapeTelegramMarkdownV2CodeBlocks(matches[2]))
-				}
-				return block
-			})
-		}
-
-		if strings.HasPrefix(placeholder, "INLINECODEPLACEHOLDER") {
-			element = inlineCodeExtractRegex.ReplaceAllStringFunc(element, func(block string) string {
-				matches := inlineCodeExtractRegex.FindStringSubmatch(block)
-				if len(matches) > 1 {
-					return fmt.Sprintf("`%s`", escapeTelegramMarkdownV2CodeBlocks(matches[1]))
-				}
-				return block
-			})
-		}
-
-		md = strings.Replace(md, placeholder, element, 1)
+func renderTelegramPlainTextChildren(node ast.Node, source []byte, state *telegramRenderState) {
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		renderTelegramPlainTextNode(child, source, state)
 	}
-
-	return md
 }
 
-// escapeTelegramMarkdownV2CodeBlocks escapes special characters inside code blocks.
-func escapeTelegramMarkdownV2CodeBlocks(text string) string {
-	// First handle special backslash patterns
-	backslashRegex := regexp.MustCompile(`\\[()|]`)
-
-	text = backslashRegex.ReplaceAllStringFunc(text, func(match string) string {
-		if len(match) > 1 {
-			return fmt.Sprintf("\\\\%s", match[1:])
-		}
-		return "\\\\"
-	})
-
-	text = EscapeMarkdown(text)
-
-	return text
+func renderTelegramPlainTextChildrenToString(node ast.Node, source []byte) string {
+	state := &telegramRenderState{}
+	renderTelegramPlainTextChildren(node, source, state)
+	return state.sb.String()
 }
 
-// escapeMarkdownExcept preserves formatting chars but escapes all others.
-// Used for text inside bold/italic/strikethrough that needs escaping but
-// not the formatting characters themselves.
-func escapeMarkdownExcept(text string, preserve []rune) string {
-	var result strings.Builder
-	preserveMap := make(map[rune]bool)
-	for _, r := range preserve {
-		preserveMap[r] = true
+func renderTelegramPlainTextList(list *ast.List, source []byte, state *telegramRenderState) {
+	index := list.Start
+	if index == 0 {
+		index = 1
 	}
 
-	replacements := map[rune]string{
-		'_':  "\\_",
-		'*':  "\\*",
-		'[':  "\\[",
-		']':  "\\]",
-		'(':  "\\(",
-		')':  "\\)",
-		'~':  "\\~",
-		'`':  "\\`",
-		'>':  "\\>",
-		'#':  "\\#",
-		'+':  "\\+",
-		'-':  "\\-",
-		'=':  "\\=",
-		'|':  "\\|",
-		'{':  "\\{",
-		'}':  "\\}",
-		'.':  "\\.",
-		'!':  "\\!",
-	}
+	for item := list.FirstChild(); item != nil; item = item.NextSibling() {
+		indent := strings.Repeat("  ", state.listDepth)
+		marker := "• "
+		if list.IsOrdered() {
+			marker = fmt.Sprintf("%d. ", index)
+			index++
+		}
 
-	for _, r := range text {
-		if preserveMap[r] {
-			result.WriteRune(r)
-		} else if repl, ok := replacements[r]; ok {
-			result.WriteString(repl)
-		} else {
-			result.WriteRune(r)
+		state.sb.WriteString(indent)
+		state.sb.WriteString(marker)
+
+		itemState := &telegramRenderState{listDepth: state.listDepth + 1}
+		renderTelegramPlainTextChildren(item, source, itemState)
+		body := strings.Trim(itemState.sb.String(), "\n")
+		state.sb.WriteString(indentContinuation(body, indent+strings.Repeat(" ", len(marker))))
+
+		if item.NextSibling() != nil {
+			state.sb.WriteString("\n")
 		}
 	}
-	return result.String()
+
+	writePlainBlockBreak(list, state)
 }
 
-// processStyles converts markdown formatting to Telegram MarkdownV2 format.
-// It converts styles to Telegram format and uses placeholders to protect
-// the resulting formatting characters from being escaped.
-func processStyles(md string, elements map[string]string) string {
-	// Bold first: convert **text** and __text__ to placeholders containing *text*
-	// We use placeholders to protect the asterisks from being escaped.
-	// The text content inside is escaped except for * which is the format char.
-	md = boldRegex.ReplaceAllStringFunc(md, func(match string) string {
-		matches := boldRegex.FindStringSubmatch(match)
-		if len(matches) > 1 {
-			placeholder := fmt.Sprintf("BOLDPLACEHOLDER%d", len(elements))
-			escaped := escapeMarkdownExcept(matches[1], []rune{'*'})
-			elements[placeholder] = "*" + escaped + "*"
-			return placeholder
-		}
-		return match
-	})
-
-	md = boldUnderscore.ReplaceAllStringFunc(md, func(match string) string {
-		matches := boldUnderscore.FindStringSubmatch(match)
-		if len(matches) > 1 {
-			placeholder := fmt.Sprintf("BOLDPLACEHOLDER%d", len(elements))
-			escaped := escapeMarkdownExcept(matches[1], []rune{'*'})
-			elements[placeholder] = "*" + escaped + "*"
-			return placeholder
-		}
-		return match
-	})
-
-	// Italic: convert *text* or _text_ to placeholders containing _text_
-	// (Telegram italic). We use placeholders to protect underscores from escaping.
-	// The text content inside is escaped except for _ which is the format char.
-	md = italicAsterisk.ReplaceAllStringFunc(md, func(match string) string {
-		matches := italicAsterisk.FindStringSubmatch(match)
-		if len(matches) > 1 {
-			placeholder := fmt.Sprintf("ITALICPLACEHOLDER%d", len(elements))
-			escaped := escapeMarkdownExcept(matches[1], []rune{'_'})
-			elements[placeholder] = "_" + escaped + "_"
-			return placeholder
-		}
-		return match
-	})
-
-	md = italicUnderscore.ReplaceAllStringFunc(md, func(match string) string {
-		matches := italicUnderscore.FindStringSubmatch(match)
-		if len(matches) > 1 {
-			placeholder := fmt.Sprintf("ITALICPLACEHOLDER%d", len(elements))
-			escaped := escapeMarkdownExcept(matches[1], []rune{'_'})
-			elements[placeholder] = "_" + escaped + "_"
-			return placeholder
-		}
-		return match
-	})
-
-	// Strikethrough: convert ~~text~~ to placeholders containing ~text~
-	// (Telegram strikethrough). We use placeholders to protect ~ from escaping.
-	// The text content inside is escaped except for ~ which is the format char.
-	md = strikeRegex.ReplaceAllStringFunc(md, func(match string) string {
-		matches := strikeRegex.FindStringSubmatch(match)
-		if len(matches) > 1 {
-			placeholder := fmt.Sprintf("STRIKEPLACEHOLDER%d", len(elements))
-			escaped := escapeMarkdownExcept(matches[1], []rune{'~'})
-			elements[placeholder] = "~" + escaped + "~"
-			return placeholder
-		}
-		return match
-	})
-
-	return md
+func writeHTMLBlockBreak(node ast.Node, state *telegramRenderState) {
+	if node.NextSibling() != nil {
+		state.sb.WriteString("\n\n")
+	}
 }
 
-// ConvertMarkdownToTelegram converts standard markdown to Telegram MarkdownV2 format.
-// It handles:
-//   - Converting **bold** and __bold__ to *bold* (Telegram bold)
-//   - Converting *italic* and _italic_ to _italic_ (Telegram italic)
-//   - Preserving code blocks and inline code with proper escaping
-//   - Auto-wrapping unwrapped URLs in markdown links
-//   - Escaping special characters that need escaping in MarkdownV2
-func ConvertMarkdownToTelegram(md string) string {
-	elements := make(map[string]string)
+func writePlainBlockBreak(node ast.Node, state *telegramRenderState) {
+	if node.NextSibling() != nil {
+		state.sb.WriteString("\n\n")
+	}
+}
 
-	md = removePlaceholders(md)
-	md, elements = addPlaceholders(md, elements)
+func escapeTelegramHTML(text string) string {
+	return stdhtml.EscapeString(text)
+}
 
-	md = wrapLinksInMarkdown(md)
-	md, elements = addPlaceholders(md, elements)
+func escapeTelegramHTMLAttr(text string) string {
+	return stdhtml.EscapeString(text)
+}
 
-	// Process markdown styles BEFORE escaping.
-	// Bold (** and __) is processed first and wrapped in placeholders to protect
-	// the asterisks from being escaped. Then italic (* and _) is processed.
-	md = processStyles(md, elements)
+func sanitizeTelegramURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
 
-	md = EscapeMarkdown(md)
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
 
-	md = processPlaceholders(md, elements)
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "mailto", "tg":
+		return parsed.String()
+	default:
+		return ""
+	}
+}
 
-	return md
+func indentContinuation(text, indent string) string {
+	if text == "" {
+		return ""
+	}
+	return strings.ReplaceAll(text, "\n", "\n"+indent)
+}
+
+func prefixLines(text, prefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
