@@ -58,6 +58,8 @@ func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 		return nil
 	case event.SessionAttached:
 		return r.renderSessionAttached(ev.Payload)
+	case event.NewConversation:
+		return r.renderNewConversation()
 	case event.ChangeModelEvent:
 		return r.renderModelChanged(ev.Payload)
 	case event.CronJobResult:
@@ -139,6 +141,15 @@ func (r *Renderer) renderError(payload interface{}) *RenderResult {
 func (r *Renderer) renderCancelled() *RenderResult {
 	return &RenderResult{
 		Text:      "🛑 _Cancelled_",
+		ParseMode: "MarkdownV2",
+		IsFinal:   true,
+	}
+}
+
+// renderNewConversation renders a new conversation confirmation message.
+func (r *Renderer) renderNewConversation() *RenderResult {
+	return &RenderResult{
+		Text:      "✨ *New conversation started*",
 		ParseMode: "MarkdownV2",
 		IsFinal:   true,
 	}

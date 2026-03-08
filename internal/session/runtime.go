@@ -155,6 +155,13 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 			return err
 		}
 		r.publishContextTokens(worker.session)
+
+		// Publish event to notify client that conversation has been reset
+		event_bus.Publish(event.Event{
+			Type:      event.NewConversation,
+			SessionID: sessionID,
+			RequestID: requestID,
+		})
 		return nil
 	case event.ChangeProviderModel:
 		p, ok := payload.(event.ChangeProviderModelPayload)

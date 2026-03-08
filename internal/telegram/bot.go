@@ -277,6 +277,8 @@ func (b *Bot) processEvent(ev chatEvent, tracker *messageTracker) error {
 		return b.handleAgentCancelled(ev, tracker)
 	case event.SessionAttached:
 		return b.handleSessionAttached(ev, tracker)
+	case event.NewConversation:
+		return b.handleNewConversation(ev, tracker)
 	case event.ChangeModelEvent:
 		return b.handleModelChanged(ev, tracker)
 	case event.CronJobResult:
@@ -351,6 +353,16 @@ func (b *Bot) handleAgentCancelled(ev chatEvent, tracker *messageTracker) error 
 
 // handleSessionAttached renders session attachment notification.
 func (b *Bot) handleSessionAttached(ev chatEvent, tracker *messageTracker) error {
+	result := b.renderer.RenderEvent(ev.event)
+	if result != nil {
+		return b.sendTelegramMessage(ev.identity, tracker, result)
+	}
+	return nil
+}
+
+// handleNewConversation renders new conversation confirmation.
+func (b *Bot) handleNewConversation(ev chatEvent, tracker *messageTracker) error {
+	tracker.markIdle()
 	result := b.renderer.RenderEvent(ev.event)
 	if result != nil {
 		return b.sendTelegramMessage(ev.identity, tracker, result)

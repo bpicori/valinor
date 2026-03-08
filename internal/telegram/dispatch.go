@@ -56,6 +56,7 @@ func parseCommand(identity ChatIdentity, msg *Message, updateID int64) (*Command
 				RequestID: requestID,
 				Type:      gateway.CommandNewConversation,
 				RawText:   msg.Text,
+				IsControlCommand: true,
 			}, nil
 
 		case "cancel":
