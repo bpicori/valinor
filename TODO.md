@@ -1,5 +1,4 @@
-- [ ] Move config to ~/.valinor/config.toml and not anymore from dev directory
-- [ ] Create a quick wizard to create the configuration file
+- [ ] Add support to send image to telegram bot
 - [ ] Add a todo tool for the agent
 - [ ] Add sub agents tool
 - [ ] Add telemetry, logging and metrics

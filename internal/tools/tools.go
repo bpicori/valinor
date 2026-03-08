@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"valinor/internal/config"
 	"valinor/internal/logger"
@@ -16,6 +17,15 @@ type Tool struct {
 	Description string
 	Parameters  json.RawMessage // JSON Schema
 	Exec        func(json.RawMessage) (string, error)
+	runContext  *RunContext
+}
+
+// RunContext carries per-run metadata needed by tools that emit client events.
+type RunContext struct {
+	mu         sync.RWMutex
+	SessionID  string
+	RequestID  string
+	EmitEvents bool
 }
 
 // normalizePath converts path separators for LLM-provided paths that may mix
@@ -40,7 +50,7 @@ func validateRelativePath(path string) (string, string) {
 }
 
 // buildTool creates a tool with the given name, description, and parameters schema.
-func buildTool(name, description string, parameters map[string]any, exec func(json.RawMessage) (string, error)) Tool {
+func buildTool(name, description string, parameters map[string]any, runContext *RunContext, exec func(json.RawMessage) (string, error)) Tool {
 	paramsJSON, err := json.Marshal(parameters)
 	if err != nil {
 		logger.Error("tool definition marshal error", logger.BuildMetadata("tool", name, "error", err))
@@ -51,23 +61,40 @@ func buildTool(name, description string, parameters map[string]any, exec func(js
 		Description: description,
 		Parameters:  paramsJSON,
 		Exec:        exec,
+		runContext:  runContext,
+	}
+}
+
+// BindRunContext updates the current run metadata for a tool slice.
+func BindRunContext(tools []Tool, sessionID, requestID string, emitEvents bool) {
+	for i := range tools {
+		if tools[i].runContext == nil {
+			continue
+		}
+		tools[i].runContext.mu.Lock()
+		tools[i].runContext.SessionID = sessionID
+		tools[i].runContext.RequestID = requestID
+		tools[i].runContext.EmitEvents = emitEvents
+		tools[i].runContext.mu.Unlock()
 	}
 }
 
 // BuildTools returns base tools plus any provider-specific tools for the run.
 func BuildTools(rt *sandbox.Runtime, workspaceDir string, providerCfg config.ProviderConfig, model string) ([]Tool, error) {
+	runContext := &RunContext{}
 	result := []Tool{
-		buildTool(readFileName, "Read the contents of a file. Path is relative to the workspace root.", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }),
-		buildTool(writeFileName, "Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }),
-		buildTool(editFileName, "Apply multiple targeted text edits to a file. Path is relative to the workspace root. Edits are applied in order.", editFileParams(), func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }),
-		buildTool(listFilesName, "List files and directories at the given path. Path is relative to the workspace root. Use \".\" for the root. Directories are marked with a trailing slash.", listFilesParams(), func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }),
-		buildTool(grepName, "Search for a regex pattern in files. Returns matching lines with file paths and line numbers.", grepParams(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }),
-		buildTool(pythonExecName, "Execute Python code in a sandboxed container. Use for running Python scripts, data analysis, file processing, or Python automation.", pythonExecParams(), func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),
-		buildTool(bashExecName, "Execute bash commands in a sandboxed container. Use for running shell commands, git operations, package management, builds, tests, and system automation. Commands run with workspace directory access.", bashExecParams(), func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
+		buildTool(readFileName, "Read the contents of a file. Path is relative to the workspace root.", readFileParams(), runContext, func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }),
+		buildTool(writeFileName, "Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files.", writeFileParams(), runContext, func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }),
+		buildTool(editFileName, "Apply multiple targeted text edits to a file. Path is relative to the workspace root. Edits are applied in order.", editFileParams(), runContext, func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }),
+		buildTool(listFilesName, "List files and directories at the given path. Path is relative to the workspace root. Use \".\" for the root. Directories are marked with a trailing slash.", listFilesParams(), runContext, func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }),
+		buildTool(grepName, "Search for a regex pattern in files. Returns matching lines with file paths and line numbers.", grepParams(), runContext, func(a json.RawMessage) (string, error) { return grepExec(rt, a) }),
+		buildTool(pythonExecName, "Execute Python code in a sandboxed container. Use for running Python scripts, data analysis, file processing, or Python automation.", pythonExecParams(), runContext, func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),
+		buildTool(SendImageName, "Send an image file to the connected client. Use after generating an image with python. Path is relative to the workspace root, and image bytes are not added to conversation history.", sendImageParams(), runContext, func(a json.RawMessage) (string, error) { return sendImageExec(rt, runContext, a) }),
+		buildTool(bashExecName, "Execute bash commands in a sandboxed container. Use for running shell commands, git operations, package management, builds, tests, and system automation. Commands run with workspace directory access.", bashExecParams(), runContext, func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
 		// Cron tools are stateless and use a globally-set service; they don't need the sandbox runtime
-		buildTool(cronAddName, "Create a new scheduled cron job that runs at a specified interval or one-time. Use for recurring tasks like reminders, periodic checks, or scheduled reports. Returns the created job ID.", cronAddParams(), cronAddExec),
-		buildTool(cronListName, "List scheduled cron jobs. Shows job names, IDs, schedules, and next run times. Use to see what tasks are scheduled or to find a job ID for removal.", cronListParams(), cronListExec),
-		buildTool(cronRemoveName, "Remove a scheduled cron job permanently by its ID. Use cron_list first to find the job ID. This cannot be undone.", cronRemoveParams(), cronRemoveExec),
+		buildTool(cronAddName, "Create a new scheduled cron job that runs at a specified interval or one-time. Use for recurring tasks like reminders, periodic checks, or scheduled reports. Returns the created job ID.", cronAddParams(), runContext, cronAddExec),
+		buildTool(cronListName, "List scheduled cron jobs. Shows job names, IDs, schedules, and next run times. Use to see what tasks are scheduled or to find a job ID for removal.", cronListParams(), runContext, cronListExec),
+		buildTool(cronRemoveName, "Remove a scheduled cron job permanently by its ID. Use cron_list first to find the job ID. This cannot be undone.", cronRemoveParams(), runContext, cronRemoveExec),
 	}
 
 	providerTools, err := buildProviderTools(providerCfg, model)

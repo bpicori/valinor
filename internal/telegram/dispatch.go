@@ -52,10 +52,10 @@ func parseCommand(identity ChatIdentity, msg *Message, updateID int64) (*Command
 		switch cmdLower {
 		case "new", "clear":
 			return &Command{
-				Identity:  identity,
-				RequestID: requestID,
-				Type:      gateway.CommandNewConversation,
-				RawText:   msg.Text,
+				Identity:         identity,
+				RequestID:        requestID,
+				Type:             gateway.CommandNewConversation,
+				RawText:          msg.Text,
 				IsControlCommand: true,
 			}, nil
 

@@ -25,6 +25,7 @@ const (
 	ProviderModelsResult EventType = "provider_models_result" // Runtime returns available models.
 	AgentContentDelta    EventType = "agent_content_delta"    // Streamed content chunk.
 	AgentContentFull     EventType = "agent_content_full"     // Full assistant content for response.
+	AgentImage           EventType = "agent_image"            // Generated image delivered to the client.
 	AgentThinking        EventType = "agent_thinking"         // Reasoning/thinking step.
 	AgentStepTokens      EventType = "agent_step_tokens"      // Per-step token usage.
 	ContextTokens        EventType = "context_tokens"         // Current context token estimate.
@@ -36,8 +37,8 @@ const (
 	AgentCancelled       EventType = "agent_cancelled"        // Agent run was cancelled.
 
 	// Session lifecycle events.
-	SessionAttached  EventType = "session_attached"  // Session attached to identity.
-	ChangeModelEvent EventType = "change_model"      // Provider/model changed notification.
+	SessionAttached  EventType = "session_attached" // Session attached to identity.
+	ChangeModelEvent EventType = "change_model"     // Provider/model changed notification.
 
 	// Scheduled job events.
 	CronJobResult EventType = "cron_job_result" // Scheduled cron job execution result.
@@ -67,6 +68,7 @@ var registry = map[EventType]PayloadFactory{
 	ProviderModelsResult: func() any { return &ProviderModelsResultPayload{} },
 	AgentContentDelta:    func() any { return &ContentDeltaPayload{} },
 	AgentContentFull:     func() any { return &ContentFullPayload{} },
+	AgentImage:           func() any { return &ImagePayload{} },
 	AgentThinking:        func() any { return &ThinkingPayload{} },
 	AgentStepTokens:      func() any { return &StepTokenUsagePayload{} },
 	ContextTokens:        func() any { return &ContextTokensPayload{} },
@@ -133,6 +135,8 @@ func deref(v any) any {
 	case *ContentDeltaPayload:
 		return *ptr
 	case *ContentFullPayload:
+		return *ptr
+	case *ImagePayload:
 		return *ptr
 	case *ThinkingPayload:
 		return *ptr

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"time"
 )
@@ -62,6 +63,44 @@ func (c *Client) apiCall(ctx context.Context, method string, payload interface{}
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	var apiResp APIResponse
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return nil, fmt.Errorf("parse response: %w", err)
+	}
+
+	return &apiResp, nil
+}
+
+// apiCallMultipart performs a multipart/form-data request to the Telegram Bot API.
+func (c *Client) apiCallMultipart(ctx context.Context, method string, build func(*multipart.Writer) error) (*APIResponse, error) {
+	url := c.endpoint + method
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := build(writer); err != nil {
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("finalize multipart request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -140,6 +179,77 @@ func (c *Client) SendMessage(ctx context.Context, req SendMessageRequest) (*Mess
 		return nil, fmt.Errorf("unmarshal message: %w", err)
 	}
 
+	return &msg, nil
+}
+
+// SendPhoto uploads and sends a photo message to a chat.
+func (c *Client) SendPhoto(ctx context.Context, req SendPhotoRequest) (*Message, error) {
+	resp, err := c.apiCallMultipart(ctx, "sendPhoto", func(writer *multipart.Writer) error {
+		if err := writer.WriteField("chat_id", fmt.Sprintf("%d", req.ChatID)); err != nil {
+			return fmt.Errorf("write chat_id: %w", err)
+		}
+		if req.MessageThreadID != nil {
+			if err := writer.WriteField("message_thread_id", fmt.Sprintf("%d", *req.MessageThreadID)); err != nil {
+				return fmt.Errorf("write message_thread_id: %w", err)
+			}
+		}
+		if req.Caption != "" {
+			if err := writer.WriteField("caption", req.Caption); err != nil {
+				return fmt.Errorf("write caption: %w", err)
+			}
+		}
+		if req.ParseMode != "" {
+			if err := writer.WriteField("parse_mode", req.ParseMode); err != nil {
+				return fmt.Errorf("write parse_mode: %w", err)
+			}
+		}
+		if req.ReplyParameters != nil {
+			data, err := json.Marshal(req.ReplyParameters)
+			if err != nil {
+				return fmt.Errorf("marshal reply_parameters: %w", err)
+			}
+			if err := writer.WriteField("reply_parameters", string(data)); err != nil {
+				return fmt.Errorf("write reply_parameters: %w", err)
+			}
+		}
+		if req.ReplyMarkup != nil {
+			data, err := json.Marshal(req.ReplyMarkup)
+			if err != nil {
+				return fmt.Errorf("marshal reply_markup: %w", err)
+			}
+			if err := writer.WriteField("reply_markup", string(data)); err != nil {
+				return fmt.Errorf("write reply_markup: %w", err)
+			}
+		}
+		if len(req.PhotoData) == 0 {
+			return fmt.Errorf("photo data is required")
+		}
+
+		fileName := req.PhotoName
+		if fileName == "" {
+			fileName = "image"
+		}
+
+		part, err := writer.CreateFormFile("photo", fileName)
+		if err != nil {
+			return fmt.Errorf("create photo form file: %w", err)
+		}
+		if _, err := part.Write(req.PhotoData); err != nil {
+			return fmt.Errorf("write photo: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, resp
+	}
+
+	var msg Message
+	if err := json.Unmarshal(resp.Result, &msg); err != nil {
+		return nil, fmt.Errorf("unmarshal message: %w", err)
+	}
 	return &msg, nil
 }
 

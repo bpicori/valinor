@@ -52,6 +52,13 @@ type ContentFullPayload struct {
 	Content string `json:"content"`
 }
 
+// ImagePayload carries one generated image for client-side delivery.
+type ImagePayload struct {
+	FileName string `json:"file_name"`
+	MIMEType string `json:"mime_type"`
+	Base64   string `json:"base64"`
+}
+
 // ThinkingPayload carries a reasoning/thinking update.
 type ThinkingPayload struct {
 	Step    int    `json:"step"`

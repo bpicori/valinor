@@ -83,6 +83,8 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 	}
 
 	agent := llm.New(provider, s.meta.Model, s.maxIterations)
+	// Give tools access to the session and request IDs
+	agenttools.BindRunContext(runData.Tools, s.meta.ID, requestID, opts.EmitEvents)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
 		Messages:   runData.Messages,

@@ -343,7 +343,7 @@ func (b *Bridge) writeLoop() {
 					return
 				}
 
-			// Retry sending the message
+				// Retry sending the message
 				if err := b.conn.WriteJSON(env); err != nil {
 					logger.Warning("telegram bridge: retry write failed, dropping message",
 						logger.BuildMetadata("error", err))

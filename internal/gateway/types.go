@@ -61,6 +61,7 @@ const (
 const (
 	EventAgentContentDelta    = string(event.AgentContentDelta)
 	EventAgentContentFull     = string(event.AgentContentFull)
+	EventAgentImage           = string(event.AgentImage)
 	EventAgentThinking        = string(event.AgentThinking)
 	EventAgentStepTokens      = string(event.AgentStepTokens)
 	EventContextTokens        = string(event.ContextTokens)
@@ -112,19 +113,20 @@ type (
 
 // Event payloads - re-exported from event package.
 type (
-	ContentDeltaPayload          = event.ContentDeltaPayload
-	ContentFullPayload           = event.ContentFullPayload
-	ThinkingPayload              = event.ThinkingPayload
-	StepTokenUsagePayload        = event.StepTokenUsagePayload
-	ContextTokensPayload         = event.ContextTokensPayload
-	RefusalPayload               = event.RefusalPayload
-	ToolCallStartPayload         = event.ToolCallStartPayload
-	ToolCallDonePayload          = event.ToolCallDonePayload
-	AgentDonePayload             = event.AgentDonePayload
-	AgentErrorPayload            = event.AgentErrorPayload
-	AgentCancelledPayload        = event.AgentCancelledPayload
-	ProviderModel                = event.ProviderModel
-	ProviderModelsResultPayload  = event.ProviderModelsResultPayload
+	ContentDeltaPayload         = event.ContentDeltaPayload
+	ContentFullPayload          = event.ContentFullPayload
+	ImagePayload                = event.ImagePayload
+	ThinkingPayload             = event.ThinkingPayload
+	StepTokenUsagePayload       = event.StepTokenUsagePayload
+	ContextTokensPayload        = event.ContextTokensPayload
+	RefusalPayload              = event.RefusalPayload
+	ToolCallStartPayload        = event.ToolCallStartPayload
+	ToolCallDonePayload         = event.ToolCallDonePayload
+	AgentDonePayload            = event.AgentDonePayload
+	AgentErrorPayload           = event.AgentErrorPayload
+	AgentCancelledPayload       = event.AgentCancelledPayload
+	ProviderModel               = event.ProviderModel
+	ProviderModelsResultPayload = event.ProviderModelsResultPayload
 )
 
 // SessionAttachedPayload is re-exported from event package.

@@ -301,7 +301,7 @@ func (m Model) View() string {
 		}
 	}
 	gatewayRow := footerStyle.Width(m.width).Render(gatewayStyle.Render(gatewayLabel))
-	sessionRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Session: "+sessionLabel))
+	sessionRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Session: " + sessionLabel))
 	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: "+providerModel) + " (ctrl+m)")
 	contextLabel := "Context: "
 	if m.contextEstimated {

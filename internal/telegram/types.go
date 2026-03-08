@@ -127,6 +127,18 @@ type SendMessageRequest struct {
 	ReplyMarkup     *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 }
 
+// SendPhotoRequest represents the parameters for sendPhoto.
+type SendPhotoRequest struct {
+	ChatID          int64
+	MessageThreadID *int64
+	PhotoName       string
+	PhotoData       []byte
+	Caption         string
+	ParseMode       string
+	ReplyParameters *ReplyParameters
+	ReplyMarkup     *InlineKeyboardMarkup
+}
+
 // EditMessageTextRequest represents the payload for editMessageText API.
 type EditMessageTextRequest struct {
 	ChatID          int64                 `json:"chat_id,omitempty"`

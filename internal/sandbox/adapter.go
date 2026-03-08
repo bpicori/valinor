@@ -53,8 +53,8 @@ func execInContainer(ctx context.Context, containerID string, command []string, 
 
 	err := cmd.Run()
 	result := Result{
-		Stdout:   stdout.String(),
-		Stderr:   stderr.String(),
+		Stdout: stdout.String(),
+		Stderr: stderr.String(),
 	}
 
 	if cmd.ProcessState != nil {

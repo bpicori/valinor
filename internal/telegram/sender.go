@@ -2,6 +2,7 @@
 package telegram
 
 import (
+	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -17,6 +18,10 @@ const (
 // sendTelegramMessage sends a message via the Telegram API.
 // Supports both sending new messages and editing existing ones for streaming updates.
 func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker, result *RenderResult) error {
+	if len(result.Images) > 0 {
+		return b.sendPhotoMessages(identity, result)
+	}
+
 	// Determine if we should edit or send a new message
 	shouldEdit := result.IsStreaming && tracker.getStreamingMsgID() != 0
 
@@ -77,6 +82,41 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, tracker *messageTracker, res
 
 	logger.Debug("telegram bot: message sent",
 		logger.BuildMetadata("chat_id", identity.ChatID, "message_id", msg.MessageID))
+
+	return nil
+}
+
+func (b *Bot) sendPhotoMessages(identity ChatIdentity, result *RenderResult) error {
+	for idx, image := range result.Images {
+		photoData, err := base64.StdEncoding.DecodeString(image.Base64)
+		if err != nil {
+			return fmt.Errorf("decode photo payload: %w", err)
+		}
+
+		req := SendPhotoRequest{
+			ChatID:      identity.ChatID,
+			PhotoName:   image.FileName,
+			PhotoData:   photoData,
+			ReplyMarkup: result.ReplyMarkup,
+		}
+		if idx == 0 {
+			req.Caption = result.Text
+			req.ParseMode = result.ParseMode
+		}
+
+		msg, err := b.client.SendPhoto(b.ctx, req)
+		if idx == 0 && shouldRetryWithPlainText(err, result) {
+			req.Caption = result.FallbackText
+			req.ParseMode = ""
+			msg, err = b.client.SendPhoto(b.ctx, req)
+		}
+		if err != nil {
+			return fmt.Errorf("send photo to chat %d: %w", identity.ChatID, err)
+		}
+
+		logger.Debug("telegram bot: photo sent",
+			logger.BuildMetadata("chat_id", identity.ChatID, "message_id", msg.MessageID, "file_name", image.FileName))
+	}
 
 	return nil
 }

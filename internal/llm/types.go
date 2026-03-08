@@ -83,11 +83,11 @@ type Provider interface {
 
 // RunRequest configures a single run invocation.
 type RunRequest struct {
-	Messages  []agentcontext.Message
-	Tools     []tools.Tool // Tools available for this run
-	SessionID string       // Optional: identifies the session for event routing.
-	RequestID string       // Optional: correlation ID for request tracing.
-	EmitEvents bool        // Controls whether agent lifecycle events are published.
+	Messages   []agentcontext.Message
+	Tools      []tools.Tool // Tools available for this run
+	SessionID  string       // Optional: identifies the session for event routing.
+	RequestID  string       // Optional: correlation ID for request tracing.
+	EmitEvents bool         // Controls whether agent lifecycle events are published.
 }
 
 // RunResult returns the updated messages after the loop.

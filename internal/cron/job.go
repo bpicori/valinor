@@ -20,10 +20,10 @@ const (
 
 // Schedule defines when a job should run.
 type Schedule struct {
-	Kind    ScheduleKind `json:"kind"`
-	Every   string       `json:"every,omitempty"`   // Duration string like "5m", "1h", "30m" (for ScheduleEvery)
-	At      time.Time    `json:"at,omitempty"`      // Specific time to run (for ScheduleAt)
-	AtZone  string       `json:"at_zone,omitempty"` // IANA timezone for At interpretation
+	Kind   ScheduleKind `json:"kind"`
+	Every  string       `json:"every,omitempty"`   // Duration string like "5m", "1h", "30m" (for ScheduleEvery)
+	At     time.Time    `json:"at,omitempty"`      // Specific time to run (for ScheduleAt)
+	AtZone string       `json:"at_zone,omitempty"` // IANA timezone for At interpretation
 }
 
 // Validate checks the schedule configuration and returns an error if invalid.
@@ -50,7 +50,7 @@ func (s Schedule) Validate() error {
 type CronJob struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
-	Message   string    `json:"message"`    // The prompt/message to send to the agent
+	Message   string    `json:"message"` // The prompt/message to send to the agent
 	Schedule  Schedule  `json:"schedule"`
 	Enabled   bool      `json:"enabled"`
 	NextRunAt time.Time `json:"next_run_at"` // Computed field: when to run next
@@ -202,11 +202,11 @@ func NewEveryJob(id, name, message, every string) (*CronJob, error) {
 	dur, _ := time.ParseDuration(every)
 
 	job := &CronJob{
-		ID:       id,
-		Name:     name,
-		Message:  message,
-		Schedule: Schedule{Kind: ScheduleEvery, Every: every},
-		Enabled:  true,
+		ID:        id,
+		Name:      name,
+		Message:   message,
+		Schedule:  Schedule{Kind: ScheduleEvery, Every: every},
+		Enabled:   true,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -227,11 +227,11 @@ func NewAtJob(id, name, message string, at time.Time) (*CronJob, error) {
 	now := time.Now().UTC()
 
 	job := &CronJob{
-		ID:       id,
-		Name:     name,
-		Message:  message,
-		Schedule: Schedule{Kind: ScheduleAt, At: at, AtZone: at.Location().String()},
-		Enabled:  true,
+		ID:        id,
+		Name:      name,
+		Message:   message,
+		Schedule:  Schedule{Kind: ScheduleAt, At: at, AtZone: at.Location().String()},
+		Enabled:   true,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

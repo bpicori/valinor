@@ -71,6 +71,7 @@ func (r *Router) Start(ctx context.Context) {
 	r.busSub = event_bus.Subscribe(
 		event.AgentContentDelta,
 		event.AgentContentFull,
+		event.AgentImage,
 		event.AgentThinking,
 		event.AgentStepTokens,
 		event.ContextTokens,

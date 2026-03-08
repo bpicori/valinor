@@ -12,12 +12,16 @@ import (
 // MaxTelegramMessageLength is Telegram's maximum message length.
 const MaxTelegramMessageLength = 4096
 
+// MaxTelegramCaptionLength is Telegram's maximum photo caption length.
+const MaxTelegramCaptionLength = 1024
+
 // RenderResult contains the rendered Telegram message.
 type RenderResult struct {
 	Text         string
 	ParseMode    string
 	FallbackText string
 	ReplyMarkup  *InlineKeyboardMarkup
+	Images       []gateway.ImagePayload
 	// IsStreaming indicates this is a streaming delta that should edit
 	// the existing streaming message if one exists
 	IsStreaming bool
@@ -39,7 +43,7 @@ func NewRenderer() *Renderer {
 // This is a pure function - all state decisions are made by the caller.
 func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 	switch ev.Type {
-	case event.AgentContentDelta, event.AgentContentFull:
+	case event.AgentContentDelta, event.AgentContentFull, event.AgentImage:
 		// Content delta/full events accumulate content in ChatState but don't trigger
 		// message updates. Only AgentDone → RenderFinalContent sends the final message.
 		return nil
@@ -220,10 +224,18 @@ func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 		return nil
 	}
 
+	return renderTelegramText(content, MaxTelegramMessageLength)
+}
+
+func renderTelegramText(content string, limit int) *RenderResult {
+	if content == "" {
+		return nil
+	}
+
 	formatted := FormatTelegramMarkdown(content)
-	plainText := truncateTelegramText(formatted.PlainText, MaxTelegramMessageLength)
+	plainText := truncateTelegramText(formatted.PlainText, limit)
 	if plainText == "" {
-		plainText = truncateTelegramText(content, MaxTelegramMessageLength)
+		plainText = truncateTelegramText(content, limit)
 	}
 
 	result := &RenderResult{
@@ -232,7 +244,7 @@ func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 		IsFinal:      true,
 	}
 
-	if formatted.HTML != "" && utf8.RuneCountInString(formatted.HTML) <= MaxTelegramMessageLength {
+	if formatted.HTML != "" && utf8.RuneCountInString(formatted.HTML) <= limit {
 		result.Text = formatted.HTML
 		result.ParseMode = "HTML"
 	}

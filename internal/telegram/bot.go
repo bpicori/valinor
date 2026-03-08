@@ -269,6 +269,8 @@ func (b *Bot) processEvent(ev chatEvent, tracker *messageTracker) error {
 		return b.handleContentDelta(ev, tracker)
 	case event.AgentContentFull:
 		return b.handleContentFull(ev, tracker)
+	case event.AgentImage:
+		return b.handleImage(ev, tracker)
 	case event.AgentDone:
 		return b.handleAgentDone(ev, tracker)
 	case event.AgentError:
@@ -310,6 +312,23 @@ func (b *Bot) handleContentFull(ev chatEvent, tracker *messageTracker) error {
 	if payload, ok := ev.event.Payload.(gateway.ContentFullPayload); ok {
 		tracker.contentBuf.Reset()
 		tracker.appendContent(payload.Content)
+	}
+	if err := b.sendTypingAction(ev.identity, tracker); err != nil {
+		logger.Warning("telegram bot: send typing action failed",
+			logger.BuildMetadata("error", err, "chat_id", ev.identity.ChatID))
+	}
+	return nil
+}
+
+// handleImage sends a generated image payload immediately.
+func (b *Bot) handleImage(ev chatEvent, tracker *messageTracker) error {
+	if payload, ok := ev.event.Payload.(gateway.ImagePayload); ok {
+		if err := b.sendTelegramMessage(ev.identity, tracker, &RenderResult{
+			Images:  []gateway.ImagePayload{payload},
+			IsFinal: true,
+		}); err != nil {
+			return fmt.Errorf("send image message: %w", err)
+		}
 	}
 	if err := b.sendTypingAction(ev.identity, tracker); err != nil {
 		logger.Warning("telegram bot: send typing action failed",
