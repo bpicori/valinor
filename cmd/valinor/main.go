@@ -22,10 +22,38 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// gatewayDeps holds initialized gateway dependencies for reuse.
+type gatewayDeps struct {
+	valinorDir   string
+	sessionsDir  string
+	workspaceDir string
+	cronDir      string
+	closeLogger  func() error
+	runtime      *sandbox.Runtime
+	cronService  *cron.Service
+	sm           *session.Manager
+	sessionOpts  session.CreateSessionOptions
+	rtr          *gateway.Router
+	gw           *gateway.Server
+}
+
+// cleanup releases all resources in reverse initialization order.
+func (d *gatewayDeps) cleanup() {
+	if d.rtr != nil {
+		d.rtr.Stop()
+	}
+	if d.runtime != nil {
+		d.runtime.Close()
+	}
+	if d.closeLogger != nil {
+		d.closeLogger()
+	}
+}
+
 func main() {
 	// Define command-line flags
 	var (
-		mode       = flag.String("mode", "tui", "Run mode: 'gateway', 'tui', or 'telegram'")
+		mode       = flag.String("mode", "tui", "Run mode: 'gateway', 'tui', 'telegram', or 'all'")
 		gatewayURL = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui/telegram mode, defaults to config)")
 		identity   = flag.String("identity", "default", "Client identity for session routing (tui mode)")
 	)
@@ -64,55 +92,53 @@ func run(mode, gatewayURL, identity string) error {
 		return runTUI(ctx, cfg, gatewayURL, identity)
 	case "telegram":
 		return runTelegram(ctx, cfg)
+	case "all":
+		return runAll(ctx, cfg)
 	default:
-		return fmt.Errorf("invalid mode '%s': must be 'gateway', 'tui', or 'telegram'", mode)
+		return fmt.Errorf("invalid mode '%s': must be 'gateway', 'tui', 'telegram', or 'all'", mode)
 	}
 }
 
-// runGateway starts the gateway and session core (no TUI).
-func runGateway(ctx context.Context, cfg config.Config) error {
+// initGateway initializes all common gateway components without starting the server.
+func initGateway(cfg config.Config, logPrefix string, transports []logger.TransportType) (*gatewayDeps, error) {
 	// Resolve directories
 	valinorDir, err := cfg.ResolveValinorDir()
 	if err != nil {
-		return fmt.Errorf("resolve valinor dir: %w", err)
+		return nil, fmt.Errorf("resolve valinor dir: %w", err)
 	}
 	sessionsDir, err := cfg.ResolveSessionDir()
 	if err != nil {
-		return fmt.Errorf("resolve session dir: %w", err)
+		return nil, fmt.Errorf("resolve session dir: %w", err)
 	}
 	workspaceDir, err := cfg.ResolveWorkspaceDir()
 	if err != nil {
-		return fmt.Errorf("resolve workspace dir: %w", err)
+		return nil, fmt.Errorf("resolve workspace dir: %w", err)
 	}
 	cronDir, err := cfg.ResolveCronDir()
 	if err != nil {
-		return fmt.Errorf("resolve cron dir: %w", err)
+		return nil, fmt.Errorf("resolve cron dir: %w", err)
 	}
 
 	// Ensure workspace directory exists (required for sandbox operations)
 	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
-		return fmt.Errorf("create workspace directory: %w", err)
+		return nil, fmt.Errorf("create workspace directory: %w", err)
 	}
 
-	// Initialize logger with both file and stdout transports
-	logPath, closeLogger, err := logger.Init(valinorDir, []logger.TransportType{logger.TransportFile, logger.TransportStdout})
+	// Initialize logger
+	logPath, closeLogger, err := logger.Init(valinorDir, transports)
 	if err != nil {
-		return fmt.Errorf("init logger: %w", err)
+		return nil, fmt.Errorf("init logger: %w", err)
 	}
-	defer closeLogger()
 
-	// Set log prefix for gateway mode
-	logger.SetPrefix("GATEWAY")
-	logger.Info("starting valinor in gateway mode", nil)
-	logger.Info("logging to file and stdout", logger.BuildMetadata("log_path", logPath))
+	logger.SetPrefix(logPrefix)
+	logger.Info("logging initialized", logger.BuildMetadata("log_path", logPath))
 
-	// Create shared sandbox runtime (single container for all sessions)
+	// Create shared sandbox runtime
 	rt, err := sandbox.NewRuntime(workspaceDir, cfg.SandboxImage)
 	if err != nil {
-		logger.Error("failed to create sandbox runtime", logger.BuildMetadata("workspace", workspaceDir, "image", cfg.SandboxImage, "error", err))
-		return fmt.Errorf("create sandbox runtime: %w", err)
+		closeLogger()
+		return nil, fmt.Errorf("create sandbox runtime: %w", err)
 	}
-	defer rt.Close()
 	logger.Info("sandbox runtime initialized", logger.BuildMetadata("workspace", workspaceDir, "image", cfg.SandboxImage))
 
 	// Initialize cron service
@@ -121,39 +147,62 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		logger.Error("failed to create cron service, continuing without scheduling", logger.BuildMetadata("error", err))
 		cronService = nil
 	} else {
-		// Wire cron service to tools so the agent can schedule jobs
 		tools.SetCronService(cronService)
 		logger.Info("cron service initialized", logger.BuildMetadata("dir", cronDir))
 	}
 
-	// Initialize core components
+	// Initialize session manager
 	sm, err := session.NewManager(sessionsDir, workspaceDir, cfg, rt)
 	if err != nil {
-		return fmt.Errorf("create session manager: %w", err)
+		rt.Close()
+		closeLogger()
+		return nil, fmt.Errorf("create session manager: %w", err)
 	}
 
-	// Session options used when router/runtime create or resume sessions on-demand.
 	sessionOpts := session.CreateSessionOptions{
 		MaxAgentIterations: cfg.MaxAgentIterations,
 	}
 
-	// Start session runtime with a worker registry.
-	runtime := session.NewRuntime(ctx, sm, sessionOpts)
+	return &gatewayDeps{
+		valinorDir:   valinorDir,
+		sessionsDir:  sessionsDir,
+		workspaceDir: workspaceDir,
+		cronDir:      cronDir,
+		closeLogger:  closeLogger,
+		runtime:      rt,
+		cronService:  cronService,
+		sm:           sm,
+		sessionOpts:  sessionOpts,
+	}, nil
+}
+
+// runGateway starts the gateway and session core (no TUI).
+func runGateway(ctx context.Context, cfg config.Config) error {
+	deps, err := initGateway(cfg, "GATEWAY", []logger.TransportType{logger.TransportFile, logger.TransportStdout})
+	if err != nil {
+		return err
+	}
+	defer deps.cleanup()
+
+	logger.Info("starting valinor in gateway mode", nil)
+
+	// Start session runtime
+	runtime := session.NewRuntime(ctx, deps.sm, deps.sessionOpts)
 	runtime.Start()
 	defer runtime.Close()
 
-	// Create router
-	rtr := gateway.NewRouter(runtime, sm, sessionOpts)
+	// Create and start router
+	rtr := gateway.NewRouter(runtime, deps.sm, deps.sessionOpts)
 	rtr.Start(ctx)
-	defer rtr.Stop()
+	deps.rtr = rtr
 
-	// Start scheduler if enabled and cron service is available
-	if cfg.Scheduler.Enabled && cronService != nil {
-		sched := scheduler.New(cronService, sm, sessionOpts, cfg.Scheduler)
+	// Start scheduler if enabled
+	if cfg.Scheduler.Enabled && deps.cronService != nil {
+		sched := scheduler.New(deps.cronService, deps.sm, deps.sessionOpts, cfg.Scheduler)
 		sched.Start(ctx)
 		defer sched.Stop()
 		logger.Info("scheduler enabled", logger.BuildMetadata("interval", cfg.Scheduler.CheckInterval))
-	} else if cfg.Scheduler.Enabled && cronService == nil {
+	} else if cfg.Scheduler.Enabled && deps.cronService == nil {
 		logger.Warning("scheduler enabled but cron service failed to initialize", nil)
 	}
 
@@ -164,11 +213,10 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 		Path: cfg.GatewayPath,
 	}
 	gw := gateway.NewServer(gwCfg, rtr)
+	deps.gw = gw
 
-	logger.Info("gateway server starting",
-		logger.BuildMetadata("url", cfg.GatewayWebSocketURL()))
+	logger.Info("gateway server starting", logger.BuildMetadata("url", cfg.GatewayWebSocketURL()))
 
-	// Start gateway (blocks until shutdown)
 	if err := gw.Start(ctx); err != nil {
 		return fmt.Errorf("gateway server: %w", err)
 	}
@@ -176,6 +224,7 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	if err := gw.Stop(); err != nil {
 		return fmt.Errorf("stop gateway server: %w", err)
 	}
+
 	return nil
 }
 
@@ -289,5 +338,114 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 	<-ctx.Done()
 
 	logger.Info("telegram bot shutting down", nil)
+	return nil
+}
+
+// runAll starts both gateway and Telegram services in one process.
+func runAll(ctx context.Context, cfg config.Config) error {
+	// Validate Telegram is enabled and configured
+	if !cfg.Telegram.Enabled {
+		return fmt.Errorf("telegram mode requires telegram.enabled = true in config")
+	}
+	if cfg.Telegram.BotToken == "" {
+		return fmt.Errorf("telegram mode requires telegram.bot_token in config")
+	}
+
+	// Initialize gateway components
+	deps, err := initGateway(cfg, "ALL", []logger.TransportType{logger.TransportFile, logger.TransportStdout})
+	if err != nil {
+		return err
+	}
+
+	logger.Info("starting valinor in all mode (gateway + telegram)", nil)
+
+	// Start session runtime
+	runtime := session.NewRuntime(ctx, deps.sm, deps.sessionOpts)
+	runtime.Start()
+	defer runtime.Close()
+
+	// Create and start router
+	rtr := gateway.NewRouter(runtime, deps.sm, deps.sessionOpts)
+	rtr.Start(ctx)
+	deps.rtr = rtr
+
+	// Start scheduler if enabled
+	if cfg.Scheduler.Enabled && deps.cronService != nil {
+		sched := scheduler.New(deps.cronService, deps.sm, deps.sessionOpts, cfg.Scheduler)
+		sched.Start(ctx)
+		defer sched.Stop()
+		logger.Info("scheduler enabled", logger.BuildMetadata("interval", cfg.Scheduler.CheckInterval))
+	} else if cfg.Scheduler.Enabled && deps.cronService == nil {
+		logger.Warning("scheduler enabled but cron service failed to initialize", nil)
+	}
+
+	// Create gateway server
+	gwCfg := gateway.Config{
+		Host: cfg.GatewayHost,
+		Port: cfg.GatewayPort,
+		Path: cfg.GatewayPath,
+	}
+	gw := gateway.NewServer(gwCfg, rtr)
+	deps.gw = gw
+
+	logger.Info("gateway server starting", logger.BuildMetadata("url", cfg.GatewayWebSocketURL()))
+
+	// Start gateway in a goroutine
+	gwErrCh := make(chan error, 1)
+	go func() {
+		if err := gw.Start(ctx); err != nil {
+			gwErrCh <- fmt.Errorf("gateway server: %w", err)
+			return
+		}
+		gwErrCh <- nil
+	}()
+
+	// Create and start Telegram bot
+	gatewayURL := cfg.GatewayWebSocketURL()
+	logger.Info("connecting telegram to gateway", logger.BuildMetadata("url", gatewayURL))
+
+	botCfg := telegram.Config{
+		BotToken:    cfg.Telegram.BotToken,
+		GatewayURL:  gatewayURL,
+		StorageDir:  deps.valinorDir,
+		PollTimeout: cfg.Telegram.PollTimeout,
+	}
+
+	bot, err := telegram.NewBot(botCfg)
+	if err != nil {
+		deps.cleanup()
+		return fmt.Errorf("create telegram bot: %w", err)
+	}
+
+	if err := bot.Start(ctx); err != nil {
+		deps.cleanup()
+		return fmt.Errorf("start telegram bot: %w", err)
+	}
+	defer bot.Stop()
+
+	logger.Info("telegram bot started successfully", nil)
+	logger.Info("all services running (gateway + telegram)", nil)
+
+	// Wait for context cancellation or gateway error
+	select {
+	case <-ctx.Done():
+		logger.Info("shutdown signal received, stopping all services", nil)
+	case err := <-gwErrCh:
+		if err != nil {
+			bot.Stop()
+			deps.cleanup()
+			return err
+		}
+	}
+
+	// Graceful shutdown
+	bot.Stop()
+	if err := gw.Stop(); err != nil {
+		deps.cleanup()
+		return fmt.Errorf("stop gateway server: %w", err)
+	}
+
+	deps.cleanup()
+	logger.Info("all services stopped", nil)
 	return nil
 }

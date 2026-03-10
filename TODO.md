@@ -1,4 +1,3 @@
-- [ ] Add support to send image to telegram bot
 - [ ] Add a todo tool for the agent
 - [ ] Add sub agents tool
 - [ ] Add telemetry, logging and metrics
@@ -14,3 +13,4 @@ Done:
 - [x] Review telegram package to simplify
 - [x] For session metadata is better to use  sqlite database 
 - [x] Add memory tool
+- [x] Add support to send image to telegram bot
