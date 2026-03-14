@@ -51,7 +51,6 @@ func (d *gatewayDeps) cleanup() {
 }
 
 func main() {
-	// Define command-line flags
 	var (
 		mode       = flag.String("mode", "tui", "Run mode: 'gateway', 'tui', 'telegram', or 'all'")
 		gatewayURL = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui/telegram mode, defaults to config)")

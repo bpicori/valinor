@@ -13,6 +13,7 @@ import (
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
 	agenttools "valinor/internal/tools"
+	"valinor/internal/tokens"
 )
 
 // Metadata holds session metadata persisted in SQLite.
@@ -170,4 +171,12 @@ func (s *Session) Close() error {
 // Meta returns the session metadata.
 func (s *Session) Meta() Metadata {
 	return s.meta
+}
+
+// ContextTokenCount returns the estimated token count of the current conversation context.
+func (s *Session) ContextTokenCount() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	messages := s.agentContext.Messages()
+	return tokens.EstimatePromptTokens(messages)
 }

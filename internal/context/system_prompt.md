@@ -37,3 +37,6 @@ Skills are optional deep instructions. When needed:
 - Use the skill catalog in this prompt to identify relevant skills.
 - Read the selected skill file on demand before executing specialized work.
 - Do not read every skill preemptively; load only what is relevant.
+
+## Python Env
+Try to use the same Python environment that is in the workspace. Try to not create a new environment if there is already a venv in the workspace.

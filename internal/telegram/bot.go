@@ -232,8 +232,8 @@ func (b *Bot) processCommand(cmd *Command, tracker *messageTracker) error {
 
 	// Handle status command locally
 	if cmd.Type == "status" {
-		sessionKey, provider, model, _ := bridge.SessionInfo()
-		result := b.renderer.RenderStatus(sessionKey, provider, model)
+		sessionKey, provider, model, contextTokens, tokensEstimated, _ := bridge.SessionInfo()
+		result := b.renderer.RenderStatus(sessionKey, provider, model, contextTokens, tokensEstimated)
 		return b.sendTelegramMessage(cmd.Identity, tracker, result)
 	}
 

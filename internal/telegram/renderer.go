@@ -2,6 +2,7 @@
 package telegram
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -253,7 +254,7 @@ func renderTelegramText(content string, limit int) *RenderResult {
 }
 
 // RenderStatus renders the current session status for the /status command.
-func (r *Renderer) RenderStatus(sessionKey, provider, model string) *RenderResult {
+func (r *Renderer) RenderStatus(sessionKey, provider, model string, contextTokens int64, tokensEstimated bool) *RenderResult {
 	var text string
 	text = "ℹ️ *Current Status*\n"
 
@@ -269,6 +270,13 @@ func (r *Renderer) RenderStatus(sessionKey, provider, model string) *RenderResul
 
 	if model != "" {
 		text += EscapeMarkdownf("• Model: %s", model)
+	}
+
+	if contextTokens > 0 {
+		text += EscapeMarkdownf("\n• Context: %s tokens", formatTokenCount(contextTokens))
+		if tokensEstimated {
+			text += " _" + EscapeMarkdown("(estimated)") + "_"
+		}
 	}
 
 	return &RenderResult{
@@ -290,4 +298,12 @@ func truncateTelegramText(text string, limit int) string {
 		return string(runes[:limit])
 	}
 	return string(runes[:limit-3]) + "..."
+}
+
+// formatTokenCount formats a token count in a human-readable way.
+func formatTokenCount(count int64) string {
+	if count >= 1000 {
+		return fmt.Sprintf("%dK", count/1000)
+	}
+	return fmt.Sprintf("%d", count)
 }
