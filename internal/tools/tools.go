@@ -96,6 +96,9 @@ func BuildTools(rt *sandbox.Runtime, workspaceDir string, providerCfg config.Pro
 		buildTool(cronListName, "List scheduled cron jobs. Shows job names, IDs, schedules, and next run times. Use to see what tasks are scheduled or to find a job ID for removal.", cronListParams(), runContext, cronListExec),
 		buildTool(cronRemoveName, "Remove a scheduled cron job permanently by its ID. Use cron_list first to find the job ID. This cannot be undone.", cronRemoveParams(), runContext, cronRemoveExec),
 		buildTool(cronHistoryName, "View the execution history of scheduled cron jobs. Shows when jobs ran, their status (ok or error), and any output. Use to audit job performance or debug failures.", cronHistoryParams(), runContext, cronHistoryExec),
+		// Todo tools are session-scoped and use the global todo store via RunContext
+		buildTool(todoWriteName, "Create or update a structured task list for the current job. Use to plan multi-step work, track progress, and ensure all steps are completed. Each todo has an id, content, and status (pending, in_progress, completed, cancelled).", todoWriteParams(), runContext, func(a json.RawMessage) (string, error) { return todoWriteExec(runContext, a) }),
+		buildTool(todoReadName, "Read the current task list for this session. Returns all todos with their status.", todoReadParams(), runContext, func(a json.RawMessage) (string, error) { return todoReadExec(runContext, a) }),
 	}
 
 	providerTools, err := buildProviderTools(providerCfg, model)

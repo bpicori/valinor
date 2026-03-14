@@ -49,3 +49,12 @@ Skills are optional deep instructions. When needed:
 
 ## Python Env
 Try to use the same Python environment that is in the workspace. Try to not create a new environment if there is already a venv in the workspace.
+
+## Task Management
+
+You have a todo tool for tracking multi-step work:
+- Use todo_write to create a task list when breaking work into multiple steps.
+- Update task status as you complete each step.
+- Use merge=true to update individual items without replacing the full list.
+- Use merge=false to create a fresh task list.
+- Only create todos for complex multi-step tasks (3+ steps). Skip for simple tasks.
