@@ -12,8 +12,8 @@ import (
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
-	agenttools "valinor/internal/tools"
 	"valinor/internal/tokens"
+	agenttools "valinor/internal/tools"
 )
 
 // Metadata holds session metadata persisted in SQLite.
@@ -40,6 +40,7 @@ type Session struct {
 	config        config.Config
 	maxIterations int
 	runtime       *sandbox.Runtime
+	lastUsage     llm.Usage // last real token usage from API response
 	mu            sync.Mutex
 }
 
@@ -99,6 +100,7 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 	}
 
 	s.mu.Lock()
+	s.lastUsage = result.Usage
 	persistMessages := s.agentContext.CompleteRun(result.Messages)
 	s.mu.Unlock()
 	if err := s.store.SaveMessages(ctx, persistMessages); err != nil {
@@ -111,6 +113,7 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 func (s *Session) ResetConversation(ctx context.Context) error {
 	s.mu.Lock()
 	s.agentContext.Reset()
+	s.lastUsage = llm.Usage{} // reset cached usage
 	persistMessages := s.agentContext.Messages()
 	s.mu.Unlock()
 	if err := s.store.SaveMessages(ctx, persistMessages); err != nil {
@@ -173,10 +176,20 @@ func (s *Session) Meta() Metadata {
 	return s.meta
 }
 
-// ContextTokenCount returns the estimated token count of the current conversation context.
-func (s *Session) ContextTokenCount() int64 {
+// ContextTokenCount returns the token count of the current conversation context.
+// It prefers real prompt token usage from the last API response when available,
+// because context size is the number of input tokens sent back to the model.
+// The second return value indicates whether the count is estimated (true) or
+// real (false).
+func (s *Session) ContextTokenCount() (int64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lastUsage.PromptTokens > 0 {
+		return s.lastUsage.PromptTokens, false
+	}
+	if s.lastUsage.TotalTokens > 0 {
+		return s.lastUsage.TotalTokens, false
+	}
 	messages := s.agentContext.Messages()
-	return tokens.EstimatePromptTokens(messages)
+	return tokens.EstimatePromptTokens(messages), true
 }

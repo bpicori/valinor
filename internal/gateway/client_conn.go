@@ -187,8 +187,8 @@ func (c *ClientConnection) handleHandshake() bool {
 
 	// Send success response
 	meta := sess.Meta()
-	contextTokens := sess.ContextTokenCount()
-	c.sendHandshakeResponse(true, "", identity.SessionKey(meta.ID), meta.Provider, meta.Model, contextTokens, true)
+	contextTokens, estimated := sess.ContextTokenCount()
+	c.sendHandshakeResponse(true, "", identity.SessionKey(meta.ID), meta.Provider, meta.Model, contextTokens, estimated)
 
 	logger.Info("gateway: client connected",
 		logger.BuildMetadata("identity", identity.Key(),

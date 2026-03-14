@@ -6,24 +6,43 @@ import (
 	"time"
 )
 
+// maxBusyDuration is the maximum time a request can be busy before being
+// considered stale. This prevents chats from being stuck forever if events
+// are lost due to crashes or network issues.
+const maxBusyDuration = 1 * time.Minute
+
 // messageTracker tracks the state for a single chat's current streaming message.
 // This is intentionally minimal - session info lives in the Bridge, not here.
 type messageTracker struct {
 	streamingMsgID int64
 	busy           bool
+	busySince      time.Time // when busy was set, for staleness detection
 	requestID      string
 	contentBuf     strings.Builder
 	nextTypingAt   time.Time
 }
 
 // isBusy returns true if the chat is currently processing a request.
+// It also checks for stale busy state (e.g., due to lost events) and
+// auto-resets if the busy duration exceeds maxBusyDuration.
 func (t *messageTracker) isBusy() bool {
-	return t.busy
+	if !t.busy {
+		return false
+	}
+
+	// Check for stale busy state - auto-reset if busy for too long
+	if !t.busySince.IsZero() && time.Since(t.busySince) > maxBusyDuration {
+		t.markIdle()
+		return false
+	}
+
+	return true
 }
 
 // markBusy sets the tracker as busy with the given request ID.
 func (t *messageTracker) markBusy(requestID string) {
 	t.busy = true
+	t.busySince = time.Now()
 	t.requestID = requestID
 	t.contentBuf.Reset()
 	t.streamingMsgID = 0
@@ -33,6 +52,7 @@ func (t *messageTracker) markBusy(requestID string) {
 // markIdle clears the busy state and resets transient fields.
 func (t *messageTracker) markIdle() {
 	t.busy = false
+	t.busySince = time.Time{}
 	t.requestID = ""
 	t.contentBuf.Reset()
 	t.streamingMsgID = 0

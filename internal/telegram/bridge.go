@@ -305,6 +305,7 @@ func (b *Bridge) readLoop() {
 					logger.BuildMetadata("error", err, "type", env.Type))
 				continue
 			}
+			b.applyEventState(ev)
 			select {
 			case b.eventsChan <- chatEvent{identity: b.identity, event: ev}:
 			case <-b.ctx.Done():
@@ -402,4 +403,38 @@ func (b *Bridge) parseEvent(env gateway.WireEnvelope) (gateway.Event, error) {
 	}
 	ev.RequestID = env.RequestID
 	return ev, nil
+}
+
+func (b *Bridge) applyEventState(ev gateway.Event) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	switch ev.Type {
+	case event.SessionAttached:
+		payload, ok := ev.Payload.(gateway.SessionAttachedPayload)
+		if !ok {
+			return
+		}
+		b.sessionKey = payload.SessionKey
+		b.provider = payload.Provider
+		b.model = payload.Model
+	case event.ChangeModelEvent:
+		payload, ok := ev.Payload.(gateway.ChangeProviderModelPayload)
+		if !ok {
+			return
+		}
+		if payload.Provider != "" {
+			b.provider = payload.Provider
+		}
+		if payload.Model != "" {
+			b.model = payload.Model
+		}
+	case event.ContextTokens:
+		payload, ok := ev.Payload.(gateway.ContextTokensPayload)
+		if !ok {
+			return
+		}
+		b.contextTokens = payload.PromptTokens
+		b.tokensEstimated = payload.Estimated
+	}
 }

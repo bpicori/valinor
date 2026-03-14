@@ -93,4 +93,5 @@ type RunRequest struct {
 // RunResult returns the updated messages after the loop.
 type RunResult struct {
 	Messages []agentcontext.Message
+	Usage    Usage // real token counts from the API response
 }

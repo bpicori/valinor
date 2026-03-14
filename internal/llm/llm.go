@@ -72,12 +72,12 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	for {
 		// Check for cancellation before each iteration
 		if err := ctx.Err(); err != nil {
-			if errors.Is(err, context.Canceled) {
-				logger.Info("llm run cancelled by user", nil)
-				publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
-				return RunResult{Messages: messages}, nil
-			}
-			return RunResult{}, err
+		if errors.Is(err, context.Canceled) {
+			logger.Info("llm run cancelled by user", nil)
+			publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
+			return RunResult{Messages: messages, Usage: usage}, nil
+		}
+		return RunResult{}, err
 		}
 
 		if iterations >= l.maxIterations {
@@ -112,11 +112,11 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		})
 		if err != nil {
 			// Handle user cancellation gracefully
-			if errors.Is(err, context.Canceled) {
-				logger.Info("llm stream cancelled by user", nil)
-				publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
-				return RunResult{Messages: messages}, nil
-			}
+		if errors.Is(err, context.Canceled) {
+			logger.Info("llm stream cancelled by user", nil)
+			publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
+			return RunResult{Messages: messages, Usage: usage}, nil
+		}
 			logger.Error("llm stream error", logger.BuildMetadata("error", err))
 			publishEvent(event.AgentError, event.AgentErrorPayload{Error: err})
 			return RunResult{}, err
@@ -143,13 +143,13 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Role:    agentcontext.RoleAssistant,
 				Content: result.Message.Content,
 			})
-			publishEvent(event.AgentDone, event.AgentDonePayload{
-				PromptTokens:     usage.PromptTokens,
-				CompletionTokens: usage.CompletionTokens,
-				TotalTokens:      usage.TotalTokens,
-			})
-			logger.Debug("llm iteration done", logger.BuildMetadata("iteration", iterations))
-			return RunResult{Messages: messages}, nil
+		publishEvent(event.AgentDone, event.AgentDonePayload{
+			PromptTokens:     usage.PromptTokens,
+			CompletionTokens: usage.CompletionTokens,
+			TotalTokens:      usage.TotalTokens,
+		})
+		logger.Debug("llm iteration done", logger.BuildMetadata("iteration", iterations, "usage", usage))
+		return RunResult{Messages: messages, Usage: usage}, nil
 		}
 
 		// Handle tool calls

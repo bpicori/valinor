@@ -12,7 +12,8 @@ import (
 // sessionWorker owns the execution state for a single session.
 // Each worker processes commands sequentially for its session only.
 type sessionWorker struct {
-	session *Session
+	session       *Session
+	publishTokens func(*Session) // callback to publish context tokens after run
 
 	mu            sync.Mutex
 	runCancel     context.CancelFunc
@@ -20,9 +21,10 @@ type sessionWorker struct {
 }
 
 // newSessionWorker creates a new worker for the given session.
-func newSessionWorker(sess *Session) *sessionWorker {
+func newSessionWorker(sess *Session, publishTokens func(*Session)) *sessionWorker {
 	return &sessionWorker{
-		session: sess,
+		session:       sess,
+		publishTokens: publishTokens,
 	}
 }
 
@@ -42,6 +44,11 @@ func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string,
 
 	// Execute the run
 	err := w.session.RunInteraction(runCtx, requestID, content)
+
+	// Publish updated context tokens with real usage after successful run
+	if err == nil && w.publishTokens != nil {
+		w.publishTokens(w.session)
+	}
 
 	w.mu.Lock()
 	w.runCancel = nil

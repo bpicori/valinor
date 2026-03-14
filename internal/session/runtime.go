@@ -9,7 +9,6 @@ import (
 	"valinor/internal/event"
 	"valinor/internal/event_bus"
 	"valinor/internal/logger"
-	"valinor/internal/tokens"
 )
 
 // EventEmitter is a callback for emitting events with session context.
@@ -88,8 +87,8 @@ func (r *Runtime) RegisterSession(sess *Session) error {
 		return nil
 	}
 
-	// Create new worker
-	worker := newSessionWorker(sess)
+	// Create new worker with callback to publish context tokens
+	worker := newSessionWorker(sess, func(s *Session) { r.publishContextTokens(s) })
 	r.workers[sessionID] = worker
 
 	return nil
@@ -317,13 +316,12 @@ func (r *Runtime) publishContextTokens(sess *Session) {
 	if sess == nil {
 		return
 	}
-	messages := sess.agentContext.Messages()
-	promptTokens := tokens.EstimatePromptTokens(messages)
+	promptTokens, estimated := sess.ContextTokenCount()
 	event_bus.Publish(event.Event{
 		Type: event.ContextTokens,
 		Payload: event.ContextTokensPayload{
 			PromptTokens: promptTokens,
-			Estimated:    true,
+			Estimated:    estimated,
 		},
 		SessionID: sess.Meta().ID,
 	})
