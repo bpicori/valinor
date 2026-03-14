@@ -176,6 +176,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	if err != nil {
 		logger.Error("scheduler: failed to mark job executed",
 			logger.BuildMetadata("job_id", job.ID, "error", err))
+		s.recordRun(job.ID, at, "error", fmt.Sprintf("Failed to mark job executed: %v", err))
 		return
 	}
 	if !ok {
@@ -200,6 +201,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	if err != nil {
 		logger.Error("scheduler: failed to create session for job",
 			logger.BuildMetadata("job_id", job.ID, "error", err))
+		s.recordRun(job.ID, at, "error", fmt.Sprintf("Failed to create session: %v", err))
 		return
 	}
 
@@ -220,41 +222,76 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 			logger.BuildMetadata("job_id", job.ID, "error", err))
 	}
 
-	// If there was an execution error, report it
+	// If there was an execution error, record failure
 	if execErr != nil {
-		logger.Warning("scheduler: job execution failed without notification",
+		logger.Warning("scheduler: job execution failed",
 			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "error", execErr))
+		s.recordRun(job.ID, at, "error", fmt.Sprintf("Execution failed: %v", execErr))
 		return
 	}
 
 	resultContent = normalizeScheduledJobContent(resultContent)
 
+	// Record successful run
+	s.recordRun(job.ID, at, "ok", resultContent)
+
 	// If we got no content at all, the agent decided not to notify (condition not met)
 	if resultContent == "" {
 		logger.Debug("scheduler: job completed with no output (condition not met or silent run)",
 			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
-		return
 	}
 
-	// Publish CronJobResult event (no session ID = broadcast to all clients)
-	logger.Debug("scheduler: publishing job result",
-		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(resultContent)))
+	// Publish CronJobResult event if there's content to notify (no session ID = broadcast to all clients)
+	if resultContent != "" {
+		logger.Debug("scheduler: publishing job result",
+			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(resultContent)))
 
-	event_bus.Publish(event.Event{
-		Type: event.CronJobResult,
-		Payload: event.CronJobResultPayload{
-			JobID:     job.ID,
-			JobName:   job.Name,
-			Content:   resultContent,
-			Timestamp: time.Now(),
-		},
-		// Explicitly broadcast to all clients (not session-targeted)
-		SessionID: "",
-		RequestID: job.ID, // Use job ID for correlation
-	})
+		event_bus.Publish(event.Event{
+			Type: event.CronJobResult,
+			Payload: event.CronJobResultPayload{
+				JobID:     job.ID,
+				JobName:   job.Name,
+				Content:   resultContent,
+				Timestamp: time.Now(),
+			},
+			// Explicitly broadcast to all clients (not session-targeted)
+			SessionID: "",
+			RequestID: job.ID, // Use job ID for correlation
+		})
 
-	logger.Info("scheduler: job completed with notification",
-		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
+		logger.Info("scheduler: job completed with notification",
+			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
+	}
+
+	// Delete one-time jobs after execution (regardless of output)
+	if job.Schedule.Kind == cron.ScheduleAt {
+		s.deleteOneTimeJob(job)
+	}
+}
+
+// recordRun records a job execution in the cron service.
+func (s *Scheduler) recordRun(jobID string, at time.Time, status, output string) {
+	run := cron.JobRun{
+		JobID:   jobID,
+		FiredAt: at,
+		Status:  status,
+		Output:  output,
+	}
+	if err := s.cronService.RecordRun(run); err != nil {
+		logger.Warning("scheduler: failed to record job run",
+			logger.BuildMetadata("job_id", jobID, "error", err))
+	}
+}
+
+// deleteOneTimeJob permanently removes a one-time job after execution.
+func (s *Scheduler) deleteOneTimeJob(job *cron.CronJob) {
+	if err := s.cronService.DeleteJob(job.ID); err != nil {
+		logger.Warning("scheduler: failed to delete one-time job",
+			logger.BuildMetadata("job_id", job.ID, "error", err))
+	} else {
+		logger.Debug("scheduler: deleted one-time job",
+			logger.BuildMetadata("job_id", job.ID))
+	}
 }
 
 func lastAssistantContent(messages []agentcontext.Message) string {

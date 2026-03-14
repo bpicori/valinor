@@ -20,6 +20,7 @@ type cronServiceInterface interface {
 	ListJobs(enabledOnly bool) ([]*cron.CronJob, error)
 	RemoveJob(id string) (bool, error)
 	GetJob(id string) (*cron.CronJob, bool, error)
+	ListRuns(jobID string, limit int) ([]cron.JobRun, error)
 }
 
 // SetCronService sets the cron service for tool operations.
@@ -31,6 +32,7 @@ func SetCronService(svc cronServiceInterface) {
 const cronAddName = "cron_add"
 const cronListName = "cron_list"
 const cronRemoveName = "cron_remove"
+const cronHistoryName = "cron_history"
 
 // cronAddParams returns the parameters schema for cron_add.
 func cronAddParams() map[string]any {
@@ -259,4 +261,86 @@ func cronRemoveExec(args json.RawMessage) (string, error) {
 	}
 
 	return fmt.Sprintf("Removed cron job (ID: %s)", p.JobID), nil
+}
+
+// cronHistoryParams returns the parameters schema for cron_history.
+func cronHistoryParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"job_id": map[string]any{
+				"type":        "string",
+				"description": "Optional job ID to filter history to a specific job",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "Maximum number of runs to return (default: 10, max: 100)",
+			},
+		},
+		"required":             []string{},
+		"additionalProperties": false,
+	}
+}
+
+// cronHistoryExec executes the cron_history tool.
+func cronHistoryExec(args json.RawMessage) (string, error) {
+	if cronService == nil {
+		return "Error: cron service not initialized", nil
+	}
+
+	var p struct {
+		JobID string `json:"job_id,omitempty"`
+		Limit int    `json:"limit,omitempty"`
+	}
+	// Default limit
+	p.Limit = 10
+	_ = json.Unmarshal(args, &p)
+
+	// Cap limit at 100
+	if p.Limit <= 0 {
+		p.Limit = 10
+	}
+	if p.Limit > 100 {
+		p.Limit = 100
+	}
+
+	runs, err := cronService.ListRuns(p.JobID, p.Limit)
+	if err != nil {
+		logger.Error("cron_history failed", logger.BuildMetadata("error", err))
+		return fmt.Sprintf("Error listing job history: %v", err), nil
+	}
+
+	if len(runs) == 0 {
+		if p.JobID != "" {
+			return fmt.Sprintf("No run history found for job ID: %s", p.JobID), nil
+		}
+		return "No job run history found.", nil
+	}
+
+	var sb strings.Builder
+	if p.JobID != "" {
+		sb.WriteString(fmt.Sprintf("Run history for job %s (%d entries):\n\n", p.JobID, len(runs)))
+	} else {
+		sb.WriteString(fmt.Sprintf("Job run history (%d entries):\n\n", len(runs)))
+	}
+
+	for i, run := range runs {
+		statusEmoji := "✓"
+		if run.Status == "error" {
+			statusEmoji = "✗"
+		}
+
+		sb.WriteString(fmt.Sprintf("%d. %s %s (Job: %s)\n", i+1, statusEmoji, run.FiredAt.Format("2006-01-02 15:04 MST"), run.JobID))
+		sb.WriteString(fmt.Sprintf("   Status: %s\n", run.Status))
+		if run.Output != "" {
+			sb.WriteString(fmt.Sprintf("   Output: %.100s", run.Output))
+			if len(run.Output) > 100 {
+				sb.WriteString("...")
+			}
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String(), nil
 }

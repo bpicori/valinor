@@ -171,3 +171,18 @@ func (s *Service) StopPoller() {
 func (s *Service) Validate(schedule Schedule) error {
 	return schedule.Validate()
 }
+
+// DeleteJob permanently removes a job by ID.
+func (s *Service) DeleteJob(id string) error {
+	return s.store.DeleteJob(id)
+}
+
+// RecordRun records a job execution in the run history.
+func (s *Service) RecordRun(run JobRun) error {
+	return s.store.RecordRun(run)
+}
+
+// ListRuns returns job runs from the history, optionally filtered by job ID.
+func (s *Service) ListRuns(jobID string, limit int) ([]JobRun, error) {
+	return s.store.ListRuns(jobID, limit)
+}

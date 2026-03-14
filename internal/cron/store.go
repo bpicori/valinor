@@ -13,17 +13,22 @@ import (
 
 // Store provides persistent storage for cron jobs.
 type Store struct {
-	path string
-	mu   sync.RWMutex
+	path     string
+	runsPath string
+	mu       sync.RWMutex
 }
 
 // NewStore creates a new job store at the given directory.
 // Jobs are stored in a single JSON file at <dir>/jobs.json.
+// Job run history is stored at <dir>/runs.json.
 func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return nil, fmt.Errorf("create cron directory: %w", err)
 	}
-	return &Store{path: filepath.Join(dir, "jobs.json")}, nil
+	return &Store{
+		path:     filepath.Join(dir, "jobs.json"),
+		runsPath: filepath.Join(dir, "runs.json"),
+	}, nil
 }
 
 // jobsFile is the root structure of the persisted jobs file.
@@ -250,4 +255,113 @@ func (s *Store) MarkJobRun(id string, at time.Time) (*CronJob, bool, error) {
 func generateJobID() string {
 	// Short 12-char prefix of UUID is enough for internal IDs
 	return uuid.New().String()[:12]
+}
+
+// runsFile is the root structure of the persisted runs file.
+type runsFile struct {
+	Runs      []JobRun  `json:"runs"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Version   int       `json:"version"`
+}
+
+// LoadRuns reads all job runs from storage.
+func (s *Store) LoadRuns() ([]JobRun, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	data, err := os.ReadFile(s.runsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []JobRun{}, nil
+		}
+		return nil, fmt.Errorf("read runs file: %w", err)
+	}
+
+	var file runsFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, fmt.Errorf("parse runs file: %w", err)
+	}
+
+	return file.Runs, nil
+}
+
+// SaveRuns persists the given job runs atomically.
+func (s *Store) SaveRuns(runs []JobRun) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	file := runsFile{
+		Runs:      runs,
+		UpdatedAt: time.Now().UTC(),
+		Version:   1,
+	}
+
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal runs: %w", err)
+	}
+
+	// Write to temp file then rename for atomicity
+	tmpPath := s.runsPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return fmt.Errorf("write temp runs file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, s.runsPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename runs file: %w", err)
+	}
+
+	return nil
+}
+
+// RecordRun adds a new job run to the history.
+func (s *Store) RecordRun(run JobRun) error {
+	runs, err := s.LoadRuns()
+	if err != nil {
+		return err
+	}
+
+	// Truncate output before storing
+	run.TruncateOutput(2000)
+
+	// Add new run to the beginning
+	runs = append([]JobRun{run}, runs...)
+
+	// Keep only the last 1000 runs to prevent unbounded growth
+	if len(runs) > 1000 {
+		runs = runs[:1000]
+	}
+
+	return s.SaveRuns(runs)
+}
+
+// ListRuns returns job runs, optionally filtered by job ID, limited to the specified count.
+func (s *Store) ListRuns(jobID string, limit int) ([]JobRun, error) {
+	runs, err := s.LoadRuns()
+	if err != nil {
+		return nil, err
+	}
+
+	if limit <= 0 {
+		limit = 10
+	}
+
+	var filtered []JobRun
+	for _, run := range runs {
+		if jobID == "" || run.JobID == jobID {
+			filtered = append(filtered, run)
+			if len(filtered) >= limit {
+				break
+			}
+		}
+	}
+
+	return filtered, nil
+}
+
+// DeleteJob permanently removes a job by ID. Alias for RemoveJob.
+func (s *Store) DeleteJob(id string) error {
+	_, err := s.RemoveJob(id)
+	return err
 }

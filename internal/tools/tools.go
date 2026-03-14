@@ -95,6 +95,7 @@ func BuildTools(rt *sandbox.Runtime, workspaceDir string, providerCfg config.Pro
 		buildTool(cronAddName, "Create a new scheduled cron job that runs at a specified interval or one-time. Use for recurring tasks like reminders, periodic checks, or scheduled reports. Returns the created job ID.", cronAddParams(), runContext, cronAddExec),
 		buildTool(cronListName, "List scheduled cron jobs. Shows job names, IDs, schedules, and next run times. Use to see what tasks are scheduled or to find a job ID for removal.", cronListParams(), runContext, cronListExec),
 		buildTool(cronRemoveName, "Remove a scheduled cron job permanently by its ID. Use cron_list first to find the job ID. This cannot be undone.", cronRemoveParams(), runContext, cronRemoveExec),
+		buildTool(cronHistoryName, "View the execution history of scheduled cron jobs. Shows when jobs ran, their status (ok or error), and any output. Use to audit job performance or debug failures.", cronHistoryParams(), runContext, cronHistoryExec),
 	}
 
 	providerTools, err := buildProviderTools(providerCfg, model)

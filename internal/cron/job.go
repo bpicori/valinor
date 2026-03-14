@@ -140,6 +140,21 @@ func (j *CronJob) MarkRun(at time.Time) {
 	j.UpdatedAt = at
 }
 
+// JobRun represents a record of a job execution for audit and debugging.
+type JobRun struct {
+	JobID   string    `json:"job_id"`
+	FiredAt time.Time `json:"fired_at"`
+	Status  string    `json:"status"` // "ok" | "error"
+	Output  string    `json:"output"` // truncated to 2000 chars
+}
+
+// TruncateOutput limits the output to maxLength characters.
+func (r *JobRun) TruncateOutput(maxLength int) {
+	if len(r.Output) > maxLength {
+		r.Output = r.Output[:maxLength] + "... [truncated]"
+	}
+}
+
 // CronJobJSON is the serializable representation of a CronJob.
 // We use custom marshaling to handle time fields consistently.
 type cronJobJSON struct {
