@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	agentcontext "valinor/internal/context"
 
@@ -35,11 +36,23 @@ type Scheduler struct {
 	running bool
 }
 
+const noReplyPrefix = "NO_REPLY"
+
 // buildJobMessage wraps the cron job message with identifying metadata.
 // The agent runs with full context (system prompt, skills, memory, tools) and
 // decides based on the job message whether to respond or stay silent.
 func buildJobMessage(job *cron.CronJob) string {
-	return fmt.Sprintf("[Scheduled Job: %q | ID: %s]\n\n%s", job.Name, job.ID, job.Message)
+	return fmt.Sprintf(
+		"[Scheduled Job: %q | ID: %s]\n\n"+
+			"You are executing a scheduled job.\n"+
+			"If the job should not notify the user, respond with exactly NO_REPLY.\n"+
+			"If the job should notify the user, respond with only the alert text to send to the user.\n"+
+			"Do not explain your decision, and do not include any extra formatting before NO_REPLY.\n\n"+
+			"Task:\n%s",
+		job.Name,
+		job.ID,
+		job.Message,
+	)
 }
 
 // New creates a new scheduler with the given cron service.
@@ -214,7 +227,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 		return
 	}
 
-	resultContent = strings.TrimSpace(resultContent)
+	resultContent = normalizeScheduledJobContent(resultContent)
 
 	// If we got no content at all, the agent decided not to notify (condition not met)
 	if resultContent == "" {
@@ -251,4 +264,22 @@ func lastAssistantContent(messages []agentcontext.Message) string {
 		}
 	}
 	return ""
+}
+
+func normalizeScheduledJobContent(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+
+	if hasNoReplyPrefix(content) {
+		return ""
+	}
+
+	return content
+}
+
+func hasNoReplyPrefix(content string) bool {
+	trimmed := strings.TrimLeftFunc(content, unicode.IsSpace)
+	return strings.HasPrefix(trimmed, noReplyPrefix)
 }
