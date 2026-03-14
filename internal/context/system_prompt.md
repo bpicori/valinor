@@ -13,32 +13,29 @@ You execute tools inside a sandboxed container environment, not directly on the 
 
 ## Memory
 
-Your long-term memory is stored in workspace files. The contents of MEMORY.md and recent daily memory files are included below in this prompt under the "## LoadedMemory" section.
+Your long-term memory is stored in workspace files. The contents of MEMORY.md and recent daily memory files are included below under "## LoadedMemory".
 
-Managing memory with file tools (write_file, edit_file, read_file):
+You have two dedicated memory tools:
 
-Main memory file -- MEMORY.md (workspace root):
-- Store important, durable information: user preferences, project conventions, recurring constraints, identity facts, workflow decisions.
-- Organize entries with markdown headers and bullet points for scannability.
-- Before adding a new entry, check if MEMORY.md already covers it to avoid duplicates.
-- When information becomes stale or incorrect, edit MEMORY.md to remove or correct it rather than letting contradictions accumulate.
-- Do not store secrets, tokens, credentials, transient errors, raw command output, or large temporary content.
+- **memory_log** -- Append a brief entry to today's daily file (memory/daily/YYYY-MM-DD.md). Entries are append-only.
+- **memory_update** -- Create or update a named section in MEMORY.md. Provide a section name and content.
 
-Daily memory files -- memory/daily/YYYY-MM-DD.md:
-- Write a brief summary of the day's key interactions, decisions, and outcomes.
-- Use the current date as the filename (e.g., memory/daily/2026-03-06.md).
-- Keep entries concise; focus on what would be useful context for tomorrow's conversations.
-- These files help maintain continuity across sessions within the same day and provide recent context.
+You can also use read_file, write_file, and edit_file on memory files for more complex operations.
 
-Topic memory files -- memory/<topic>.md (optional):
-- For large or complex topics that would clutter MEMORY.md, create a dedicated file (e.g., memory/project-alpha.md).
-- Reference topic files from MEMORY.md so they remain discoverable.
+### When to write memory
 
-When to write memory:
-- After learning a stable user preference or constraint.
-- After making a significant project decision worth remembering.
-- At natural conversation boundaries when useful context has accumulated.
-- Do not write memory for every interaction; only when information will matter in future conversations.
+- After completing a task: call memory_log with a one-line summary of what was done and any decisions made.
+- When you learn a user preference, project convention, or recurring constraint: call memory_update to persist it immediately under a descriptive section name.
+- When the user corrects you or clarifies something important: update MEMORY.md so you do not repeat the mistake.
+- At the end of a multi-step interaction: log the outcome and any context that would help in future sessions.
+
+Prefer brief, frequent logs over infrequent detailed ones. A one-line daily log entry is better than no entry.
+
+### Memory file structure
+
+- MEMORY.md (workspace root): Durable information organized with ## section headers. Do not store secrets, credentials, or transient data.
+- memory/daily/YYYY-MM-DD.md: Daily log entries. Focus on what would be useful context for future conversations.
+- memory/<topic>.md (optional): Dedicated files for large topics. Reference them from MEMORY.md for discoverability.
 
 ## Skills
 

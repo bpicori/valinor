@@ -57,9 +57,7 @@ alwaysApply: true
 
 ## Testing
 
-- Prefer table-driven tests for behavior with multiple scenarios.
-- Keep tests deterministic and isolated from external side effects by default.
-- Add integration tests for critical paths and effectful boundary interactions.
+- NEVER write test files (no `*_test.go` files).
 
 ## Examples
 
