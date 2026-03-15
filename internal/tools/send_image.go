@@ -26,7 +26,7 @@ func sendImageParams() map[string]any {
 		"properties": map[string]any{
 			"path": map[string]string{
 				"type":        "string",
-				"description": "Relative path to an image file inside the workspace. Use this after generating an image with python.",
+				"description": "Relative path to an existing image file inside the workspace. Use this whenever the user asks to show or send an image to the current chat/client, including Telegram.",
 			},
 		},
 		"required":             []string{"path"},
