@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"valinor/internal/config"
@@ -38,6 +39,17 @@ type gatewayDeps struct {
 	gw           *gateway.Server
 }
 
+var validModes = map[string]struct{}{
+	"gateway":  {},
+	"tui":      {},
+	"telegram": {},
+	"all":      {},
+}
+
+var validCommands = map[string]struct{}{
+	"build-docker-image": {},
+}
+
 // cleanup releases all resources in reverse initialization order.
 func (d *gatewayDeps) cleanup() {
 	if d.rtr != nil {
@@ -52,8 +64,11 @@ func (d *gatewayDeps) cleanup() {
 }
 
 func main() {
+	flag.CommandLine.SetOutput(os.Stderr)
+	flag.Usage = printUsage
+
 	var (
-		mode        = flag.String("mode", "tui", "Run mode: 'gateway', 'tui', 'telegram', or 'all'")
+		mode        = flag.String("mode", "", "Run mode: 'gateway', 'tui', 'telegram', or 'all'")
 		gatewayURL  = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui/telegram mode, defaults to config)")
 		identity    = flag.String("identity", "default", "Client identity for session routing (tui mode)")
 		showVersion = flag.Bool("version", false, "Print version information and exit")
@@ -65,13 +80,83 @@ func main() {
 		return
 	}
 
-	if err := run(*mode, *gatewayURL, *identity); err != nil {
+	cfg, err := config.LoadFromFile("config.toml")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: load config.toml: %v\n", err)
+		os.Exit(1)
+	}
+
+	command := strings.TrimSpace(flag.Arg(0))
+	if command != "" {
+		if err := validateCommand(command); err != nil {
+			flag.Usage()
+			fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+			os.Exit(2)
+		}
+		if err := runCommand(command, cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	if err := validateMode(*mode); err != nil {
+		flag.Usage()
+		fmt.Fprintf(os.Stderr, "\nError: %v\n", err)
+		os.Exit(2)
+	}
+
+	if err := run(*mode, *gatewayURL, *identity, cfg); err != nil {
 		logger.Error("valinor exit error", logger.BuildMetadata("error", err))
 		os.Exit(1)
 	}
 }
 
-func run(mode, gatewayURL, identity string) error {
+func printUsage() {
+	fmt.Fprintf(os.Stderr, "Usage:\n")
+	fmt.Fprintf(os.Stderr, "  %s -mode=<gateway|tui|telegram|all> [flags]\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s build-docker-image\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "Examples:")
+	fmt.Fprintf(os.Stderr, "  %s -mode=tui\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s -mode=gateway\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s build-docker-image\n\n", os.Args[0])
+	flag.PrintDefaults()
+}
+
+func validateMode(mode string) error {
+	mode = strings.TrimSpace(mode)
+	if mode == "" {
+		return fmt.Errorf("-mode is required")
+	}
+	if _, ok := validModes[mode]; !ok {
+		return fmt.Errorf("invalid mode %q: must be one of gateway, tui, telegram, or all", mode)
+	}
+	return nil
+}
+
+func validateCommand(command string) error {
+	if _, ok := validCommands[command]; !ok {
+		return fmt.Errorf("unknown command %q", command)
+	}
+	return nil
+}
+
+func runCommand(command string, cfg config.Config) error {
+	switch command {
+	case "build-docker-image":
+		image := cfg.SandboxImage
+		fmt.Fprintf(os.Stdout, "Building sandbox image %q with Podman...\n", image)
+		if err := sandbox.BuildImage(context.Background(), image, os.Stdout, os.Stderr); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stdout, "Sandbox image %q built successfully.\n", image)
+		return nil
+	default:
+		return fmt.Errorf("unknown command %q", command)
+	}
+}
+
+func run(mode, gatewayURL, identity string, cfg config.Config) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -83,13 +168,6 @@ func run(mode, gatewayURL, identity string) error {
 		logger.Info("shutdown signal received", nil)
 		cancel()
 	}()
-
-	// Load configuration (needed by both modes)
-	cfg, err := config.LoadFromFile("config.toml")
-	if err != nil {
-		logger.Error("load config failed", logger.BuildMetadata("error", err))
-		return err
-	}
 
 	switch mode {
 	case "gateway":

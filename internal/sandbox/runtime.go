@@ -16,6 +16,7 @@ import (
 const (
 	fsToolTimeout           = 30 * time.Second
 	defaultMaxConcurrentOps = 10
+	podmanInstallURL        = "https://podman.io/docs/installation"
 )
 
 // Runtime holds workspace and execution context for tool calls.
@@ -94,13 +95,18 @@ func NewRuntime(dir, image string) (*Runtime, error) {
 
 // checkPodmanInstalled verifies that podman is installed and accessible.
 func checkPodmanInstalled() error {
+	if _, err := exec.LookPath("podman"); err != nil {
+		logger.Error("podman is not installed", logger.BuildMetadata("error", err))
+		return fmt.Errorf("podman is not installed or not found in PATH.\n\nInstall Podman first: %s", podmanInstallURL)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "podman", "version")
 	if err := cmd.Run(); err != nil {
-		logger.Error("podman is not installed or not accessible", logger.BuildMetadata("error", err))
-		return fmt.Errorf("podman is not installed or not accessible in PATH: %w\n\nTo install Podman:\n  - macOS: brew install podman && podman machine init && podman machine start\n  - Linux: sudo apt install podman  (or your distro's package manager)\n  - See: https://podman.io/docs/installation", err)
+		logger.Error("podman is installed but not accessible", logger.BuildMetadata("error", err))
+		return fmt.Errorf("podman is installed but not accessible: %w\n\nIf you're on macOS, make sure the Podman machine is initialized and running:\n  podman machine init\n  podman machine start\n\nInstallation and setup instructions: %s", err, podmanInstallURL)
 	}
 	logger.Debug("podman is installed and accessible", nil)
 	return nil
@@ -121,7 +127,7 @@ func ensureSandboxImage(image string) error {
 
 	// Image doesn't exist - provide clear instructions
 	logger.Error("sandbox image not found", logger.BuildMetadata("image", image))
-	return fmt.Errorf("sandbox image '%s' not found locally\n\nTo build the image, run:\n  podman build -t %s -f internal/sandbox/Containerfile .\n\nOr if using make:\n  make build-sandbox", image, image)
+	return fmt.Errorf("sandbox image %q was not found locally.\n\nBuild it with:\n  valinor build-docker-image\n\nOr, from the source tree:\n  make build-sandbox\n  podman build -t %s -f internal/sandbox/Dockerfile.sandbox .", image, image)
 }
 
 // RunCommand executes a shell command inside the container.
