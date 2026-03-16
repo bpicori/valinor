@@ -18,6 +18,7 @@ import (
 	"valinor/internal/telegram"
 	"valinor/internal/tools"
 	"valinor/internal/tui"
+	"valinor/internal/version"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -52,11 +53,17 @@ func (d *gatewayDeps) cleanup() {
 
 func main() {
 	var (
-		mode       = flag.String("mode", "tui", "Run mode: 'gateway', 'tui', 'telegram', or 'all'")
-		gatewayURL = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui/telegram mode, defaults to config)")
-		identity   = flag.String("identity", "default", "Client identity for session routing (tui mode)")
+		mode        = flag.String("mode", "tui", "Run mode: 'gateway', 'tui', 'telegram', or 'all'")
+		gatewayURL  = flag.String("gateway-url", "", "Gateway WebSocket URL (for tui/telegram mode, defaults to config)")
+		identity    = flag.String("identity", "default", "Client identity for session routing (tui mode)")
+		showVersion = flag.Bool("version", false, "Print version information and exit")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version.String())
+		return
+	}
 
 	if err := run(*mode, *gatewayURL, *identity); err != nil {
 		logger.Error("valinor exit error", logger.BuildMetadata("error", err))

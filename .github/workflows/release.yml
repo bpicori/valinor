@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-master
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Determine release version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          existing_tag="$(git tag --points-at "${GITHUB_SHA}" --list 'v*.*.*' --sort=-version:refname | head -n1 || true)"
+          if [[ -n "${existing_tag}" ]]; then
+            echo "version=${existing_tag}" >> "${GITHUB_OUTPUT}"
+            echo "tag_exists=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          latest_tag="$(git tag --list 'v*.*.*' --sort=-version:refname | head -n1 || true)"
+          if [[ -z "${latest_tag}" ]]; then
+            next_version="v0.1.0"
+          elif [[ "${latest_tag}" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            major="${BASH_REMATCH[1]}"
+            minor="${BASH_REMATCH[2]}"
+            patch="${BASH_REMATCH[3]}"
+            next_version="v${major}.${minor}.$((patch + 1))"
+          else
+            echo "Latest tag '${latest_tag}' is not in vX.Y.Z format." >&2
+            exit 1
+          fi
+
+          echo "version=${next_version}" >> "${GITHUB_OUTPUT}"
+          echo "tag_exists=false" >> "${GITHUB_OUTPUT}"
+
+      - name: Create release tag
+        if: steps.version.outputs.tag_exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag "${{ steps.version.outputs.version }}" "${GITHUB_SHA}"
+          git push origin "${{ steps.version.outputs.version }}"
+
+      - name: Build release archives
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          short_sha="${GITHUB_SHA::7}"
+
+          for goos in darwin linux; do
+            for goarch in amd64 arm64; do
+              archive_base="valinor_${VERSION#v}_${goos}_${goarch}"
+              output_dir="dist/${archive_base}"
+              binary_path="${output_dir}/valinor"
+
+              mkdir -p "${output_dir}"
+
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+                go build -trimpath \
+                -ldflags="-s -w -X valinor/internal/version.Version=${VERSION} -X valinor/internal/version.Commit=${short_sha} -X valinor/internal/version.BuildDate=${build_date}" \
+                -o "${binary_path}" \
+                ./cmd/valinor
+
+              tar -C "dist" -czf "dist/${archive_base}.tar.gz" "${archive_base}"
+              rm -rf "${output_dir}"
+            done
+          done
+
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            gh release upload "${VERSION}" dist/*.tar.gz --clobber
+          else
+            gh release create "${VERSION}" dist/*.tar.gz \
+              --title "${VERSION}" \
+              --notes "Automated release for commit ${GITHUB_SHA}."
+          fi
