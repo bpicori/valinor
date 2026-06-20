@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/charmbracelet/glamour"
@@ -23,28 +22,21 @@ const (
 	defaultWidth    = 80 // default width when content width is too small
 )
 
-// rendererCache stores glamour.TermRenderer instances keyed by width.
-// This avoids the expensive allocation of creating a new renderer on every call.
-var rendererCache sync.Map // map[int]*glamour.TermRenderer
-
 // renderMarkdown converts a markdown string to styled ANSI terminal output.
-// Uses glamour with "dark" style and word-wrapping to the given width.
+// Uses the GrokNight glamour style and word-wrapping to the given width.
 // The renderer is cached per width to avoid repeated allocations.
 func renderMarkdown(content string, width int) string {
 	if content == "" {
 		return ""
 	}
 
-	r, ok := rendererCache.Load(width)
+	r, ok := markdownRendererCache.Load(width)
 	if !ok {
-		newR, err := glamour.NewTermRenderer(
-			glamour.WithStylePath("dark"),
-			glamour.WithWordWrap(width),
-		)
+		newR, err := newMarkdownRenderer(width)
 		if err != nil {
 			return content // fallback to raw text
 		}
-		r, _ = rendererCache.LoadOrStore(width, newR)
+		r, _ = markdownRendererCache.LoadOrStore(width, newR)
 	}
 
 	renderer := r.(*glamour.TermRenderer)
@@ -56,21 +48,20 @@ func renderMarkdown(content string, width int) string {
 }
 
 // formatToolCall renders a tool call in compact reference style:
-// → Read cmd/valinor/main.go  or  * Glob "*" (100 matches)
+// ◆ Read cmd/valinor/main.go  or  ◆ Glob "*" (100 matches)
 func formatToolCall(tc toolCall) string {
 	var b strings.Builder
-	b.WriteString(toolCallStyle.Render(""))
 	primary := extractPrimaryToolArg(tc)
 
-	b.WriteString(toolCallStyle.Render("→ "))
-	b.WriteString(toolNameStyle.Render(tc.Name))
+	b.WriteString(themeStyles.ToolCall.Render("◆ "))
+	b.WriteString(themeStyles.ToolName.Render(tc.Name))
 	if primary != "" {
-		b.WriteString(toolCallStyle.Render(" "))
-		b.WriteString(pathStyle.Render(primary))
+		b.WriteString(themeStyles.ToolCall.Render(" "))
+		b.WriteString(themeStyles.ToolPath.Render(primary))
 	}
 	if tc.Done && tc.Result != "" {
 		if summary := formatToolResultSummary(tc.Result); summary != "" {
-			b.WriteString(toolCallStyle.Render(" " + summary))
+			b.WriteString(themeStyles.ToolCall.Render(" " + summary))
 		}
 	}
 	b.WriteString("\n")
@@ -184,31 +175,31 @@ func (m *Model) appendStreamingContent() {
 }
 
 func renderUserMessageBlock(msg chatMessage, width int) string {
-	contentStyle := lipgloss.NewStyle().Background(lipgloss.Color("235"))
-	body := userPrefixStyle.Render("> ") + contentStyle.Render(msg.Content)
-	return userMessageBlockStyle.Width(width - 4).Render(body)
+	body := themeStyles.UserPrefix.Render("> ") + msg.Content
+	content := lipgloss.JoinHorizontal(lipgloss.Top,
+		renderAccentLine(true),
+		" ",
+		themeStyles.UserMessageBody.Render(body),
+	)
+	return themeStyles.UserMessageBlock.Width(width - 2).Render(content)
 }
 
 func renderAssistantMessageBlock(msg chatMessage, width int) string {
-	return assistantMessageBlockStyle.Width(width - 4).Render(renderAssistantBody(msg))
+	return themeStyles.AssistantMessageBlock.Width(width - 2).Render(renderAssistantBody(msg))
 }
 
 func renderSystemMessageBlock(msg chatMessage, width int) string {
-	systemStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		PaddingLeft(2)
 	body := msg.Content
 	if msg.Rendered != "" {
 		body = msg.Rendered
 	}
-	return assistantMessageBlockStyle.Width(width - 4).Render(systemStyle.Render(body))
+	return themeStyles.AssistantMessageBlock.Width(width - 2).Render(themeStyles.SystemMessage.Render(body))
 }
 
 func renderAssistantBody(msg chatMessage) string {
 	var body strings.Builder
 	if msg.Error != "" {
-		body.WriteString(assistantStyle.Render(""))
-		body.WriteString(errorStyle.Render("Error: " + msg.Error))
+		body.WriteString(themeStyles.Error.Render("Error: " + msg.Error))
 		return body.String()
 	}
 
@@ -216,11 +207,12 @@ func renderAssistantBody(msg chatMessage) string {
 		body.WriteString(formatToolCall(tc))
 	}
 
-	body.WriteString(assistantStyle.Render(""))
 	if msg.Streaming {
-		body.WriteString(msg.Content)
+		body.WriteString(themeStyles.Assistant.Render(msg.Content))
 	} else if msg.Rendered != "" {
 		body.WriteString(msg.Rendered)
+	} else if msg.Content != "" {
+		body.WriteString(themeStyles.Assistant.Render(msg.Content))
 	}
 
 	return body.String()
@@ -242,10 +234,64 @@ func formatTokens(n int64) string {
 	return b.String()
 }
 
+func (m Model) renderInputBox() string {
+	inputStyle := themeStyles.InputBorder
+	accentStyle := themeStyles.InputAccentInactive
+	if m.textinput.Focused() {
+		inputStyle = themeStyles.InputBorderActive
+		accentStyle = themeStyles.InputAccent
+	}
+	row := lipgloss.JoinHorizontal(lipgloss.Top,
+		accentStyle.Render(accentChar),
+		" ",
+		m.textinput.View(),
+	)
+	return themeStyles.InputContainer.
+		Width(m.contentWidth).
+		Render(inputStyle.Width(m.contentWidth - 2).Render(row))
+}
+
+func (m Model) renderStatusBar() string {
+	gatewayDot := themeStyles.GatewayConnected.Render("●")
+	gatewayLabel := "connected"
+	if !m.gatewayConnected {
+		gatewayDot = themeStyles.GatewayDisconnected.Render("●")
+		gatewayLabel = "disconnected"
+		if status := strings.TrimSpace(m.gatewayStatus); status != "" {
+			gatewayLabel += " (" + truncateMiddle(status, 24) + ")"
+		}
+	}
+
+	providerModel := m.modelName
+	if m.providerName != "" {
+		providerModel = m.providerName + " / " + m.modelName
+	}
+	if strings.TrimSpace(providerModel) == "" {
+		providerModel = "no model"
+	}
+
+	contextLabel := "ctx "
+	if m.contextEstimated {
+		contextLabel = "ctx ~ "
+	}
+
+	var parts []string
+	parts = append(parts, gatewayDot+" "+themeStyles.FooterStrong.Render(gatewayLabel))
+	parts = append(parts, themeStyles.FooterStrong.Render(truncateMiddle(providerModel, 40)))
+	parts = append(parts, themeStyles.TokensLabel.Render(contextLabel)+themeStyles.TokensValue.Render(formatTokens(m.contextPrompt)))
+	parts = append(parts, themeStyles.Hint.Render("ctrl+m"))
+
+	status := parts[0]
+	for i := 1; i < len(parts); i++ {
+		status += renderSeparator() + parts[i]
+	}
+	return themeStyles.Footer.Width(m.width).Render(status)
+}
+
 // View renders the UI.
 func (m Model) View() string {
 	if !m.ready {
-		return "\n  Initializing..."
+		return applyBackground(themeStyles.Hint.Render("\n  Initializing..."), m.width, m.height)
 	}
 
 	if m.state == stateModelPicker {
@@ -259,64 +305,30 @@ func (m Model) View() string {
 		if m.modelPickerErr != "" {
 			helpText += " • using fallback list"
 		}
-		help := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(helpText)
-		return lipgloss.JoinVertical(lipgloss.Left,
+		content := lipgloss.JoinVertical(lipgloss.Left,
 			lipgloss.NewStyle().Padding(1, 2).Render(m.modelPicker.View()),
-			help,
+			themeStyles.Hint.Render(helpText),
 		)
+		return applyBackground(content, m.width, m.height)
 	}
 
 	spinnerLine := ""
 	if m.state == stateWaiting {
 		elapsed := int(time.Since(m.thinkingStartedAt).Seconds())
-		spinnerLine = spinnerStyle.Render(m.spinner.View()) + " Thinking... " + strconv.Itoa(elapsed) + "s"
-		cancelHint := lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(" (esc to cancel)")
-		spinnerLine = spinnerLine + cancelHint + "\n"
+		spinnerLine = lipgloss.JoinHorizontal(lipgloss.Top,
+			renderAccentLine(true),
+			" ",
+			themeStyles.Spinner.Render(m.spinner.View())+
+				themeStyles.Thinking.Render(" Thinking... "+strconv.Itoa(elapsed)+"s")+
+				themeStyles.Hint.Render(" (esc to cancel)"),
+		) + "\n"
 	}
-
-	inputBox := inputBorderStyle.Width(m.contentWidth - 2).Render(m.textinput.View())
 
 	mainContent := lipgloss.JoinVertical(lipgloss.Left,
 		lipgloss.NewStyle().PaddingTop(1).Render(m.viewport.View()),
 		spinnerLine,
-		inputBox,
+		m.renderInputBox(),
+		m.renderStatusBar(),
 	)
-	topRow := lipgloss.JoinHorizontal(lipgloss.Left, mainContent)
-
-	providerModel := m.modelName
-	if m.providerName != "" {
-		providerModel = m.providerName + " / " + m.modelName
-	}
-	sessionLabel := m.sessionKey
-	if strings.TrimSpace(sessionLabel) == "" {
-		sessionLabel = "(not attached)"
-	}
-	gatewayLabel := "Gateway: connected"
-	gatewayStyle := gatewayConnectedStyle
-	if !m.gatewayConnected {
-		gatewayLabel = "Gateway: disconnected"
-		gatewayStyle = gatewayDisconnectedStyle
-		if status := strings.TrimSpace(m.gatewayStatus); status != "" {
-			gatewayLabel += " (" + status + ")"
-		}
-	}
-	gatewayRow := footerStyle.Width(m.width).Render(gatewayStyle.Render(gatewayLabel))
-	sessionRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Session: " + sessionLabel))
-	modelRow := footerStyle.Width(m.width).Render(footerModelStyle.Render("Model: "+providerModel) + " (ctrl+m)")
-	contextLabel := "Context: "
-	if m.contextEstimated {
-		contextLabel = "Context (~): "
-	}
-	tokensText := tokensLabelStyle.Render(contextLabel) +
-		tokensValueStyle.Render(formatTokens(m.contextPrompt))
-	tokensRow := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder(), true, false, false, false).
-		BorderForeground(lipgloss.Color("238")).
-		Foreground(lipgloss.Color("241")).
-		Padding(0, 1).
-		Width(m.width).
-		Render(tokensText)
-
-	footer := lipgloss.JoinVertical(lipgloss.Left, gatewayRow, sessionRow, modelRow, tokensRow)
-	return lipgloss.JoinVertical(lipgloss.Left, topRow, footer)
+	return applyBackground(mainContent, m.width, m.height)
 }

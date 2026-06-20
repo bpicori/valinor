@@ -31,7 +31,11 @@ type CommandSender interface {
 }
 
 // Layout constants
-const sidebarWidth = 26
+const (
+	topPadding   = 1
+	inputHeight  = 3
+	footerHeight = 1
+)
 
 // Key bindings
 var (
@@ -167,18 +171,29 @@ func New(sender CommandSender, cfg config.Config, providerName, modelName string
 	ti.CharLimit = 0
 	ti.SetSuggestions([]string{"/new", "/clear", "/model", "/exit"})
 	ti.ShowSuggestions = true
+	ti.PromptStyle = themeStyles.UserPrefix
+	ti.TextStyle = lipgloss.NewStyle().Foreground(color(currentTheme.TextPrimary))
+	ti.PlaceholderStyle = themeStyles.Hint
+	ti.Cursor.Style = lipgloss.NewStyle().Foreground(color(currentTheme.AccentUser))
 
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
+	sp.Style = themeStyles.Spinner
 
 	items := buildProviderItems(cfg, providerName)
 	delegate := list.NewDefaultDelegate()
-	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.Bold(true)
+	delegate.Styles.NormalTitle = themeStyles.PickerNormalTitle
+	delegate.Styles.NormalDesc = themeStyles.PickerNormalDesc
+	delegate.Styles.SelectedTitle = themeStyles.PickerSelectedTitle
+	delegate.Styles.SelectedDesc = themeStyles.PickerSelectedDesc
 	l := list.New(items, delegate, 40, 14)
 	l.Title = "Select Provider"
 	l.SetShowStatusBar(false)
 	l.SetFilteringEnabled(true)
-	l.Styles.Title = lipgloss.NewStyle().Bold(true)
+	l.Styles.Title = themeStyles.PickerTitle
+	l.Styles.HelpStyle = themeStyles.Hint
+	l.Styles.FilterPrompt = themeStyles.Hint
+	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(color(currentTheme.AccentUser))
 
 	return Model{
 		sender:           sender,
@@ -492,15 +507,13 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
 	m.width = msg.Width
 	m.height = msg.Height
-	m.contentWidth = msg.Width - sidebarWidth
+	m.contentWidth = msg.Width
 	if m.contentWidth < 20 {
 		m.contentWidth = 20
 	}
 
 	spinnerHeight := 1
-	inputHeight := 5
-	footerHeight := 2
-	viewportHeight := msg.Height - spinnerHeight - inputHeight - footerHeight
+	viewportHeight := msg.Height - topPadding - spinnerHeight - inputHeight - footerHeight
 	if viewportHeight < 1 {
 		viewportHeight = 1
 	}
@@ -521,7 +534,7 @@ func (m *Model) handleWindowSizeMsg(msg tea.WindowSizeMsg) {
 		m.viewport.Height = viewportHeight
 	}
 
-	m.textinput.Width = m.contentWidth - 4
+	m.textinput.Width = m.contentWidth - 10
 	if m.state == stateModelPicker && m.contentWidth > 4 && m.height > 6 {
 		m.modelPicker.SetSize(m.contentWidth-4, m.height-6)
 	}
