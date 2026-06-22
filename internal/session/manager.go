@@ -35,6 +35,8 @@ type CreateSessionOptions struct {
 	// Temporary creates an in-memory-only session without persistence.
 	// Temporary sessions do not require client binding.
 	Temporary bool
+	// WorkspaceDir overrides the default workspace for this session when set.
+	WorkspaceDir string
 }
 
 // Manager manages session lifecycle.
@@ -91,6 +93,9 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 
 	id := uuid.New().String()
 	workspaceDir := m.workspaceDir
+	if opts.WorkspaceDir != "" {
+		workspaceDir = opts.WorkspaceDir
+	}
 
 	now := time.Now()
 	titlePrefix := "Session"

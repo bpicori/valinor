@@ -164,6 +164,42 @@ func LoadSkills(workspaceDir string) ([]Skill, error) {
 	return out, nil
 }
 
+// LoadSkillBodies reads full skill file contents for the given skill names.
+// Unknown skill names are skipped. Returns empty string when no skills match.
+func LoadSkillBodies(workspaceDir string, skillNames []string) (string, error) {
+	if len(skillNames) == 0 {
+		return "", nil
+	}
+
+	catalog, err := LoadSkills(workspaceDir)
+	if err != nil {
+		return "", err
+	}
+
+	byName := make(map[string]Skill, len(catalog))
+	for _, skill := range catalog {
+		byName[skill.Name] = skill
+	}
+
+	var sb strings.Builder
+	for _, name := range skillNames {
+		skill, ok := byName[name]
+		if !ok {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(workspaceDir, skill.Path))
+		if err != nil {
+			return "", fmt.Errorf("read skill %q: %w", name, err)
+		}
+		sb.WriteString("## Skill: ")
+		sb.WriteString(name)
+		sb.WriteString("\n\n")
+		sb.WriteString(string(data))
+		sb.WriteString("\n\n")
+	}
+	return strings.TrimSpace(sb.String()), nil
+}
+
 // LoadMemory reads MEMORY.md and recent daily memory files from the workspace.
 // Returns combined content suitable for injection into the system prompt.
 // Missing files/directories are silently ignored (empty string returned).

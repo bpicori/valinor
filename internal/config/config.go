@@ -42,7 +42,7 @@ const (
 // Default scheduler configuration.
 const (
 	DefaultSchedulerEnabled       = false
-	DefaultSchedulerCheckInterval = "30m"
+	DefaultSchedulerScriptTimeout = "120s"
 )
 
 // Default sandbox configuration.
@@ -98,8 +98,10 @@ type TelegramConfig struct {
 type SchedulerConfig struct {
 	// Enabled enables the scheduled job runner (default: false).
 	Enabled bool `toml:"enabled"`
-	// CheckInterval is the interval between cron checks (default: "30m").
-	CheckInterval string `toml:"check_interval"`
+	// ScriptsDir overrides the no_agent scripts directory (default: <workspace>/scripts).
+	ScriptsDir string `toml:"scripts_dir"`
+	// ScriptTimeout is the max runtime for no_agent scripts (default: "120s").
+	ScriptTimeout string `toml:"script_timeout"`
 }
 
 // ProviderConfig holds configuration for a specific LLM provider.
@@ -201,8 +203,8 @@ func LoadFromFile(path string) (Config, error) {
 	}
 
 	// Apply scheduler defaults
-	if cfg.Scheduler.CheckInterval == "" {
-		cfg.Scheduler.CheckInterval = DefaultSchedulerCheckInterval
+	if cfg.Scheduler.ScriptTimeout == "" {
+		cfg.Scheduler.ScriptTimeout = DefaultSchedulerScriptTimeout
 	}
 
 	// Apply sandbox defaults
@@ -285,6 +287,22 @@ func (c Config) ResolveCronDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(baseDir, "cron"), nil
+}
+
+// CronScriptsSubdir is the workspace-relative directory for no_agent cron scripts.
+const CronScriptsSubdir = "scripts"
+
+// ResolveScriptsDir returns the absolute path for no_agent cron scripts.
+// Defaults to <workspace>/scripts so the agent can create scripts via write_file.
+func (c Config) ResolveScriptsDir() (string, error) {
+	if c.Scheduler.ScriptsDir != "" {
+		return resolvePathWithTilde(c.Scheduler.ScriptsDir)
+	}
+	workspaceDir, err := c.ResolveWorkspaceDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(workspaceDir, CronScriptsSubdir), nil
 }
 
 // GatewayWebSocketURL returns the WebSocket URL for the gateway.

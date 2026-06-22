@@ -29,10 +29,9 @@ type gatewayDeps struct {
 	valinorDir   string
 	sessionsDir  string
 	workspaceDir string
-	cronDir      string
 	closeLogger  func() error
 	runtime      *sandbox.Runtime
-	cronService  *cron.Service
+	cronJobs     *cron.Jobs
 	sm           *session.Manager
 	sessionOpts  session.CreateSessionOptions
 	rtr          *gateway.Router
@@ -203,9 +202,16 @@ func initGateway(cfg config.Config, logPrefix string, transports []logger.Transp
 		return nil, fmt.Errorf("resolve cron dir: %w", err)
 	}
 
-	// Ensure workspace directory exists (required for sandbox operations)
+	// Ensure workspace and cron scripts directories exist
 	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
 		return nil, fmt.Errorf("create workspace directory: %w", err)
+	}
+	scriptsDir, err := cfg.ResolveScriptsDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolve scripts dir: %w", err)
+	}
+	if err := os.MkdirAll(scriptsDir, 0750); err != nil {
+		return nil, fmt.Errorf("create scripts directory: %w", err)
 	}
 
 	// Initialize logger
@@ -225,14 +231,14 @@ func initGateway(cfg config.Config, logPrefix string, transports []logger.Transp
 	}
 	logger.Info("sandbox runtime initialized", logger.BuildMetadata("workspace", workspaceDir, "image", cfg.SandboxImage))
 
-	// Initialize cron service
-	cronService, err := cron.NewService(cronDir)
+	// Initialize cron jobs store
+	cronJobs, err := cron.NewJobs(cronDir)
 	if err != nil {
-		logger.Error("failed to create cron service, continuing without scheduling", logger.BuildMetadata("error", err))
-		cronService = nil
+		logger.Error("failed to create cron jobs store, continuing without scheduling", logger.BuildMetadata("error", err))
+		cronJobs = nil
 	} else {
-		tools.SetCronService(cronService)
-		logger.Info("cron service initialized", logger.BuildMetadata("dir", cronDir))
+		tools.SetJobs(cronJobs)
+		logger.Info("cron jobs store initialized", logger.BuildMetadata("dir", cronDir))
 	}
 
 	// Initialize session manager
@@ -251,10 +257,9 @@ func initGateway(cfg config.Config, logPrefix string, transports []logger.Transp
 		valinorDir:   valinorDir,
 		sessionsDir:  sessionsDir,
 		workspaceDir: workspaceDir,
-		cronDir:      cronDir,
 		closeLogger:  closeLogger,
 		runtime:      rt,
-		cronService:  cronService,
+		cronJobs:     cronJobs,
 		sm:           sm,
 		sessionOpts:  sessionOpts,
 	}, nil
@@ -281,13 +286,17 @@ func runGateway(ctx context.Context, cfg config.Config) error {
 	deps.rtr = rtr
 
 	// Start scheduler if enabled
-	if cfg.Scheduler.Enabled && deps.cronService != nil {
-		sched := scheduler.New(deps.cronService, deps.sm, deps.sessionOpts, cfg.Scheduler)
+	if cfg.Scheduler.Enabled && deps.cronJobs != nil {
+		scriptsDir, err := cfg.ResolveScriptsDir()
+		if err != nil {
+			return fmt.Errorf("resolve scripts dir: %w", err)
+		}
+		sched := scheduler.New(deps.cronJobs, deps.sm, deps.sessionOpts, cfg.Scheduler, scriptsDir, deps.workspaceDir)
 		sched.Start(ctx)
 		defer sched.Stop()
-		logger.Info("scheduler enabled", logger.BuildMetadata("interval", cfg.Scheduler.CheckInterval))
-	} else if cfg.Scheduler.Enabled && deps.cronService == nil {
-		logger.Warning("scheduler enabled but cron service failed to initialize", nil)
+		logger.Info("scheduler enabled", nil)
+	} else if cfg.Scheduler.Enabled && deps.cronJobs == nil {
+		logger.Warning("scheduler enabled but cron jobs store failed to initialize", nil)
 	}
 
 	// Create and start gateway server
@@ -454,13 +463,17 @@ func runAll(ctx context.Context, cfg config.Config) error {
 	deps.rtr = rtr
 
 	// Start scheduler if enabled
-	if cfg.Scheduler.Enabled && deps.cronService != nil {
-		sched := scheduler.New(deps.cronService, deps.sm, deps.sessionOpts, cfg.Scheduler)
+	if cfg.Scheduler.Enabled && deps.cronJobs != nil {
+		scriptsDir, err := cfg.ResolveScriptsDir()
+		if err != nil {
+			return fmt.Errorf("resolve scripts dir: %w", err)
+		}
+		sched := scheduler.New(deps.cronJobs, deps.sm, deps.sessionOpts, cfg.Scheduler, scriptsDir, deps.workspaceDir)
 		sched.Start(ctx)
 		defer sched.Stop()
-		logger.Info("scheduler enabled", logger.BuildMetadata("interval", cfg.Scheduler.CheckInterval))
-	} else if cfg.Scheduler.Enabled && deps.cronService == nil {
-		logger.Warning("scheduler enabled but cron service failed to initialize", nil)
+		logger.Info("scheduler enabled", nil)
+	} else if cfg.Scheduler.Enabled && deps.cronJobs == nil {
+		logger.Warning("scheduler enabled but cron jobs store failed to initialize", nil)
 	}
 
 	// Create gateway server

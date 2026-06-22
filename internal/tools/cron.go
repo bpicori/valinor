@@ -10,149 +10,157 @@ import (
 	"valinor/internal/logger"
 )
 
-// cronServiceGetter allows the tool to access the cron service.
-// This is set by the tool initializer during startup.
-var cronService cronServiceInterface
+var jobs *cron.Jobs
 
-// cronServiceInterface abstracts the cron service for tool operations.
-type cronServiceInterface interface {
-	AddJob(name, message string, schedule cron.Schedule, createdInSessionID string, deliverTo cron.DeliveryTarget) (*cron.CronJob, error)
-	ListJobs(enabledOnly bool) ([]*cron.CronJob, error)
-	RemoveJob(id string) (bool, error)
-	GetJob(id string) (*cron.CronJob, bool, error)
-	ListRuns(jobID string, limit int) ([]cron.JobRun, error)
+// SetJobs sets the cron jobs store for tool operations.
+func SetJobs(j *cron.Jobs) {
+	jobs = j
 }
 
-// SetCronService sets the cron service for tool operations.
-// Called during system initialization.
-func SetCronService(svc cronServiceInterface) {
-	cronService = svc
-}
+// CronjobName is the tool name for the cronjob tool.
+const CronjobName = "cronjob"
 
-const cronAddName = "cron_add"
-const cronListName = "cron_list"
-const cronRemoveName = "cron_remove"
-const cronHistoryName = "cron_history"
-
-// cronAddParams returns the parameters schema for cron_add.
-func cronAddParams() map[string]any {
+func cronjobParams() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			"action": map[string]any{
+				"type":        "string",
+				"description": "Operation: add, list, remove, history, pause, resume, run, edit",
+				"enum":        []string{"add", "list", "remove", "history", "pause", "resume", "run", "edit"},
+			},
 			"name": map[string]any{
 				"type":        "string",
-				"description": "Short descriptive name for the job (e.g., 'Daily Weather', 'Hourly Check')",
+				"description": "For add/edit: short descriptive job name",
 			},
 			"message": map[string]any{
 				"type":        "string",
-				"description": "The instruction to execute on each scheduled run. Must be self-contained and specific. For conditional checks (e.g. price alerts, status monitoring), include the exact condition and instruct to only respond when the condition is met. For recurring reports or tasks, describe what information to gather or action to perform.",
+				"description": "For add/edit (agent jobs only): instruction for the LLM on each run. Omit when using no_agent.",
 			},
 			"schedule_kind": map[string]any{
 				"type":        "string",
-				"description": "Type of schedule: 'every' for recurring intervals, 'at' for one-time specific time",
-				"enum":        []string{"every", "at"},
+				"description": "For add/edit: cron (recurring) or once (one-time)",
+				"enum":        []string{"cron", "once"},
 			},
-			"every": map[string]any{
+			"cron": map[string]any{
 				"type":        "string",
-				"description": "For 'every' schedule: interval duration like '5m', '30m', '1h', '1h30m'. Minimum 1 minute.",
+				"description": "For schedule_kind=cron: expression like @every 5m, @hourly, or 0 9 * * 1-5",
 			},
-			"at": map[string]any{
+			"run_at": map[string]any{
 				"type":        "string",
-				"description": "For 'at' schedule: ISO8601/RFC3339 timestamp when to run once, e.g., '2026-03-01T09:00:00Z'",
+				"description": "For schedule_kind=once: RFC3339 timestamp for the one-time run",
 			},
 			"deliver_to": map[string]any{
 				"type":        "object",
-				"description": "Optional delivery target override. Defaults to the client that created the job (origin).",
+				"description": "Delivery target: origin (default), client, broadcast, or silent",
 				"properties": map[string]any{
-					"kind": map[string]any{
-						"type":        "string",
-						"description": "Delivery mode: origin (creator), client (explicit target), broadcast (all clients), silent (no notification)",
-						"enum":        []string{"origin", "client", "broadcast", "silent"},
-					},
-					"client_type": map[string]any{
-						"type":        "string",
-						"description": "Required when kind=client (e.g. telegram, tui)",
-					},
-					"client_identity": map[string]any{
-						"type":        "string",
-						"description": "Required when kind=client (e.g. chat ID or default)",
-					},
+					"kind":            map[string]any{"type": "string", "enum": []string{"origin", "client", "broadcast", "silent"}},
+					"client_type":     map[string]any{"type": "string"},
+					"client_identity": map[string]any{"type": "string"},
 				},
 				"required": []string{"kind"},
 			},
+			"skills": map[string]any{
+				"type":        "array",
+				"description": "For add/edit: skill names to inject when the job runs",
+				"items":       map[string]any{"type": "string"},
+			},
+			"workdir": map[string]any{
+				"type":        "string",
+				"description": "For add/edit: absolute workspace override for job execution",
+			},
+			"no_agent": map[string]any{
+				"type":        "boolean",
+				"description": "For add/edit: run a host script instead of the LLM. Use for monitoring, price alerts, health checks.",
+			},
+			"script": map[string]any{
+				"type":        "string",
+				"description": "For add/edit: script filename in workspace scripts/ (e.g. btc-alert.sh). Write the script with write_file first. Required when no_agent=true.",
+			},
+			"context_from": map[string]any{
+				"type":        "string",
+				"description": "For add/edit: job ID whose last output is prepended to this job's prompt",
+			},
+			"job_id": map[string]any{
+				"type":        "string",
+				"description": "For remove/history/pause/resume/run/edit: target job ID",
+			},
+			"enabled_only": map[string]any{
+				"type":        "boolean",
+				"description": "For list: show only enabled jobs (default true)",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"description": "For history: max entries (default 10, max 100)",
+			},
 		},
-		"required":             []string{"name", "message", "schedule_kind"},
+		"required":             []string{"action"},
 		"additionalProperties": false,
 	}
 }
 
-// cronAddExec executes the cron_add tool.
-func cronAddExec(runCtx *RunContext, args json.RawMessage) (string, error) {
-	if cronService == nil {
-		return "Error: cron service not initialized", nil
+type cronjobArgs struct {
+	Action       string   `json:"action"`
+	Name         string   `json:"name,omitempty"`
+	Message      string   `json:"message,omitempty"`
+	ScheduleKind string   `json:"schedule_kind,omitempty"`
+	Cron         string   `json:"cron,omitempty"`
+	RunAt        string   `json:"run_at,omitempty"`
+	DeliverTo    *struct {
+		Kind           string `json:"kind"`
+		ClientType     string `json:"client_type,omitempty"`
+		ClientIdentity string `json:"client_identity,omitempty"`
+	} `json:"deliver_to,omitempty"`
+	Skills       []string `json:"skills,omitempty"`
+	Workdir      string   `json:"workdir,omitempty"`
+	NoAgent      *bool    `json:"no_agent,omitempty"`
+	Script       string   `json:"script,omitempty"`
+	ContextFrom string `json:"context_from,omitempty"`
+	JobID       string `json:"job_id,omitempty"`
+	EnabledOnly  *bool    `json:"enabled_only,omitempty"`
+	Limit        int      `json:"limit,omitempty"`
+}
+
+func cronjobExec(runCtx *RunContext, args json.RawMessage) (string, error) {
+	if jobs == nil {
+		return "Error: cron jobs store not initialized", nil
 	}
 
-	var p struct {
-		Name         string `json:"name"`
-		Message      string `json:"message"`
-		ScheduleKind string `json:"schedule_kind"`
-		Every        string `json:"every,omitempty"`
-		At           string `json:"at,omitempty"`
-		DeliverTo    *struct {
-			Kind           string `json:"kind"`
-			ClientType     string `json:"client_type,omitempty"`
-			ClientIdentity string `json:"client_identity,omitempty"`
-		} `json:"deliver_to,omitempty"`
-	}
+	var p cronjobArgs
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	// Validate inputs
-	if p.Name == "" {
-		return "Error: name is required", nil
-	}
-	if p.Message == "" {
-		return "Error: message is required", nil
-	}
-
-	schedule := cron.Schedule{}
-
-	switch p.ScheduleKind {
-	case "every":
-		if p.Every == "" {
-			return "Error: 'every' duration is required when schedule_kind is 'every'", nil
-		}
-		// Validate duration
-		dur, err := time.ParseDuration(p.Every)
-		if err != nil {
-			return fmt.Sprintf("Error: invalid duration '%s': %v", p.Every, err), nil
-		}
-		if dur < time.Minute {
-			return "Error: minimum interval is 1 minute", nil
-		}
-		schedule.Kind = cron.ScheduleEvery
-		schedule.Every = p.Every
-	case "at":
-		if p.At == "" {
-			return "Error: 'at' timestamp is required when schedule_kind is 'at'", nil
-		}
-		t, err := time.Parse(time.RFC3339, p.At)
-		if err != nil {
-			// Try parsing without timezone suffix
-			t, err = time.Parse("2006-01-02T15:04:05", p.At)
-			if err != nil {
-				return fmt.Sprintf("Error: invalid timestamp '%s'. Use RFC3339 format like '2026-03-01T09:00:00Z'", p.At), nil
-			}
-			t = t.UTC()
-		}
-		if t.Before(time.Now().UTC()) {
-			return "Error: scheduled time is in the past", nil
-		}
-		schedule.Kind = cron.ScheduleAt
-		schedule.At = t
+	switch p.Action {
+	case "add":
+		return cronjobAdd(runCtx, p)
+	case "list":
+		return cronjobList(p)
+	case "remove":
+		return cronjobRemove(p)
+	case "history":
+		return cronjobHistory(p)
+	case "pause":
+		return cronjobPause(p)
+	case "resume":
+		return cronjobResume(p)
+	case "run":
+		return cronjobRun(p)
+	case "edit":
+		return cronjobEdit(p)
 	default:
-		return fmt.Sprintf("Error: invalid schedule_kind '%s'. Must be 'every' or 'at'", p.ScheduleKind), nil
+		return fmt.Sprintf("Error: unknown action %q", p.Action), nil
+	}
+}
+
+func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
+	if p.Name == "" {
+		return "Error: name is required for add", nil
+	}
+
+	schedule, err := parseSchedule(p)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), nil
 	}
 
 	deliverTo := cron.DefaultDeliveryTarget()
@@ -161,9 +169,6 @@ func cronAddExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 			Kind:           p.DeliverTo.Kind,
 			ClientType:     p.DeliverTo.ClientType,
 			ClientIdentity: p.DeliverTo.ClientIdentity,
-		}
-		if err := deliverTo.Validate(); err != nil {
-			return fmt.Sprintf("Error: invalid deliver_to: %v", err), nil
 		}
 	}
 
@@ -174,186 +179,156 @@ func cronAddExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 		runCtx.mu.RUnlock()
 	}
 
-	job, err := cronService.AddJob(p.Name, p.Message, schedule, createdInSessionID, deliverTo)
+	noAgent := p.NoAgent != nil && *p.NoAgent
+	job, err := jobs.Create(cron.CreateJobInput{
+		Name:               p.Name,
+		Message:            p.Message,
+		Schedule:           schedule,
+		CreatedInSessionID: createdInSessionID,
+		DeliverTo:          deliverTo,
+		Skills:             p.Skills,
+		Workdir:            p.Workdir,
+		NoAgent:            noAgent,
+		Script:             p.Script,
+		ContextFrom:        p.ContextFrom,
+	})
 	if err != nil {
-		logger.Error("cron_add failed", logger.BuildMetadata("name", p.Name, "error", err))
+		logger.Error("cronjob add failed", logger.BuildMetadata("name", p.Name, "error", err))
 		return fmt.Sprintf("Error creating cron job: %v", err), nil
 	}
 
-	var scheduleDesc string
-	if job.Schedule.Kind == cron.ScheduleEvery {
-		scheduleDesc = fmt.Sprintf("every %s", job.Schedule.Every)
-	} else {
-		scheduleDesc = fmt.Sprintf("at %s", job.Schedule.At.Format(time.RFC3339))
-	}
-
-	return fmt.Sprintf("Created cron job '%s' (ID: %s) with schedule: %s, next run: %s",
-		job.Name, job.ID, scheduleDesc, job.NextRunAt.Format("2006-01-02 15:04 MST")), nil
+	return fmt.Sprintf("Created cron job '%s' (ID: %s), schedule: %s, next run: %s",
+		job.Name, job.ID, formatSchedule(job.Schedule), formatNextRun(job.NextRunAt)), nil
 }
 
-// cronListParams returns the parameters schema for cron_list.
-func cronListParams() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"enabled_only": map[string]any{
-				"type":        "boolean",
-				"description": "If true, only show enabled jobs (default: true)",
-			},
-		},
-		"required":             []string{},
-		"additionalProperties": false,
-	}
-}
-
-// cronListExec executes the cron_list tool.
-func cronListExec(args json.RawMessage) (string, error) {
-	if cronService == nil {
-		return "Error: cron service not initialized", nil
+func cronjobEdit(p cronjobArgs) (string, error) {
+	if p.JobID == "" {
+		return "Error: job_id is required for edit", nil
 	}
 
-	var p struct {
-		EnabledOnly bool `json:"enabled_only"`
-	}
-	// Default to showing only enabled jobs
-	p.EnabledOnly = true
-	_ = json.Unmarshal(args, &p) // Unmarshal errors are fine, use defaults
+	patch := cron.JobPatch{}
+	hasPatch := false
 
-	jobs, err := cronService.ListJobs(p.EnabledOnly)
+	if p.Name != "" {
+		patch.Name = &p.Name
+		hasPatch = true
+	}
+	if p.Message != "" {
+		patch.Message = &p.Message
+		hasPatch = true
+	}
+	if p.ScheduleKind != "" {
+		schedule, err := parseSchedule(p)
+		if err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+		patch.Schedule = &schedule
+		hasPatch = true
+	}
+	if p.DeliverTo != nil {
+		dt := cron.DeliveryTarget{
+			Kind:           p.DeliverTo.Kind,
+			ClientType:     p.DeliverTo.ClientType,
+			ClientIdentity: p.DeliverTo.ClientIdentity,
+		}
+		patch.DeliverTo = &dt
+		hasPatch = true
+	}
+	if p.Skills != nil {
+		patch.Skills = &p.Skills
+		hasPatch = true
+	}
+	if p.Workdir != "" {
+		patch.Workdir = &p.Workdir
+		hasPatch = true
+	}
+	if p.NoAgent != nil {
+		patch.NoAgent = p.NoAgent
+		hasPatch = true
+	}
+	if p.Script != "" {
+		patch.Script = &p.Script
+		hasPatch = true
+	}
+	if p.ContextFrom != "" {
+		patch.ContextFrom = &p.ContextFrom
+		hasPatch = true
+	}
+
+	if !hasPatch {
+		return "Error: no fields to update", nil
+	}
+
+	job, ok, err := jobs.Edit(p.JobID, patch)
 	if err != nil {
-		logger.Error("cron_list failed", logger.BuildMetadata("error", err))
+		return fmt.Sprintf("Error editing job: %v", err), nil
+	}
+	if !ok {
+		return fmt.Sprintf("No job found with ID: %s", p.JobID), nil
+	}
+
+	return fmt.Sprintf("Updated cron job '%s' (ID: %s), schedule: %s, next run: %s",
+		job.Name, job.ID, formatSchedule(job.Schedule), formatNextRun(job.NextRunAt)), nil
+}
+
+func cronjobList(p cronjobArgs) (string, error) {
+	enabledOnly := true
+	if p.EnabledOnly != nil {
+		enabledOnly = *p.EnabledOnly
+	}
+
+	jobList, err := jobs.List(enabledOnly)
+	if err != nil {
 		return fmt.Sprintf("Error listing cron jobs: %v", err), nil
 	}
-
-	if len(jobs) == 0 {
-		if p.EnabledOnly {
-			return "No active scheduled jobs. Use cron_add to create one.", nil
+	if len(jobList) == 0 {
+		if enabledOnly {
+			return "No active scheduled jobs.", nil
 		}
 		return "No scheduled jobs found.", nil
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Found %d job(s):\n\n", len(jobs)))
-
-	for _, j := range jobs {
+	sb.WriteString(fmt.Sprintf("Found %d job(s):\n\n", len(jobList)))
+	for _, j := range jobList {
 		status := "enabled"
 		if !j.Enabled {
-			status = "disabled"
+			status = "paused"
 		}
-
-		var scheduleStr string
-		if j.Schedule.Kind == cron.ScheduleEvery {
-			scheduleStr = fmt.Sprintf("every %s", j.Schedule.Every)
-		} else {
-			scheduleStr = fmt.Sprintf("at %s", j.Schedule.At.Format(time.RFC3339))
-		}
-
-		nextRun := "not scheduled"
-		if !j.NextRunAt.IsZero() {
-			nextRun = j.NextRunAt.Format("2006-01-02 15:04 MST")
-		}
-
 		sb.WriteString(fmt.Sprintf("• %s (ID: %s)\n", j.Name, j.ID))
-		sb.WriteString(fmt.Sprintf("  Status: %s | Schedule: %s\n", status, scheduleStr))
-		sb.WriteString(fmt.Sprintf("  Next run: %s | Message: %.60s...\n\n",
-			nextRun, j.Message))
+		sb.WriteString(fmt.Sprintf("  Status: %s | Schedule: %s\n", status, formatSchedule(j.Schedule)))
+		sb.WriteString(fmt.Sprintf("  Next run: %s | Message: %.60s...\n\n", formatNextRun(j.NextRunAt), j.Message))
 	}
-
 	return sb.String(), nil
 }
 
-// cronRemoveParams returns the parameters schema for cron_remove.
-func cronRemoveParams() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"job_id": map[string]string{
-				"type":        "string",
-				"description": "The job ID to remove (get from cron_list)",
-			},
-		},
-		"required":             []string{"job_id"},
-		"additionalProperties": false,
-	}
-}
-
-// cronRemoveExec executes the cron_remove tool.
-func cronRemoveExec(args json.RawMessage) (string, error) {
-	if cronService == nil {
-		return "Error: cron service not initialized", nil
-	}
-
-	var p struct {
-		JobID string `json:"job_id"`
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", fmt.Errorf("invalid arguments: %w", err)
-	}
-
+func cronjobRemove(p cronjobArgs) (string, error) {
 	if p.JobID == "" {
-		return "Error: job_id is required", nil
+		return "Error: job_id is required for remove", nil
 	}
-
-	removed, err := cronService.RemoveJob(p.JobID)
+	removed, err := jobs.Remove(p.JobID)
 	if err != nil {
-		logger.Error("cron_remove failed", logger.BuildMetadata("job_id", p.JobID, "error", err))
 		return fmt.Sprintf("Error removing job: %v", err), nil
 	}
-
 	if !removed {
 		return fmt.Sprintf("No job found with ID: %s", p.JobID), nil
 	}
-
 	return fmt.Sprintf("Removed cron job (ID: %s)", p.JobID), nil
 }
 
-// cronHistoryParams returns the parameters schema for cron_history.
-func cronHistoryParams() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"job_id": map[string]any{
-				"type":        "string",
-				"description": "Optional job ID to filter history to a specific job",
-			},
-			"limit": map[string]any{
-				"type":        "integer",
-				"description": "Maximum number of runs to return (default: 10, max: 100)",
-			},
-		},
-		"required":             []string{},
-		"additionalProperties": false,
+func cronjobHistory(p cronjobArgs) (string, error) {
+	limit := p.Limit
+	if limit <= 0 {
+		limit = 10
 	}
-}
-
-// cronHistoryExec executes the cron_history tool.
-func cronHistoryExec(args json.RawMessage) (string, error) {
-	if cronService == nil {
-		return "Error: cron service not initialized", nil
+	if limit > 100 {
+		limit = 100
 	}
 
-	var p struct {
-		JobID string `json:"job_id,omitempty"`
-		Limit int    `json:"limit,omitempty"`
-	}
-	// Default limit
-	p.Limit = 10
-	_ = json.Unmarshal(args, &p)
-
-	// Cap limit at 100
-	if p.Limit <= 0 {
-		p.Limit = 10
-	}
-	if p.Limit > 100 {
-		p.Limit = 100
-	}
-
-	runs, err := cronService.ListRuns(p.JobID, p.Limit)
+	runs, err := jobs.ListRuns(p.JobID, limit)
 	if err != nil {
-		logger.Error("cron_history failed", logger.BuildMetadata("error", err))
 		return fmt.Sprintf("Error listing job history: %v", err), nil
 	}
-
 	if len(runs) == 0 {
 		if p.JobID != "" {
 			return fmt.Sprintf("No run history found for job ID: %s", p.JobID), nil
@@ -367,13 +342,11 @@ func cronHistoryExec(args json.RawMessage) (string, error) {
 	} else {
 		sb.WriteString(fmt.Sprintf("Job run history (%d entries):\n\n", len(runs)))
 	}
-
 	for i, run := range runs {
 		statusEmoji := "✓"
 		if run.Status == "error" {
 			statusEmoji = "✗"
 		}
-
 		sb.WriteString(fmt.Sprintf("%d. %s %s (Job: %s)\n", i+1, statusEmoji, run.FiredAt.Format("2006-01-02 15:04 MST"), run.JobID))
 		sb.WriteString(fmt.Sprintf("   Status: %s\n", run.Status))
 		if run.Output != "" {
@@ -385,6 +358,96 @@ func cronHistoryExec(args json.RawMessage) (string, error) {
 		}
 		sb.WriteString("\n")
 	}
-
 	return sb.String(), nil
+}
+
+func cronjobPause(p cronjobArgs) (string, error) {
+	if p.JobID == "" {
+		return "Error: job_id is required for pause", nil
+	}
+	job, ok, err := jobs.Pause(p.JobID)
+	if err != nil {
+		return fmt.Sprintf("Error pausing job: %v", err), nil
+	}
+	if !ok {
+		return fmt.Sprintf("No job found with ID: %s", p.JobID), nil
+	}
+	return fmt.Sprintf("Paused cron job '%s' (ID: %s)", job.Name, job.ID), nil
+}
+
+func cronjobResume(p cronjobArgs) (string, error) {
+	if p.JobID == "" {
+		return "Error: job_id is required for resume", nil
+	}
+	job, ok, err := jobs.Resume(p.JobID)
+	if err != nil {
+		return fmt.Sprintf("Error resuming job: %v", err), nil
+	}
+	if !ok {
+		return fmt.Sprintf("No job found with ID: %s", p.JobID), nil
+	}
+	return fmt.Sprintf("Resumed cron job '%s' (ID: %s), next run: %s", job.Name, job.ID, formatNextRun(job.NextRunAt)), nil
+}
+
+func cronjobRun(p cronjobArgs) (string, error) {
+	if p.JobID == "" {
+		return "Error: job_id is required for run", nil
+	}
+	job, ok, err := jobs.RunNow(p.JobID)
+	if err != nil {
+		return fmt.Sprintf("Error scheduling job run: %v", err), nil
+	}
+	if !ok {
+		return fmt.Sprintf("No job found with ID: %s", p.JobID), nil
+	}
+	return fmt.Sprintf("Scheduled immediate run for job '%s' (ID: %s)", job.Name, job.ID), nil
+}
+
+func parseSchedule(p cronjobArgs) (cron.Schedule, error) {
+	schedule := cron.Schedule{}
+	switch p.ScheduleKind {
+	case "cron":
+		if p.Cron == "" {
+			return schedule, fmt.Errorf("'cron' expression is required when schedule_kind is 'cron'")
+		}
+		schedule.Kind = cron.ScheduleCron
+		schedule.Cron = p.Cron
+	case "once":
+		if p.RunAt == "" {
+			return schedule, fmt.Errorf("'run_at' timestamp is required when schedule_kind is 'once'")
+		}
+		t, err := time.Parse(time.RFC3339, p.RunAt)
+		if err != nil {
+			t, err = time.Parse("2006-01-02T15:04:05", p.RunAt)
+			if err != nil {
+				return schedule, fmt.Errorf("invalid timestamp %q, use RFC3339", p.RunAt)
+			}
+			t = t.UTC()
+		}
+		schedule.Kind = cron.ScheduleOnce
+		schedule.RunAt = t
+	case "":
+		return schedule, fmt.Errorf("schedule_kind is required")
+	default:
+		return schedule, fmt.Errorf("invalid schedule_kind %q (must be 'cron' or 'once')", p.ScheduleKind)
+	}
+	return schedule, nil
+}
+
+func formatSchedule(s cron.Schedule) string {
+	switch s.Kind {
+	case cron.ScheduleCron:
+		return fmt.Sprintf("cron %s", s.Cron)
+	case cron.ScheduleOnce:
+		return fmt.Sprintf("once at %s", s.RunAt.Format(time.RFC3339))
+	default:
+		return "unknown"
+	}
+}
+
+func formatNextRun(t time.Time) string {
+	if t.IsZero() {
+		return "not scheduled"
+	}
+	return t.Format("2006-01-02 15:04 MST")
 }

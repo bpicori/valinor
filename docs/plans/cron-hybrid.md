@@ -36,9 +36,14 @@ flowchart TD
 
 ---
 
-## Phase 1: Delivery Routing (prerequisite — separate plan)
+## Phase 1: Delivery Routing — DONE
 
-See [`cron-delivery-routing.md`](cron-delivery-routing.md). Must be done first.
+Implemented in code (not the original plan doc verbatim):
+
+- `DeliverTo` + `CreatedInSessionID` on `CronJob` (session resolved at publish time, not persisted `CreatedBy`)
+- Router routes `CronJobResult` via `consumersForDeliveryTarget()`
+- `cron_add` accepts optional `deliver_to`; defaults to `origin`
+- Legacy jobs without `deliver_to` default to `origin` on load
 
 ---
 
@@ -216,14 +221,14 @@ Defer to v2. When job B fires, prepend job A's last output to job B's prompt. Re
 
 ## Implementation Order
 
-1. **Now:** [`cron-delivery-routing.md`](cron-delivery-routing.md)
-2. Pause/resume/edit + loop prevention
-3. `[SILENT]` alias + response wrapping
-4. Skills attachment
-5. Cron expressions
-6. `no_agent` script mode
-7. Tick lock + parallel execution
-8. `context_from` chaining (optional)
+1. ~~Delivery routing~~ (done)
+2. ~~Consolidated `cronjob` tool + pause/resume/run/edit + loop prevention~~ (done)
+3. ~~`[SILENT]` alias + response wrapping~~ (done)
+4. ~~Skills attachment~~ (done)
+5. ~~Cron expressions~~ (done)
+6. ~~`no_agent` script mode~~ (done)
+7. ~~Tick lock + parallel execution~~ (done)
+8. ~~`context_from` chaining~~ (done)
 
 ---
 

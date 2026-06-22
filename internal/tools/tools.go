@@ -79,6 +79,21 @@ func BindRunContext(tools []Tool, sessionID, requestID string, emitEvents bool) 
 	}
 }
 
+// Exclude returns tools whose names are not in exclude.
+func Exclude(tools []Tool, names ...string) []Tool {
+	excluded := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		excluded[name] = struct{}{}
+	}
+	filtered := make([]Tool, 0, len(tools))
+	for _, tool := range tools {
+		if _, skip := excluded[tool.Name]; !skip {
+			filtered = append(filtered, tool)
+		}
+	}
+	return filtered
+}
+
 // BuildTools returns base tools plus any provider-specific tools for the run.
 func BuildTools(rt *sandbox.Runtime, workspaceDir string, providerCfg config.ProviderConfig, model string) ([]Tool, error) {
 	runContext := &RunContext{}
@@ -93,14 +108,11 @@ func BuildTools(rt *sandbox.Runtime, workspaceDir string, providerCfg config.Pro
 		buildTool(pythonExecName, "Execute Python code in a sandboxed container. Use for running Python scripts, data analysis, file processing, or Python automation.", pythonExecParams(), runContext, func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),
 		buildTool(SendImageName, "Send an image file to the current chat/client, including Telegram. Use whenever the user asks to show or send an existing image file from the workspace. Path is relative to the workspace root, and image bytes are not added to conversation history.", sendImageParams(), runContext, func(a json.RawMessage) (string, error) { return sendImageExec(rt, runContext, a) }),
 		buildTool(bashExecName, "Execute bash commands in a sandboxed container. Use for running shell commands, git operations, package management, builds, tests, and system automation. Commands run with workspace directory access.", bashExecParams(), runContext, func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
-		// Cron tools are stateless and use a globally-set service; they don't need the sandbox runtime
-		buildTool(cronAddName, "Create a new scheduled cron job that runs at a specified interval or one-time. Use for recurring tasks like reminders, periodic checks, or scheduled reports. Returns the created job ID.", cronAddParams(), runContext, func(a json.RawMessage) (string, error) { return cronAddExec(runContext, a) }),
-		buildTool(cronListName, "List scheduled cron jobs. Shows job names, IDs, schedules, and next run times. Use to see what tasks are scheduled or to find a job ID for removal.", cronListParams(), runContext, cronListExec),
-		buildTool(cronRemoveName, "Remove a scheduled cron job permanently by its ID. Use cron_list first to find the job ID. This cannot be undone.", cronRemoveParams(), runContext, cronRemoveExec),
-		buildTool(cronHistoryName, "View the execution history of scheduled cron jobs. Shows when jobs ran, their status (ok or error), and any output. Use to audit job performance or debug failures.", cronHistoryParams(), runContext, cronHistoryExec),
-		// Todo tools are session-scoped and use the global todo store via RunContext
 		buildTool(todoWriteName, "Create or update a structured task list for the current job. Use to plan multi-step work, track progress, and ensure all steps are completed. Each todo has an id, content, and status (pending, in_progress, completed, cancelled).", todoWriteParams(), runContext, func(a json.RawMessage) (string, error) { return todoWriteExec(runContext, a) }),
 		buildTool(todoReadName, "Read the current task list for this session. Returns all todos with their status.", todoReadParams(), runContext, func(a json.RawMessage) (string, error) { return todoReadExec(runContext, a) }),
+		buildTool(CronjobName,
+			"Manage scheduled cron jobs. For monitoring/alerts (price thresholds, health checks, status pings): write a script to scripts/<name>.sh first, then action=add with no_agent=true and script=<name>.sh. For tasks needing reasoning each run: action=add with message only. Other actions: list, remove, history, pause, resume, run, edit.",
+			cronjobParams(), runContext, func(a json.RawMessage) (string, error) { return cronjobExec(runContext, a) }),
 	}
 
 	providerTools, err := buildProviderTools(providerCfg, model)

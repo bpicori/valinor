@@ -109,6 +109,20 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 	return result, nil
 }
 
+// Tools returns the tools available in this session.
+func (s *Session) Tools() []agenttools.Tool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.agentContext.Tools()
+}
+
+// SetTools replaces the tools available in this session.
+func (s *Session) SetTools(tools []agenttools.Tool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agentContext.SetTools(tools)
+}
+
 // ResetConversation clears messages to only the base system prompt.
 func (s *Session) ResetConversation(ctx context.Context) error {
 	s.mu.Lock()

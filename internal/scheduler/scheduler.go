@@ -1,13 +1,16 @@
 // Package scheduler provides a background cron job runner based on the cron service.
 // It polls for due jobs and executes them in isolated sessions, publishing results
-// to all connected clients via the event bus.
+// to targeted clients via the event bus.
 package scheduler
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -21,52 +24,53 @@ import (
 	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 	"valinor/internal/session"
+	"valinor/internal/tools"
 )
 
-// Scheduler runs scheduled jobs from the cron service.
+const (
+	noReplyPrefix = "NO_REPLY"
+	silentPrefix  = "[SILENT]"
+	wrapSeparator = "─────────────────────────────"
+	tickInterval  = 60 * time.Second
+)
+
+// cronAgentExcludedTools lists tools withheld from agents during scheduled job runs.
+var cronAgentExcludedTools = []string{tools.CronjobName}
+
+// Scheduler runs scheduled jobs from the jobs store.
 type Scheduler struct {
-	cronService *cron.Service
+	jobs *cron.Jobs
 	manager     *session.Manager
 	sessionOpts session.CreateSessionOptions
-	interval    time.Duration
+	cfg         config.SchedulerConfig
+	scriptsDir    string
+	workspaceDir  string
+	scriptTimeout time.Duration
+	interval      time.Duration
 
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	running bool
+	mu           sync.Mutex
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	running      bool
+	execLocks    sync.Map // lock key -> *sync.Mutex
 }
 
-const noReplyPrefix = "NO_REPLY"
-
-// buildJobMessage wraps the cron job message with identifying metadata.
-// The agent runs with full context (system prompt, skills, memory, tools) and
-// decides based on the job message whether to respond or stay silent.
-func buildJobMessage(job *cron.CronJob) string {
-	return fmt.Sprintf(
-		"[Scheduled Job: %q | ID: %s]\n\n"+
-			"You are executing a scheduled job.\n"+
-			"If the job should not notify the user, respond with exactly NO_REPLY.\n"+
-			"If the job should notify the user, respond with only the alert text to send to the user.\n"+
-			"Do not explain your decision, and do not include any extra formatting before NO_REPLY.\n\n"+
-			"Task:\n%s",
-		job.Name,
-		job.ID,
-		job.Message,
-	)
-}
-
-// New creates a new scheduler with the given cron service.
-func New(cronService *cron.Service, manager *session.Manager, sessionOpts session.CreateSessionOptions, cfg config.SchedulerConfig) *Scheduler {
-	interval, _ := time.ParseDuration(cfg.CheckInterval)
-	if interval <= 0 {
-		interval = 30 * time.Minute
+// New creates a new scheduler with the given jobs store.
+func New(jobs *cron.Jobs, manager *session.Manager, sessionOpts session.CreateSessionOptions, cfg config.SchedulerConfig, scriptsDir, workspaceDir string) *Scheduler {
+	scriptTimeout, _ := time.ParseDuration(cfg.ScriptTimeout)
+	if scriptTimeout <= 0 {
+		scriptTimeout = 120 * time.Second
 	}
 
 	return &Scheduler{
-		cronService: cronService,
-		manager:     manager,
-		sessionOpts: sessionOpts,
-		interval:    interval,
+		jobs:          jobs,
+		manager:       manager,
+		sessionOpts:   sessionOpts,
+		cfg:           cfg,
+		scriptsDir:    scriptsDir,
+		workspaceDir:  workspaceDir,
+		scriptTimeout: scriptTimeout,
+		interval:      tickInterval,
 	}
 }
 
@@ -110,15 +114,12 @@ func (s *Scheduler) Stop() {
 	logger.Info("scheduler stopped", nil)
 }
 
-// runLoop is the main scheduler goroutine that ticks every interval.
 func (s *Scheduler) runLoop(ctx context.Context) {
 	defer s.wg.Done()
 
-	// Create ticker
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
-	// Run immediately on start
 	s.executeTick(ctx)
 
 	for {
@@ -132,14 +133,22 @@ func (s *Scheduler) runLoop(ctx context.Context) {
 	}
 }
 
-// executeTick checks for due jobs and executes them.
 func (s *Scheduler) executeTick(ctx context.Context) {
+	lockFile, acquired, err := tryAcquireTickLock(filepath.Join(s.jobs.Dir(), ".tick.lock"))
+	if err != nil {
+		logger.Warning("scheduler: tick lock error", logger.BuildMetadata("error", err))
+		return
+	}
+	if !acquired {
+		logger.Debug("scheduler: skipping tick, another instance holds lock", nil)
+		return
+	}
+	defer releaseTickLock(lockFile)
+
 	logger.Debug("scheduler tick started", nil)
 
 	now := time.Now().UTC()
-
-	// Get due jobs from cron service
-	dueJobs, err := s.cronService.Tick(now)
+	dueJobs, err := s.jobs.Due(now)
 	if err != nil {
 		logger.Error("scheduler: failed to get due jobs", logger.BuildMetadata("error", err))
 		return
@@ -152,27 +161,61 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 
 	logger.Info("scheduler: executing due jobs", logger.BuildMetadata("count", len(dueJobs)))
 
-	// Execute each due job
+	var wg sync.WaitGroup
 	for _, job := range dueJobs {
-		select {
-		case <-ctx.Done():
-			logger.Debug("scheduler tick cancelled", nil)
-			return
-		default:
-			s.executeJob(ctx, job, now)
-		}
+		wg.Add(1)
+		go func(job *cron.CronJob) {
+			defer wg.Done()
+			s.runJobWithWorkdirLock(ctx, job, now)
+		}(job)
 	}
+	wg.Wait()
 
 	logger.Info("scheduler tick completed", logger.BuildMetadata("jobs_executed", len(dueJobs)))
 }
 
-// executeJob runs a single cron job in an isolated session.
+func (s *Scheduler) runJobWithWorkdirLock(ctx context.Context, job *cron.CronJob, at time.Time) {
+	jobMu := s.execMutex("job:" + job.ID)
+	jobMu.Lock()
+	defer jobMu.Unlock()
+
+	if job.Workdir != "" {
+		wdMu := s.execMutex("workdir:" + job.Workdir)
+		wdMu.Lock()
+		defer wdMu.Unlock()
+	}
+	s.executeJob(ctx, job, at)
+}
+
+func (s *Scheduler) execMutex(key string) *sync.Mutex {
+	v, _ := s.execLocks.LoadOrStore(key, &sync.Mutex{})
+	return v.(*sync.Mutex)
+}
+
 func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.Time) {
 	logger.Debug("scheduler: executing job",
-		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
+		logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "no_agent", job.NoAgent))
 
-	// Mark job as running - compute next run time
-	updatedJob, ok, err := s.cronService.MarkJobExecuted(job.ID, at)
+	var resultContent string
+	var execErr error
+
+	switch {
+	case job.NoAgent && job.Script == "":
+		execErr = fmt.Errorf("script is required when no_agent is true")
+	case job.NoAgent:
+		resultContent, execErr = s.executeScriptJob(ctx, job)
+	default:
+		resultContent, execErr = s.executeAgentJob(ctx, job)
+	}
+
+	if execErr != nil {
+		logger.Warning("scheduler: job execution failed",
+			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "error", execErr))
+		s.recordRun(job.ID, at, "error", fmt.Sprintf("Execution failed: %v", execErr))
+		return
+	}
+
+	updatedJob, ok, err := s.jobs.MarkRun(job.ID, at)
 	if err != nil {
 		logger.Error("scheduler: failed to mark job executed",
 			logger.BuildMetadata("job_id", job.ID, "error", err))
@@ -185,94 +228,146 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 		return
 	}
 
-	// Log next scheduled run for recurring jobs
-	if updatedJob.Schedule.Kind == cron.ScheduleEvery && !updatedJob.NextRunAt.IsZero() {
+	if updatedJob.Schedule.Kind == cron.ScheduleCron && !updatedJob.NextRunAt.IsZero() {
 		logger.Debug("scheduler: job rescheduled",
 			logger.BuildMetadata("job_id", job.ID, "next_run", updatedJob.NextRunAt.Format(time.RFC3339)))
 	}
 
-	// Create a fresh isolated temporary session for this job execution
-	sess, err := s.manager.Create(ctx, session.CreateSessionOptions{
-		MaxAgentIterations: s.sessionOpts.MaxAgentIterations,
-		Provider:           s.sessionOpts.Provider,
-		Model:              s.sessionOpts.Model,
-		Temporary:          true,
-	})
-	if err != nil {
-		logger.Error("scheduler: failed to create session for job",
-			logger.BuildMetadata("job_id", job.ID, "error", err))
-		s.recordRun(job.ID, at, "error", fmt.Sprintf("Failed to create session: %v", err))
-		return
-	}
-
-	// Generate request ID for this execution
-	requestID := uuid.New().String()
-
-	// Build the job message with metadata for the agent
-	jobMessage := buildJobMessage(job)
-
-	result, execErr := sess.RunInteractionWithOptions(ctx, requestID, jobMessage, session.RunInteractionOptions{
-		EmitEvents: false,
-	})
-	resultContent := lastAssistantContent(result.Messages)
-
-	// Close the session
-	if err := sess.Close(); err != nil {
-		logger.Warning("scheduler: failed to close session",
-			logger.BuildMetadata("job_id", job.ID, "error", err))
-	}
-
-	// If there was an execution error, record failure
-	if execErr != nil {
-		logger.Warning("scheduler: job execution failed",
-			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "error", execErr))
-		s.recordRun(job.ID, at, "error", fmt.Sprintf("Execution failed: %v", execErr))
-		return
-	}
-
 	resultContent = normalizeScheduledJobContent(resultContent)
-
-	// Record successful run
 	s.recordRun(job.ID, at, "ok", resultContent)
 
-	// If we got no content at all, the agent decided not to notify (condition not met)
+	if resultContent != "" {
+		if err := s.jobs.SaveOutput(job.ID, resultContent); err != nil {
+			logger.Warning("scheduler: failed to save job output",
+				logger.BuildMetadata("job_id", job.ID, "error", err))
+		}
+	}
+
 	if resultContent == "" {
-		logger.Debug("scheduler: job completed with no output (condition not met or silent run)",
+		logger.Debug("scheduler: job completed with no output",
 			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
 	}
 
-	// Publish CronJobResult event if there's content to notify and delivery is not silent.
 	if resultContent != "" && job.DeliverTo.Kind != cron.DeliverySilent {
-		logger.Debug("scheduler: publishing job result",
-			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(resultContent),
-				"deliver_to", job.DeliverTo.Kind))
-
 		event_bus.Publish(event.Event{
 			Type: event.CronJobResult,
 			Payload: event.CronJobResultPayload{
 				JobID:     job.ID,
 				JobName:   job.Name,
-				Content:   resultContent,
+				Content:   wrapJobResponse(job.Name, resultContent),
 				Timestamp: time.Now(),
 				DeliverTo: job.DeliverTo,
 				CreatedBy: s.resolveOriginClient(ctx, job),
 			},
-			// SessionID empty; router uses DeliverTo for targeted delivery.
 			SessionID: "",
-			RequestID: job.ID, // Use job ID for correlation
+			RequestID: job.ID,
 		})
 
 		logger.Info("scheduler: job completed with notification",
 			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
 	}
 
-	// Delete one-time jobs after execution (regardless of output)
-	if job.Schedule.Kind == cron.ScheduleAt {
+	if job.Schedule.Kind == cron.ScheduleOnce {
 		s.deleteOneTimeJob(job)
 	}
 }
 
-// recordRun records a job execution in the cron service.
+func (s *Scheduler) executeScriptJob(ctx context.Context, job *cron.CronJob) (string, error) {
+	output, err := runScript(ctx, s.scriptsDir, job.Script, s.scriptTimeout)
+	if err != nil {
+		return "", err
+	}
+	return output, nil
+}
+
+func (s *Scheduler) executeAgentJob(ctx context.Context, job *cron.CronJob) (string, error) {
+	workspaceDir := ""
+	if job.Workdir != "" {
+		workspaceDir = job.Workdir
+	}
+
+	sess, err := s.manager.Create(ctx, session.CreateSessionOptions{
+		MaxAgentIterations: s.sessionOpts.MaxAgentIterations,
+		Provider:           s.sessionOpts.Provider,
+		Model:              s.sessionOpts.Model,
+		Temporary:          true,
+		WorkspaceDir:       workspaceDir,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create session: %w", err)
+	}
+	sess.SetTools(tools.Exclude(sess.Tools(), cronAgentExcludedTools...))
+	defer func() {
+		if err := sess.Close(); err != nil {
+			logger.Warning("scheduler: failed to close session",
+				logger.BuildMetadata("job_id", job.ID, "error", err))
+		}
+	}()
+
+	requestID := uuid.New().String()
+	jobMessage, err := s.buildJobMessage(ctx, job)
+	if err != nil {
+		return "", err
+	}
+
+	result, execErr := sess.RunInteractionWithOptions(ctx, requestID, jobMessage, session.RunInteractionOptions{
+		EmitEvents: false,
+	})
+	if execErr != nil {
+		return "", execErr
+	}
+
+	return lastAssistantContent(result.Messages), nil
+}
+
+func (s *Scheduler) buildJobMessage(ctx context.Context, job *cron.CronJob) (string, error) {
+	workspaceDir := s.workspaceDir
+	if job.Workdir != "" {
+		workspaceDir = job.Workdir
+	}
+
+	var sections []string
+
+	if job.ContextFrom != "" {
+		prior, err := s.jobs.GetOutput(job.ContextFrom)
+		if err != nil {
+			return "", fmt.Errorf("load context_from output: %w", err)
+		}
+		if strings.TrimSpace(prior) != "" {
+			sections = append(sections, fmt.Sprintf("Previous output from job %s:\n%s", job.ContextFrom, prior))
+		}
+	}
+
+	if len(job.Skills) > 0 {
+		skillContent, err := agentcontext.LoadSkillBodies(workspaceDir, job.Skills)
+		if err != nil {
+			return "", fmt.Errorf("load skills: %w", err)
+		}
+		if skillContent != "" {
+			sections = append(sections, skillContent)
+		}
+	}
+
+	header := fmt.Sprintf(
+		"[Scheduled Job: %q | ID: %s]\n\n"+
+			"You are executing a scheduled job.\n"+
+			"If the job should not notify the user, respond with exactly NO_REPLY or [SILENT].\n"+
+			"If the job should notify the user, respond with only the alert text to send to the user.\n"+
+			"Do not explain your decision.\n\n"+
+			"Task:\n%s",
+		job.Name, job.ID, job.Message,
+	)
+
+	if len(sections) > 0 {
+		return strings.Join(sections, "\n\n") + "\n\n" + header, nil
+	}
+	return header, nil
+}
+
+func wrapJobResponse(jobName, content string) string {
+	return fmt.Sprintf("Scheduled Job: %s\n%s\n%s", jobName, wrapSeparator, content)
+}
+
 func (s *Scheduler) recordRun(jobID string, at time.Time, status, output string) {
 	run := cron.JobRun{
 		JobID:   jobID,
@@ -280,48 +375,20 @@ func (s *Scheduler) recordRun(jobID string, at time.Time, status, output string)
 		Status:  status,
 		Output:  output,
 	}
-	if err := s.cronService.RecordRun(run); err != nil {
+	if err := s.jobs.RecordRun(run); err != nil {
 		logger.Warning("scheduler: failed to record job run",
 			logger.BuildMetadata("job_id", jobID, "error", err))
 	}
 }
 
-// deleteOneTimeJob permanently removes a one-time job after execution.
 func (s *Scheduler) deleteOneTimeJob(job *cron.CronJob) {
-	if err := s.cronService.DeleteJob(job.ID); err != nil {
+	if _, err := s.jobs.Remove(job.ID); err != nil {
 		logger.Warning("scheduler: failed to delete one-time job",
 			logger.BuildMetadata("job_id", job.ID, "error", err))
 	} else {
 		logger.Debug("scheduler: deleted one-time job",
 			logger.BuildMetadata("job_id", job.ID))
 	}
-}
-
-func lastAssistantContent(messages []agentcontext.Message) string {
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == agentcontext.RoleAssistant {
-			return messages[i].Content
-		}
-	}
-	return ""
-}
-
-func normalizeScheduledJobContent(content string) string {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return ""
-	}
-
-	if hasNoReplyPrefix(content) {
-		return ""
-	}
-
-	return content
-}
-
-func hasNoReplyPrefix(content string) bool {
-	trimmed := strings.TrimLeftFunc(content, unicode.IsSpace)
-	return strings.HasPrefix(trimmed, noReplyPrefix)
 }
 
 func (s *Scheduler) resolveOriginClient(ctx context.Context, job *cron.CronJob) cron.ClientRef {
@@ -343,4 +410,49 @@ func (s *Scheduler) resolveOriginClient(ctx context.Context, job *cron.CronJob) 
 	}
 
 	return cron.ClientRef{Type: meta.ClientType, Identity: meta.ClientIdentity}
+}
+
+func lastAssistantContent(messages []agentcontext.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == agentcontext.RoleAssistant {
+			return messages[i].Content
+		}
+	}
+	return ""
+}
+
+func normalizeScheduledJobContent(content string) string {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return ""
+	}
+	if hasSilentPrefix(content) {
+		return ""
+	}
+	return content
+}
+
+func hasSilentPrefix(content string) bool {
+	trimmed := strings.TrimLeftFunc(content, unicode.IsSpace)
+	return strings.HasPrefix(trimmed, noReplyPrefix) || strings.HasPrefix(trimmed, silentPrefix)
+}
+
+func tryAcquireTickLock(path string) (*os.File, bool, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, false, nil
+	}
+	return f, true, nil
+}
+
+func releaseTickLock(f *os.File) {
+	if f == nil {
+		return
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	_ = f.Close()
 }
