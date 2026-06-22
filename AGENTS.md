@@ -2,6 +2,10 @@
 
 Guidance for AI agents working in this repository.
 
+## Development Mode
+
+This application is in active development. **Do not add backward compatibility layers** — no migration shims, deprecated code paths, or fallbacks to preserve old behavior unless the user explicitly asks for them. Breaking changes to persisted formats, APIs, and runtime behavior are acceptable. Prefer clean, forward-looking implementations.
+
 ## Testing Policy
 
 **Do not write unit tests.** Do not create `*_test.go` files, test helpers, mocks for testing, or test fixtures unless the user explicitly asks for them.

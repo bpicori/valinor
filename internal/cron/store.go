@@ -63,8 +63,10 @@ func (s *Store) Load() ([]*CronJob, error) {
 		if j == nil {
 			continue
 		}
+		if j.DeliverTo.Kind == "" {
+			j.DeliverTo = DefaultDeliveryTarget()
+		}
 		if err := j.Validate(); err != nil {
-			// Skip invalid jobs silently - they may be from an older format
 			continue
 		}
 		// Disable expired one-time jobs
@@ -110,7 +112,7 @@ func (s *Store) Save(jobs []*CronJob) error {
 }
 
 // AddJob creates and stores a new job with a generated ID.
-func (s *Store) AddJob(name, message string, schedule Schedule) (*CronJob, error) {
+func (s *Store) AddJob(name, message string, schedule Schedule, createdInSessionID string, deliverTo DeliveryTarget) (*CronJob, error) {
 	jobs, err := s.Load()
 	if err != nil {
 		return nil, err
@@ -125,15 +127,21 @@ func (s *Store) AddJob(name, message string, schedule Schedule) (*CronJob, error
 		}
 	}
 
+	if deliverTo.Kind == "" {
+		deliverTo = DefaultDeliveryTarget()
+	}
+
 	now := time.Now().UTC()
 	job := &CronJob{
-		ID:        id,
-		Name:      name,
-		Message:   message,
-		Schedule:  schedule,
-		Enabled:   true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:                 id,
+		Name:               name,
+		Message:            message,
+		Schedule:           schedule,
+		Enabled:            true,
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		DeliverTo:          deliverTo,
+		CreatedInSessionID: createdInSessionID,
 	}
 
 	// Compute initial NextRunAt

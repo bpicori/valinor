@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"valinor/internal/cron"
 )
 
 // UserMessagePayload carries the content of a user chat message.
@@ -145,8 +147,10 @@ type SessionAttachedPayload struct {
 
 // CronJobResultPayload carries the result of a scheduled cron job execution.
 type CronJobResultPayload struct {
-	JobID     string    `json:"job_id,omitempty"`   // ID of the job that ran
-	JobName   string    `json:"job_name,omitempty"` // Name of the job
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
+	JobID     string              `json:"job_id,omitempty"`   // ID of the job that ran
+	JobName   string              `json:"job_name,omitempty"` // Name of the job
+	Content   string              `json:"content"`
+	Timestamp time.Time           `json:"timestamp"`
+	DeliverTo cron.DeliveryTarget `json:"deliver_to,omitempty"`
+	CreatedBy cron.ClientRef      `json:"created_by,omitempty"`
 }

@@ -16,7 +16,7 @@ var cronService cronServiceInterface
 
 // cronServiceInterface abstracts the cron service for tool operations.
 type cronServiceInterface interface {
-	AddJob(name, message string, schedule cron.Schedule) (*cron.CronJob, error)
+	AddJob(name, message string, schedule cron.Schedule, createdInSessionID string, deliverTo cron.DeliveryTarget) (*cron.CronJob, error)
 	ListJobs(enabledOnly bool) ([]*cron.CronJob, error)
 	RemoveJob(id string) (bool, error)
 	GetJob(id string) (*cron.CronJob, bool, error)
@@ -60,6 +60,26 @@ func cronAddParams() map[string]any {
 				"type":        "string",
 				"description": "For 'at' schedule: ISO8601/RFC3339 timestamp when to run once, e.g., '2026-03-01T09:00:00Z'",
 			},
+			"deliver_to": map[string]any{
+				"type":        "object",
+				"description": "Optional delivery target override. Defaults to the client that created the job (origin).",
+				"properties": map[string]any{
+					"kind": map[string]any{
+						"type":        "string",
+						"description": "Delivery mode: origin (creator), client (explicit target), broadcast (all clients), silent (no notification)",
+						"enum":        []string{"origin", "client", "broadcast", "silent"},
+					},
+					"client_type": map[string]any{
+						"type":        "string",
+						"description": "Required when kind=client (e.g. telegram, tui)",
+					},
+					"client_identity": map[string]any{
+						"type":        "string",
+						"description": "Required when kind=client (e.g. chat ID or default)",
+					},
+				},
+				"required": []string{"kind"},
+			},
 		},
 		"required":             []string{"name", "message", "schedule_kind"},
 		"additionalProperties": false,
@@ -67,7 +87,7 @@ func cronAddParams() map[string]any {
 }
 
 // cronAddExec executes the cron_add tool.
-func cronAddExec(args json.RawMessage) (string, error) {
+func cronAddExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 	if cronService == nil {
 		return "Error: cron service not initialized", nil
 	}
@@ -78,6 +98,11 @@ func cronAddExec(args json.RawMessage) (string, error) {
 		ScheduleKind string `json:"schedule_kind"`
 		Every        string `json:"every,omitempty"`
 		At           string `json:"at,omitempty"`
+		DeliverTo    *struct {
+			Kind           string `json:"kind"`
+			ClientType     string `json:"client_type,omitempty"`
+			ClientIdentity string `json:"client_identity,omitempty"`
+		} `json:"deliver_to,omitempty"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -130,7 +155,26 @@ func cronAddExec(args json.RawMessage) (string, error) {
 		return fmt.Sprintf("Error: invalid schedule_kind '%s'. Must be 'every' or 'at'", p.ScheduleKind), nil
 	}
 
-	job, err := cronService.AddJob(p.Name, p.Message, schedule)
+	deliverTo := cron.DefaultDeliveryTarget()
+	if p.DeliverTo != nil {
+		deliverTo = cron.DeliveryTarget{
+			Kind:           p.DeliverTo.Kind,
+			ClientType:     p.DeliverTo.ClientType,
+			ClientIdentity: p.DeliverTo.ClientIdentity,
+		}
+		if err := deliverTo.Validate(); err != nil {
+			return fmt.Sprintf("Error: invalid deliver_to: %v", err), nil
+		}
+	}
+
+	var createdInSessionID string
+	if runCtx != nil {
+		runCtx.mu.RLock()
+		createdInSessionID = runCtx.SessionID
+		runCtx.mu.RUnlock()
+	}
+
+	job, err := cronService.AddJob(p.Name, p.Message, schedule, createdInSessionID, deliverTo)
 	if err != nil {
 		logger.Error("cron_add failed", logger.BuildMetadata("name", p.Name, "error", err))
 		return fmt.Sprintf("Error creating cron job: %v", err), nil

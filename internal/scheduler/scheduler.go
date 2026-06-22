@@ -241,10 +241,11 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name))
 	}
 
-	// Publish CronJobResult event if there's content to notify (no session ID = broadcast to all clients)
-	if resultContent != "" {
+	// Publish CronJobResult event if there's content to notify and delivery is not silent.
+	if resultContent != "" && job.DeliverTo.Kind != cron.DeliverySilent {
 		logger.Debug("scheduler: publishing job result",
-			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(resultContent)))
+			logger.BuildMetadata("job_id", job.ID, "job_name", job.Name, "message_length", len(resultContent),
+				"deliver_to", job.DeliverTo.Kind))
 
 		event_bus.Publish(event.Event{
 			Type: event.CronJobResult,
@@ -253,8 +254,10 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 				JobName:   job.Name,
 				Content:   resultContent,
 				Timestamp: time.Now(),
+				DeliverTo: job.DeliverTo,
+				CreatedBy: s.resolveOriginClient(ctx, job),
 			},
-			// Explicitly broadcast to all clients (not session-targeted)
+			// SessionID empty; router uses DeliverTo for targeted delivery.
 			SessionID: "",
 			RequestID: job.ID, // Use job ID for correlation
 		})
@@ -319,4 +322,25 @@ func normalizeScheduledJobContent(content string) string {
 func hasNoReplyPrefix(content string) bool {
 	trimmed := strings.TrimLeftFunc(content, unicode.IsSpace)
 	return strings.HasPrefix(trimmed, noReplyPrefix)
+}
+
+func (s *Scheduler) resolveOriginClient(ctx context.Context, job *cron.CronJob) cron.ClientRef {
+	if job.CreatedInSessionID == "" {
+		return cron.ClientRef{}
+	}
+
+	meta, err := s.manager.GetMetadata(ctx, job.CreatedInSessionID)
+	if err != nil {
+		logger.Warning("scheduler: failed to resolve cron delivery client from session",
+			logger.BuildMetadata("job_id", job.ID, "session_id", job.CreatedInSessionID, "error", err))
+		return cron.ClientRef{}
+	}
+	if meta == nil || meta.Temporary {
+		return cron.ClientRef{}
+	}
+	if meta.ClientType == "" || meta.ClientIdentity == "" {
+		return cron.ClientRef{}
+	}
+
+	return cron.ClientRef{Type: meta.ClientType, Identity: meta.ClientIdentity}
 }

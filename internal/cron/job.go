@@ -46,17 +46,60 @@ func (s Schedule) Validate() error {
 	return nil
 }
 
+// Delivery kind constants.
+const (
+	DeliveryOrigin    = "origin"
+	DeliveryClient    = "client"
+	DeliveryBroadcast = "broadcast"
+	DeliverySilent    = "silent"
+)
+
+// ClientRef identifies the client that created or should receive a job result.
+type ClientRef struct {
+	Type     string `json:"type"`
+	Identity string `json:"identity"`
+}
+
+// DeliveryTarget specifies where cron job results should be delivered.
+type DeliveryTarget struct {
+	Kind           string `json:"kind"`                       // origin | client | broadcast | silent
+	ClientType     string `json:"client_type,omitempty"`      // for kind=client
+	ClientIdentity string `json:"client_identity,omitempty"`  // for kind=client
+}
+
+// Validate checks the delivery target configuration.
+func (t DeliveryTarget) Validate() error {
+	switch t.Kind {
+	case "", DeliveryOrigin, DeliveryBroadcast, DeliverySilent:
+		return nil
+	case DeliveryClient:
+		if t.ClientType == "" || t.ClientIdentity == "" {
+			return fmt.Errorf("deliver_to.client_type and deliver_to.client_identity are required for 'client' kind")
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid deliver_to.kind: %s (must be origin, client, broadcast, or silent)", t.Kind)
+	}
+}
+
+// DefaultDeliveryTarget returns the default delivery target for new jobs.
+func DefaultDeliveryTarget() DeliveryTarget {
+	return DeliveryTarget{Kind: DeliveryOrigin}
+}
+
 // CronJob represents a scheduled task that persists across restarts.
 type CronJob struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Message   string    `json:"message"` // The prompt/message to send to the agent
-	Schedule  Schedule  `json:"schedule"`
-	Enabled   bool      `json:"enabled"`
-	NextRunAt time.Time `json:"next_run_at"` // Computed field: when to run next
-	LastRunAt time.Time `json:"last_run_at,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Message   string         `json:"message"` // The prompt/message to send to the agent
+	Schedule  Schedule       `json:"schedule"`
+	Enabled   bool           `json:"enabled"`
+	NextRunAt time.Time      `json:"next_run_at"` // Computed field: when to run next
+	LastRunAt time.Time      `json:"last_run_at,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeliverTo          DeliveryTarget `json:"deliver_to"`
+	CreatedInSessionID string         `json:"created_in_session_id,omitempty"`
 }
 
 // Validate checks the job configuration and returns an error if invalid.
@@ -85,6 +128,10 @@ func (j *CronJob) Validate() error {
 		}
 	default:
 		return fmt.Errorf("invalid schedule.kind: %s (must be 'every' or 'at')", j.Schedule.Kind)
+	}
+
+	if err := j.DeliverTo.Validate(); err != nil {
+		return err
 	}
 
 	return nil
@@ -158,15 +205,17 @@ func (r *JobRun) TruncateOutput(maxLength int) {
 // CronJobJSON is the serializable representation of a CronJob.
 // We use custom marshaling to handle time fields consistently.
 type cronJobJSON struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Message   string    `json:"message"`
-	Schedule  Schedule  `json:"schedule"`
-	Enabled   bool      `json:"enabled"`
-	NextRunAt time.Time `json:"next_run_at"`
-	LastRunAt time.Time `json:"last_run_at,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string         `json:"id"`
+	Name      string         `json:"name"`
+	Message   string         `json:"message"`
+	Schedule  Schedule       `json:"schedule"`
+	Enabled   bool           `json:"enabled"`
+	NextRunAt time.Time      `json:"next_run_at"`
+	LastRunAt time.Time      `json:"last_run_at,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeliverTo          DeliveryTarget `json:"deliver_to,omitempty"`
+	CreatedInSessionID string         `json:"created_in_session_id,omitempty"`
 }
 
 // MarshalJSON implements custom JSON marshaling for CronJob.
@@ -181,6 +230,8 @@ func (j CronJob) MarshalJSON() ([]byte, error) {
 		LastRunAt: j.LastRunAt,
 		CreatedAt: j.CreatedAt,
 		UpdatedAt: j.UpdatedAt,
+		DeliverTo:          j.DeliverTo,
+		CreatedInSessionID: j.CreatedInSessionID,
 	})
 }
 
@@ -200,6 +251,8 @@ func (j *CronJob) UnmarshalJSON(data []byte) error {
 		LastRunAt: tmp.LastRunAt,
 		CreatedAt: tmp.CreatedAt,
 		UpdatedAt: tmp.UpdatedAt,
+		DeliverTo:          tmp.DeliverTo,
+		CreatedInSessionID: tmp.CreatedInSessionID,
 	}
 	return nil
 }
@@ -224,6 +277,7 @@ func NewEveryJob(id, name, message, every string) (*CronJob, error) {
 		Enabled:   true,
 		CreatedAt: now,
 		UpdatedAt: now,
+		DeliverTo: DefaultDeliveryTarget(),
 	}
 	job.NextRunAt = now.Add(dur)
 
@@ -249,6 +303,7 @@ func NewAtJob(id, name, message string, at time.Time) (*CronJob, error) {
 		Enabled:   true,
 		CreatedAt: now,
 		UpdatedAt: now,
+		DeliverTo: DefaultDeliveryTarget(),
 	}
 	job.NextRunAt = at
 

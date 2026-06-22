@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"valinor/internal/cron"
 	"valinor/internal/event"
 	"valinor/internal/event_bus"
 	"valinor/internal/logger"
@@ -327,12 +328,11 @@ func (r *Router) forwardEventToClients(be event.Event) {
 	var consumers []ClientEventConsumer
 
 	if be.SessionID == "" {
-		// Broadcast: events without session ID go to all clients.
-		consumers = r.allConsumers()
-
 		if routerEvent.Type == event.CronJobResult {
-			logger.Debug("router: broadcasting cron job result",
-				logger.BuildMetadata("consumer_count", len(consumers)))
+			consumers = r.consumersForCronJobResult(be.Payload)
+		} else {
+			// Broadcast: events without session ID go to all clients.
+			consumers = r.allConsumers()
 		}
 	} else {
 		// Use in-memory owner cache first, then metadata lookup as fallback.
@@ -405,6 +405,57 @@ func (r *Router) consumerForIdentity(identityKey string) (ClientEventConsumer, b
 	defer r.mu.RUnlock()
 	consumer, ok := r.clientConsumers[identityKey]
 	return consumer, ok
+}
+
+func (r *Router) consumersForCronJobResult(payload any) []ClientEventConsumer {
+	p, ok := payload.(event.CronJobResultPayload)
+	if !ok {
+		if ptr, ok := payload.(*event.CronJobResultPayload); ok && ptr != nil {
+			p = *ptr
+		} else {
+			logger.Warning("router: invalid cron job result payload, dropping event", nil)
+			return nil
+		}
+	}
+
+	return r.consumersForDeliveryTarget(p.DeliverTo, p.CreatedBy)
+}
+
+func (r *Router) consumersForDeliveryTarget(target cron.DeliveryTarget, createdBy cron.ClientRef) []ClientEventConsumer {
+	switch target.Kind {
+	case "", cron.DeliveryOrigin:
+		if createdBy.Type == "" || createdBy.Identity == "" {
+			logger.Warning("router: cron job origin delivery missing created_by, dropping event", nil)
+			return nil
+		}
+		identityKey := createdBy.Type + ":" + createdBy.Identity
+		if consumer, ok := r.consumerForIdentity(identityKey); ok {
+			return []ClientEventConsumer{consumer}
+		}
+		logger.Warning("router: cron job origin target not connected, dropping event",
+			logger.BuildMetadata("identity_key", identityKey))
+		return nil
+	case cron.DeliveryClient:
+		if target.ClientType == "" || target.ClientIdentity == "" {
+			logger.Warning("router: cron job client delivery missing target, dropping event", nil)
+			return nil
+		}
+		identityKey := target.ClientType + ":" + target.ClientIdentity
+		if consumer, ok := r.consumerForIdentity(identityKey); ok {
+			return []ClientEventConsumer{consumer}
+		}
+		logger.Warning("router: cron job client target not connected, dropping event",
+			logger.BuildMetadata("identity_key", identityKey))
+		return nil
+	case cron.DeliveryBroadcast:
+		return r.allConsumers()
+	case cron.DeliverySilent:
+		return nil
+	default:
+		logger.Warning("router: unknown cron delivery kind, dropping event",
+			logger.BuildMetadata("kind", target.Kind))
+		return nil
+	}
 }
 
 // GetConsumer returns the consumer for a specific identity (for testing/debugging).

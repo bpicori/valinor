@@ -36,7 +36,7 @@ func (s *Service) SetDueCallback(fn func([]*CronJob)) {
 // AddJob creates a new recurring or one-time job.
 // For recurring: schedule.Kind = "every", schedule.Every = "5m" or "1h30m"
 // For one-time: schedule.Kind = "at", schedule.At = time.Time
-func (s *Service) AddJob(name, message string, schedule Schedule) (*CronJob, error) {
+func (s *Service) AddJob(name, message string, schedule Schedule, createdInSessionID string, deliverTo DeliveryTarget) (*CronJob, error) {
 	if name == "" {
 		return nil, fmt.Errorf("job name is required")
 	}
@@ -47,7 +47,11 @@ func (s *Service) AddJob(name, message string, schedule Schedule) (*CronJob, err
 		return nil, fmt.Errorf("invalid schedule: %w", err)
 	}
 
-	return s.store.AddJob(name, message, schedule)
+	if err := deliverTo.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid deliver_to: %w", err)
+	}
+
+	return s.store.AddJob(name, message, schedule, createdInSessionID, deliverTo)
 }
 
 // ListJobs returns all jobs, optionally filtering by enabled status.
