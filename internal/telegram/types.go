@@ -156,6 +156,13 @@ type SendChatActionRequest struct {
 	Action          string `json:"action"`
 }
 
+// AnswerCallbackQueryRequest represents the payload for answerCallbackQuery API.
+type AnswerCallbackQueryRequest struct {
+	CallbackQueryID string `json:"callback_query_id"`
+	Text            string `json:"text,omitempty"`
+	ShowAlert       bool   `json:"show_alert,omitempty"`
+}
+
 // ReplyParameters describes the message to reply to.
 type ReplyParameters struct {
 	MessageID                int64  `json:"message_id"`

@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 
+	"valinor/internal/config"
 	"valinor/internal/event"
 	"valinor/internal/gateway"
 	"valinor/internal/logger"
@@ -32,6 +34,9 @@ type Bot struct {
 	// Per-chat message trackers (single goroutine access, no mutex needed)
 	trackers map[int64]*messageTracker
 
+	// Per-chat model picker state (single goroutine access, no mutex needed)
+	modelPickers map[int64]*modelPicker
+
 	bridgesMu sync.RWMutex
 
 	// Lifecycle
@@ -51,6 +56,8 @@ type Config struct {
 	StorageDir string
 	// PollTimeout is the long-polling timeout in seconds (default: 30)
 	PollTimeout int
+	// Providers is the configured LLM providers for model selection.
+	Providers map[string]config.ProviderConfig
 }
 
 // NewBot creates a new Telegram bot instance.
@@ -63,10 +70,11 @@ func NewBot(cfg Config) (*Bot, error) {
 	}
 
 	return &Bot{
-		config:   cfg,
-		bridges:  make(map[string]*Bridge),
-		events:   make(chan chatEvent, 100),
-		trackers: make(map[int64]*messageTracker),
+		config:       cfg,
+		bridges:      make(map[string]*Bridge),
+		events:       make(chan chatEvent, 100),
+		trackers:     make(map[int64]*messageTracker),
+		modelPickers: make(map[int64]*modelPicker),
 	}, nil
 }
 
@@ -181,7 +189,15 @@ func (b *Bot) getOrCreateTracker(chatID int64) *messageTracker {
 
 // onUpdate handles a Telegram update from the poller.
 func (b *Bot) onUpdate(update Update) {
-	cmd, err := parseUpdate(update)
+	if update.CallbackQuery != nil {
+		if err := b.processCallbackQuery(update.CallbackQuery); err != nil {
+			logger.Error("telegram bot: failed to process callback",
+				logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+		}
+		return
+	}
+
+	cmd, err := parseUpdate(update, b.config.Providers)
 	if err != nil {
 		logger.Error("telegram bot: failed to parse update",
 			logger.BuildMetadata("error", err, "update_id", update.UpdateID))
@@ -220,6 +236,20 @@ func (b *Bot) processCommand(cmd *Command, tracker *messageTracker) error {
 	bridge, err := b.getOrCreateBridge(cmd.Identity)
 	if err != nil {
 		return fmt.Errorf("get bridge for chat: %w", err)
+	}
+
+	// Handle model picker and direct model switch before generic control dispatch.
+	switch cmd.Type {
+	case commandModelPickerOpen:
+		return b.openModelPicker(cmd.Identity, tracker, "")
+	case commandModelPickerProvider:
+		provider, _ := cmd.Payload.(string)
+		return b.openModelPicker(cmd.Identity, tracker, provider)
+	case commandModelPickerError:
+		message, _ := cmd.Payload.(string)
+		return b.sendTelegramMessage(cmd.Identity, tracker, pickerRenderResult(message, nil))
+	case gateway.CommandChangeProviderModel:
+		return b.applyDirectModelSwitch(cmd, bridge)
 	}
 
 	// Handle control commands directly
@@ -283,6 +313,8 @@ func (b *Bot) processEvent(ev chatEvent, tracker *messageTracker) error {
 		return b.handleNewConversation(ev, tracker)
 	case event.ChangeModelEvent:
 		return b.handleModelChanged(ev, tracker)
+	case event.ProviderModelsResult:
+		return b.handleProviderModelsResult(ev, tracker)
 	case event.CronJobResult:
 		return b.handleCronJobResult(ev, tracker)
 	case event.AgentThinking:
@@ -427,6 +459,272 @@ func (b *Bot) handleCronJobResult(ev chatEvent, tracker *messageTracker) error {
 		return b.sendTelegramMessage(ev.identity, tracker, result)
 	}
 	return nil
+}
+
+func (b *Bot) getOrCreateModelPicker(chatID int64) *modelPicker {
+	if picker, ok := b.modelPickers[chatID]; ok {
+		return picker
+	}
+	picker := &modelPicker{}
+	b.modelPickers[chatID] = picker
+	return picker
+}
+
+func (b *Bot) clearModelPicker(chatID int64) {
+	delete(b.modelPickers, chatID)
+}
+
+func (b *Bot) openModelPicker(identity ChatIdentity, tracker *messageTracker, provider string) error {
+	bridge, err := b.getOrCreateBridge(identity)
+	if err != nil {
+		return fmt.Errorf("get bridge for model picker: %w", err)
+	}
+
+	_, currentProvider, _, _, _, _ := bridge.SessionInfo()
+	picker := b.getOrCreateModelPicker(identity.ChatID)
+
+	if provider == "" {
+		picker.step = pickerStepProvider
+		picker.provider = ""
+		picker.models = nil
+		picker.page = 0
+		picker.requestID = ""
+		result := pickerRenderResult(picker.title(), buildProviderKeyboard(b.config.Providers, currentProvider))
+		return b.sendPickerMessage(identity, picker, result)
+	}
+
+	if _, ok := b.config.Providers[provider]; !ok {
+		return b.sendTelegramMessage(identity, tracker, pickerRenderResult(fmt.Sprintf("Unknown provider: %s", provider), nil))
+	}
+
+	picker.step = pickerStepLoading
+	picker.provider = provider
+	picker.models = nil
+	picker.page = 0
+	picker.requestID = fmt.Sprintf("tg_mdl_%d_%d", identity.ChatID, time.Now().UnixNano())
+
+	result := pickerRenderResult(picker.title(), &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{{
+			{Text: "Cancel", CallbackData: callbackCancel},
+		}},
+	})
+	if err := b.sendPickerMessage(identity, picker, result); err != nil {
+		return err
+	}
+
+	if !sendRequestProviderModels(bridge, provider, picker.requestID) {
+		b.clearModelPicker(identity.ChatID)
+		return fmt.Errorf("failed to request provider models")
+	}
+
+	return nil
+}
+
+func (b *Bot) applyDirectModelSwitch(cmd *Command, bridge *Bridge) error {
+	payload, ok := cmd.Payload.(gateway.ChangeProviderModelPayload)
+	if !ok {
+		return fmt.Errorf("invalid change_provider_model payload")
+	}
+
+	_, currentProvider, _, _, _, _ := bridge.SessionInfo()
+	if !sendModelSwitch(bridge, currentProvider, payload.Provider, payload.Model, cmd.RequestID) {
+		return fmt.Errorf("failed to send model switch command")
+	}
+
+	if payload.Provider == currentProvider {
+		return b.sendTelegramMessage(cmd.Identity, b.getOrCreateTracker(cmd.Identity.ChatID),
+			pickerRenderResult(pickerConfirmationText(payload.Provider, payload.Model), nil))
+	}
+	return nil
+}
+
+func (b *Bot) processCallbackQuery(query *CallbackQuery) error {
+	if query == nil || query.Message == nil || query.Message.Chat == nil {
+		return nil
+	}
+
+	action, arg, ok := parsePickerCallback(query.Data)
+	if !ok {
+		return b.answerCallback(query.ID, "")
+	}
+
+	identity := FromTelegramUpdate(query.Message.Chat)
+	tracker := b.getOrCreateTracker(identity.ChatID)
+	picker := b.modelPickers[identity.ChatID]
+
+	bridge, err := b.getOrCreateBridge(identity)
+	if err != nil {
+		_ = b.answerCallback(query.ID, "Connection error")
+		return fmt.Errorf("get bridge for callback: %w", err)
+	}
+
+	_, currentProvider, currentModel, _, _, _ := bridge.SessionInfo()
+
+	switch action {
+	case "cancel":
+		b.clearModelPicker(identity.ChatID)
+		if picker != nil && picker.messageID != 0 {
+			_ = b.sendPickerMessage(identity, picker, pickerRenderResult("Model selection cancelled", nil))
+		}
+		return b.answerCallback(query.ID, "")
+
+	case "back":
+		if picker == nil {
+			return b.answerCallback(query.ID, "")
+		}
+		picker.step = pickerStepProvider
+		picker.provider = ""
+		picker.models = nil
+		picker.page = 0
+		picker.requestID = ""
+		if err := b.sendPickerMessage(identity, picker, pickerRenderResult(picker.title(), buildProviderKeyboard(b.config.Providers, currentProvider))); err != nil {
+			_ = b.answerCallback(query.ID, "Failed to update picker")
+			return err
+		}
+		return b.answerCallback(query.ID, "")
+
+	case "page":
+		if picker == nil || picker.step != pickerStepModel {
+			return b.answerCallback(query.ID, "")
+		}
+		page, err := strconv.Atoi(arg)
+		if err != nil {
+			return b.answerCallback(query.ID, "")
+		}
+		picker.page = page
+		markup := buildModelKeyboard(picker.models, picker.page, currentProvider, currentModel)
+		if err := b.sendPickerMessage(identity, picker, pickerRenderResult(picker.title(), markup)); err != nil {
+			_ = b.answerCallback(query.ID, "Failed to update picker")
+			return err
+		}
+		return b.answerCallback(query.ID, "")
+
+	case "provider":
+		if _, ok := b.config.Providers[arg]; !ok {
+			_ = b.answerCallback(query.ID, "Unknown provider")
+			return nil
+		}
+		return b.openModelPicker(identity, tracker, arg)
+
+	case "model":
+		if picker == nil || picker.step != pickerStepModel {
+			return b.answerCallback(query.ID, "")
+		}
+		idx, err := strconv.Atoi(arg)
+		if err != nil || idx < 0 || idx >= len(picker.models) {
+			return b.answerCallback(query.ID, "Invalid model")
+		}
+
+		selected := picker.models[idx]
+		requestID := fmt.Sprintf("tg_mdl_%d_%d", identity.ChatID, time.Now().UnixNano())
+		if !sendModelSwitch(bridge, currentProvider, selected.Provider, selected.Model, requestID) {
+			_ = b.answerCallback(query.ID, "Failed to switch model")
+			return fmt.Errorf("failed to send model switch command")
+		}
+
+		confirm := pickerConfirmationText(selected.Provider, selected.Model)
+		if selected.Provider != currentProvider {
+			confirm = fmt.Sprintf("Switching to %s / %s", selected.Provider, selected.Model)
+		}
+		_ = b.sendPickerMessage(identity, picker, pickerRenderResult(confirm, nil))
+		b.clearModelPicker(identity.ChatID)
+		return b.answerCallback(query.ID, "")
+
+	default:
+		return b.answerCallback(query.ID, "")
+	}
+}
+
+func (b *Bot) handleProviderModelsResult(ev chatEvent, tracker *messageTracker) error {
+	payload, ok := ev.event.Payload.(gateway.ProviderModelsResultPayload)
+	if !ok {
+		return nil
+	}
+
+	picker := b.modelPickers[ev.identity.ChatID]
+	if picker == nil || picker.step != pickerStepLoading || picker.provider != payload.Provider {
+		return nil
+	}
+	if picker.requestID != "" && ev.event.RequestID != "" && picker.requestID != ev.event.RequestID {
+		return nil
+	}
+
+	bridge, err := b.getOrCreateBridge(ev.identity)
+	if err != nil {
+		return fmt.Errorf("get bridge for provider models: %w", err)
+	}
+
+	_, currentProvider, currentModel, _, _, _ := bridge.SessionInfo()
+	picker.models = buildModelsFromResult(payload, b.config.Providers)
+	picker.step = pickerStepModel
+	picker.page = 0
+
+	title := picker.title()
+	if payload.Error != "" {
+		title = fmt.Sprintf("Select model (%s) - fallback", payload.Provider)
+		logger.Warning("telegram model picker: provider lookup failed",
+			logger.BuildMetadata("provider", payload.Provider, "error", payload.Error))
+	}
+
+	markup := buildModelKeyboard(picker.models, picker.page, currentProvider, currentModel)
+	return b.sendPickerMessage(ev.identity, picker, pickerRenderResult(title, markup))
+}
+
+func (b *Bot) sendPickerMessage(identity ChatIdentity, picker *modelPicker, result *RenderResult) error {
+	if picker == nil {
+		return b.sendTelegramMessage(identity, b.getOrCreateTracker(identity.ChatID), result)
+	}
+
+	if picker.messageID != 0 {
+		req := EditMessageTextRequest{
+			ChatID:      identity.ChatID,
+			MessageID:   picker.messageID,
+			Text:        result.Text,
+			ParseMode:   result.ParseMode,
+			ReplyMarkup: result.ReplyMarkup,
+		}
+		_, err := b.client.EditMessageText(b.ctx, req)
+		if shouldRetryWithPlainText(err, result) {
+			req.Text = result.FallbackText
+			req.ParseMode = ""
+			_, err = b.client.EditMessageText(b.ctx, req)
+		}
+		if isNotModifiedError(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("edit picker message: %w", err)
+		}
+		return nil
+	}
+
+	req := SendMessageRequest{
+		ChatID:      identity.ChatID,
+		Text:        result.Text,
+		ParseMode:   result.ParseMode,
+		ReplyMarkup: result.ReplyMarkup,
+	}
+	msg, err := b.client.SendMessage(b.ctx, req)
+	if shouldRetryWithPlainText(err, result) {
+		req.Text = result.FallbackText
+		req.ParseMode = ""
+		msg, err = b.client.SendMessage(b.ctx, req)
+	}
+	if err != nil {
+		return fmt.Errorf("send picker message: %w", err)
+	}
+	picker.messageID = msg.MessageID
+	return nil
+}
+
+func (b *Bot) answerCallback(callbackID, text string) error {
+	if callbackID == "" {
+		return nil
+	}
+	return b.client.AnswerCallbackQuery(b.ctx, AnswerCallbackQueryRequest{
+		CallbackQueryID: callbackID,
+		Text:            text,
+	})
 }
 
 // getOrCreateBridge returns a started bridge bound to the specific chat identity.

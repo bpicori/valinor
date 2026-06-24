@@ -412,6 +412,7 @@ func runTelegram(ctx context.Context, cfg config.Config) error {
 		GatewayURL:  gatewayURL,
 		StorageDir:  valinorDir,
 		PollTimeout: cfg.Telegram.PollTimeout,
+		Providers:   cfg.Providers,
 	}
 
 	// Create and start bot
@@ -506,6 +507,7 @@ func runAll(ctx context.Context, cfg config.Config) error {
 		GatewayURL:  gatewayURL,
 		StorageDir:  deps.valinorDir,
 		PollTimeout: cfg.Telegram.PollTimeout,
+		Providers:   cfg.Providers,
 	}
 
 	bot, err := telegram.NewBot(botCfg)

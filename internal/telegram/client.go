@@ -283,6 +283,18 @@ func (c *Client) SendChatAction(ctx context.Context, req SendChatActionRequest) 
 	return nil
 }
 
+// AnswerCallbackQuery acknowledges a callback query from an inline keyboard button.
+func (c *Client) AnswerCallbackQuery(ctx context.Context, req AnswerCallbackQueryRequest) error {
+	resp, err := c.apiCall(ctx, "answerCallbackQuery", req)
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return resp
+	}
+	return nil
+}
+
 // GetMe returns basic information about the bot.
 func (c *Client) GetMe(ctx context.Context) (*User, error) {
 	resp, err := c.apiCall(ctx, "getMe", nil)

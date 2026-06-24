@@ -97,7 +97,7 @@ func (p *Poller) pollLoop() {
 			Offset:         offset,
 			Limit:          p.limit,
 			Timeout:        p.pollTimeout,
-			AllowedUpdates: []string{"message", "edited_message"},
+			AllowedUpdates: []string{"message", "edited_message", "callback_query"},
 		}
 
 		updates, err := p.client.GetUpdates(p.ctx, req)
