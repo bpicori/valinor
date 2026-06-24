@@ -75,16 +75,57 @@ func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 	}
 }
 
-// renderThinking renders a thinking message.
+// renderThinking renders a thinking message from a single event.
 func (r *Renderer) renderThinking(payload interface{}) *RenderResult {
+	line := r.renderThinkingLine(payload)
+	if line == "" {
+		return nil
+	}
+	return r.renderThinkingStatus([]string{line})
+}
+
+// renderThinkingLine renders one escaped thinking/tool line.
+func (r *Renderer) renderThinkingLine(payload interface{}) string {
 	p, ok := payload.(gateway.ThinkingPayload)
 	if !ok {
+		return ""
+	}
+
+	if p.Content == "" {
+		return ""
+	}
+	if p.Step > 0 {
+		return EscapeMarkdownf("step %d: %s", p.Step, p.Content)
+	}
+	return EscapeMarkdown(p.Content)
+}
+
+// renderThinkingStatus renders the accumulated thinking/tool status message.
+func (r *Renderer) renderThinkingStatus(lines []string) *RenderResult {
+	if len(lines) == 0 {
 		return nil
 	}
 
+	var sb strings.Builder
+	sb.WriteString("🤔 *Thinking\\.\\.\\.*\n")
+	for i, line := range lines {
+		if i > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("_")
+		sb.WriteString(line)
+		sb.WriteString("_")
+	}
+
+	text := sb.String()
+	if utf8.RuneCountInString(text) > MaxTelegramMessageLength {
+		text = truncateTelegramText(text, MaxTelegramMessageLength)
+	}
+
 	return &RenderResult{
-		Text:      "🤔 *Thinking\\.\\.\\.*\n_" + EscapeMarkdown(p.Content) + "_",
-		ParseMode: "MarkdownV2",
+		Text:        text,
+		ParseMode:   "MarkdownV2",
+		IsStreaming: true,
 	}
 }
 

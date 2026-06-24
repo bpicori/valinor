@@ -26,6 +26,10 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker
 	shouldEdit := result.IsStreaming && tracker.getStreamingMsgID() != 0
 
 	if shouldEdit {
+		if tracker.isSameStreamText(result.Text) {
+			return nil
+		}
+
 		// Edit existing streaming message
 		req := EditMessageTextRequest{
 			ChatID:      identity.ChatID,
@@ -41,6 +45,10 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker
 			req.ParseMode = ""
 			_, err = b.client.EditMessageText(b.ctx, req)
 		}
+		if isNotModifiedError(err) {
+			tracker.setLastStreamText(result.Text)
+			return nil
+		}
 		if err != nil {
 			// If editing fails (e.g., message too old), fall back to sending new message
 			logger.Warning("telegram bot: edit failed, sending new message",
@@ -48,6 +56,7 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker
 			return b.sendNewMessage(identity, tracker, result)
 		}
 
+		tracker.setLastStreamText(result.Text)
 		return nil
 	}
 
@@ -76,8 +85,9 @@ func (b *Bot) sendNewMessage(identity ChatIdentity, tracker *messageTracker, res
 	}
 
 	// Set as streaming message ID if we're in streaming mode and don't have one yet
-	if tracker.isBusy() && tracker.getStreamingMsgID() == 0 {
+	if result.IsStreaming && tracker.isBusy() && tracker.getStreamingMsgID() == 0 {
 		tracker.setStreamingMsgID(msg.MessageID)
+		tracker.setLastStreamText(result.Text)
 	}
 
 	logger.Debug("telegram bot: message sent",
@@ -157,4 +167,9 @@ func shouldRetryWithPlainText(err error, result *RenderResult) bool {
 
 	apiErr, ok := err.(*APIResponse)
 	return ok && apiErr.IsParseError()
+}
+
+func isNotModifiedError(err error) bool {
+	apiErr, ok := err.(*APIResponse)
+	return ok && apiErr.IsNotModifiedError()
 }

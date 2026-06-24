@@ -15,6 +15,8 @@ const maxBusyDuration = 1 * time.Minute
 // This is intentionally minimal - session info lives in the Bridge, not here.
 type messageTracker struct {
 	streamingMsgID int64
+	lastStreamText string
+	thinkingLines  []string
 	busy           bool
 	busySince      time.Time // when busy was set, for staleness detection
 	requestID      string
@@ -46,6 +48,8 @@ func (t *messageTracker) markBusy(requestID string) {
 	t.requestID = requestID
 	t.contentBuf.Reset()
 	t.streamingMsgID = 0
+	t.lastStreamText = ""
+	t.thinkingLines = nil
 	t.nextTypingAt = time.Time{}
 }
 
@@ -56,6 +60,21 @@ func (t *messageTracker) markIdle() {
 	t.requestID = ""
 	t.contentBuf.Reset()
 	t.streamingMsgID = 0
+	t.lastStreamText = ""
+	t.thinkingLines = nil
+}
+
+// appendThinkingLine adds a tool/thinking line to the in-progress status message.
+func (t *messageTracker) appendThinkingLine(line string) {
+	if line == "" {
+		return
+	}
+	t.thinkingLines = append(t.thinkingLines, line)
+}
+
+// getThinkingLines returns accumulated tool/thinking lines for the current request.
+func (t *messageTracker) getThinkingLines() []string {
+	return t.thinkingLines
 }
 
 // appendContent adds delta content during streaming.
@@ -76,6 +95,16 @@ func (t *messageTracker) setStreamingMsgID(id int64) {
 // getStreamingMsgID returns the current streaming message ID.
 func (t *messageTracker) getStreamingMsgID() int64 {
 	return t.streamingMsgID
+}
+
+// setLastStreamText records the text last sent or edited for the streaming message.
+func (t *messageTracker) setLastStreamText(text string) {
+	t.lastStreamText = text
+}
+
+// isSameStreamText reports whether the streaming message already shows this text.
+func (t *messageTracker) isSameStreamText(text string) bool {
+	return t.lastStreamText == text
 }
 
 // canSendTyping returns true if typing can be sent now (rate limiting).

@@ -285,14 +285,36 @@ func (b *Bot) processEvent(ev chatEvent, tracker *messageTracker) error {
 		return b.handleModelChanged(ev, tracker)
 	case event.CronJobResult:
 		return b.handleCronJobResult(ev, tracker)
+	case event.AgentThinking:
+		return b.handleThinking(ev, tracker)
 	default:
-		// Other events (thinking, tool calls, tokens) - render if needed
+		// Other events (tool calls, tokens) - render if needed
 		result := b.renderer.RenderEvent(ev.event)
 		if result != nil {
 			return b.sendTelegramMessage(ev.identity, tracker, result)
 		}
 		return nil
 	}
+}
+
+// handleThinking appends tool activity to the in-place status message.
+func (b *Bot) handleThinking(ev chatEvent, tracker *messageTracker) error {
+	payload, ok := ev.event.Payload.(gateway.ThinkingPayload)
+	if !ok {
+		return nil
+	}
+
+	line := b.renderer.renderThinkingLine(payload)
+	if line == "" {
+		return nil
+	}
+
+	tracker.appendThinkingLine(line)
+	result := b.renderer.renderThinkingStatus(tracker.getThinkingLines())
+	if result == nil {
+		return nil
+	}
+	return b.sendTelegramMessage(ev.identity, tracker, result)
 }
 
 // handleContentDelta accumulates streamed content.

@@ -181,8 +181,16 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			ToolCalls: toolCalls,
 		})
 
-		// Execute tool calls
 		for _, tc := range result.Message.ToolCalls {
+			if err := ctx.Err(); err != nil {
+				if errors.Is(err, context.Canceled) {
+					logger.Info("llm run cancelled by user", nil)
+					publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
+					return RunResult{Messages: messages, Usage: usage}, nil
+				}
+				return RunResult{}, err
+			}
+
 			var args json.RawMessage
 			if tc.Arguments != "" {
 				args = json.RawMessage(tc.Arguments)
@@ -197,7 +205,8 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				ToolName:   tc.Name,
 				ToolArgs:   string(args),
 			})
-			toolResult, ok := l.executeTool(req.Tools, tc.Name, args)
+
+			toolResult, ok := executeTool(req.Tools, tc.Name, args)
 			if !ok {
 				toolResult = "error: tool not found"
 			}
@@ -260,9 +269,9 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 	return out
 }
 
-func (l *LLM) executeTool(tools []tools.Tool, toolName string, args json.RawMessage) (string, bool) {
-	for _, t := range tools {
-		if t.Name != toolName {
+func executeTool(toolset []tools.Tool, name string, args json.RawMessage) (string, bool) {
+	for _, t := range toolset {
+		if t.Name != name {
 			continue
 		}
 		result, err := t.Exec(args)

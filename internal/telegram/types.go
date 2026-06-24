@@ -221,6 +221,15 @@ func (r *APIResponse) IsParseError() bool {
 	return strings.Contains(description, "can't parse entities")
 }
 
+// IsNotModifiedError returns true when an edit request would leave the message unchanged.
+func (r *APIResponse) IsNotModifiedError() bool {
+	if r == nil || r.OK || r.ErrorCode != 400 {
+		return false
+	}
+
+	return strings.Contains(strings.ToLower(r.Description), "message is not modified")
+}
+
 // Error implements the error interface.
 func (r *APIResponse) Error() string {
 	if r.OK {
