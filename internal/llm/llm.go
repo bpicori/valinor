@@ -73,12 +73,12 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	for {
 		// Check for cancellation before each iteration
 		if err := ctx.Err(); err != nil {
-		if errors.Is(err, context.Canceled) {
-			logger.Info("llm run cancelled by user", nil)
-			publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
-			return RunResult{Messages: messages, Usage: usage}, nil
-		}
-		return RunResult{}, err
+			if errors.Is(err, context.Canceled) {
+				logger.Info("llm run cancelled by user", nil)
+				publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
+				return RunResult{Messages: messages, Usage: usage}, nil
+			}
+			return RunResult{}, err
 		}
 
 		if iterations >= l.maxIterations {
@@ -90,6 +90,10 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		iterations++
 
 		logger.Debug("llm iteration start", logger.BuildMetadata("iteration", iterations, "provider", l.provider.Name()))
+
+		if req.Compressor != nil {
+			messages = req.Compressor.MaybeCompress(ctx, messages)
+		}
 
 		// Convert to provider-agnostic messages
 		providerMessages := l.toProviderMessages(messages)
@@ -112,12 +116,11 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			},
 		})
 		if err != nil {
-			// Handle user cancellation gracefully
-		if errors.Is(err, context.Canceled) {
-			logger.Info("llm stream cancelled by user", nil)
-			publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
-			return RunResult{Messages: messages, Usage: usage}, nil
-		}
+			if errors.Is(err, context.Canceled) {
+				logger.Info("llm stream cancelled by user", nil)
+				publishEvent(event.AgentCancelled, event.AgentCancelledPayload{})
+				return RunResult{Messages: messages, Usage: usage}, nil
+			}
 			logger.Error("llm stream error", logger.BuildMetadata("error", err))
 			publishEvent(event.AgentError, event.AgentErrorPayload{Error: err})
 			return RunResult{}, err

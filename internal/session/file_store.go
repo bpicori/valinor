@@ -12,9 +12,7 @@ import (
 	"valinor/internal/logger"
 )
 
-const (
-	MessagesFile = "messages.json"
-)
+const MessagesFile = "messages.json"
 
 // FileStore implements Store using JSON files on disk.
 type FileStore struct {

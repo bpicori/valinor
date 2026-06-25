@@ -50,6 +50,9 @@ const (
 	DefaultSandboxImage = "valinor-sandbox:latest"
 )
 
+// Default context compression configuration.
+const DefaultPreserveRecentMessages = 20
+
 // Config holds provider configurations and application paths.
 type Config struct {
 	DefaultProvider    string                    `toml:"default_provider"`
@@ -76,6 +79,14 @@ type Config struct {
 
 	// SandboxImage is the container image used for the sandbox runtime (default: "valinor-sandbox:latest").
 	SandboxImage string `toml:"sandbox_image"`
+
+	// Context holds context-window compression settings.
+	Context ContextConfig `toml:"context"`
+}
+
+// ContextConfig holds context compression settings.
+type ContextConfig struct {
+	PreserveRecentMessages int `toml:"preserve_recent_messages"`
 }
 
 // TelegramConfig holds Telegram Bot API configuration.
@@ -210,6 +221,11 @@ func LoadFromFile(path string) (Config, error) {
 	// Apply sandbox defaults
 	if cfg.SandboxImage == "" {
 		cfg.SandboxImage = DefaultSandboxImage
+	}
+
+	// Apply context compression defaults
+	if cfg.Context.PreserveRecentMessages <= 0 {
+		cfg.Context.PreserveRecentMessages = DefaultPreserveRecentMessages
 	}
 
 	return cfg, nil

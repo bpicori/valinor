@@ -85,6 +85,7 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 	}
 
 	agent := llm.New(provider, s.meta.Model, s.maxIterations)
+	compressor := llm.NewCompressor(provider, s.meta.Model, s.config.Context)
 	// Give tools access to the session and request IDs
 	agenttools.BindRunContext(runData.Tools, s.meta.ID, requestID, opts.EmitEvents)
 
@@ -94,6 +95,7 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 		SessionID:  s.meta.ID,
 		RequestID:  requestID,
 		EmitEvents: opts.EmitEvents,
+		Compressor: compressor,
 	})
 	if err != nil {
 		return llm.RunResult{}, fmt.Errorf("agent run: %w", err)

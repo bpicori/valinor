@@ -88,6 +88,7 @@ type RunRequest struct {
 	SessionID  string       // Optional: identifies the session for event routing.
 	RequestID  string       // Optional: correlation ID for request tracing.
 	EmitEvents bool         // Controls whether agent lifecycle events are published.
+	Compressor *Compressor  // Optional: compresses context before each provider call.
 }
 
 // RunResult returns the updated messages after the loop.

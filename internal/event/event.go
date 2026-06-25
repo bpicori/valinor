@@ -29,6 +29,7 @@ const (
 	AgentThinking        EventType = "agent_thinking"         // Reasoning/thinking step.
 	AgentStepTokens      EventType = "agent_step_tokens"      // Per-step token usage.
 	ContextTokens        EventType = "context_tokens"         // Current context token estimate.
+
 	AgentRefusal         EventType = "agent_refusal"          // Model refusal.
 	AgentToolCallStart   EventType = "agent_tool_call_start"  // Tool call initiated.
 	AgentToolCallDone    EventType = "agent_tool_call_done"   // Tool call completed.
@@ -72,6 +73,7 @@ var registry = map[EventType]PayloadFactory{
 	AgentThinking:        func() any { return &ThinkingPayload{} },
 	AgentStepTokens:      func() any { return &StepTokenUsagePayload{} },
 	ContextTokens:        func() any { return &ContextTokensPayload{} },
+
 	AgentRefusal:         func() any { return &RefusalPayload{} },
 	AgentToolCallStart:   func() any { return &ToolCallStartPayload{} },
 	AgentToolCallDone:    func() any { return &ToolCallDonePayload{} },

@@ -154,9 +154,9 @@ type Model struct {
 	modelPickerErr    string
 	state             appState
 	messages          []chatMessage
-	contextPrompt     int64
-	contextEstimated  bool
-	width             int
+	contextPrompt    int64
+	contextEstimated bool
+	width            int
 	height            int
 	contentWidth      int // width minus sidebar for viewport/chat
 	ready             bool

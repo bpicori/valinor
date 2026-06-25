@@ -65,6 +65,7 @@ const (
 	EventAgentThinking        = string(event.AgentThinking)
 	EventAgentStepTokens      = string(event.AgentStepTokens)
 	EventContextTokens        = string(event.ContextTokens)
+
 	EventAgentRefusal         = string(event.AgentRefusal)
 	EventAgentToolCallStart   = string(event.AgentToolCallStart)
 	EventAgentToolCallDone    = string(event.AgentToolCallDone)
@@ -119,6 +120,7 @@ type (
 	ThinkingPayload             = event.ThinkingPayload
 	StepTokenUsagePayload       = event.StepTokenUsagePayload
 	ContextTokensPayload        = event.ContextTokensPayload
+
 	RefusalPayload              = event.RefusalPayload
 	ToolCallStartPayload        = event.ToolCallStartPayload
 	ToolCallDonePayload         = event.ToolCallDonePayload
