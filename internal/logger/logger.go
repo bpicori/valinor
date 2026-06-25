@@ -94,26 +94,59 @@ func SetPrefix(p string) {
 	mu.Unlock()
 }
 
-// Log writes a structured log line: [PREFIX][LEVEL][MESSAGE][METADATA_JSON]
+// Log writes a JSON-lines log record.
 // Message must be a static string; dynamic values go in metadata.
 func Log(level Level, msg string, metadata map[string]any) {
-	meta := normalizeMetadata(metadata)
-	metaJSON, err := json.Marshal(meta)
+	entry := buildLogEntry(level, msg, metadata)
+	line, err := json.Marshal(entry)
 	if err != nil {
-		metaJSON = []byte(`{"_marshal_error":"` + err.Error() + `"}`)
-	}
-	ts := time.Now().UTC().Format("2006-01-02 15:04:05.000000")
-
-	var line string
-	if prefix != "" {
-		line = fmt.Sprintf("%s [%s][%s][%s][%s]\n", ts, prefix, level, msg, string(metaJSON))
+		line = []byte(fmt.Sprintf(
+			`{"timestamp":%q,"level":"error","message":"log marshal failed","marshal_error":%q}`+"\n",
+			time.Now().UTC().Format(time.RFC3339Nano),
+			err.Error(),
+		))
 	} else {
-		line = fmt.Sprintf("%s [%s][%s][%s]\n", ts, level, msg, string(metaJSON))
+		line = append(line, '\n')
 	}
 
 	mu.Lock()
-	_, _ = output.Write([]byte(line))
+	_, _ = output.Write(line)
 	mu.Unlock()
+}
+
+func buildLogEntry(level Level, msg string, metadata map[string]any) map[string]any {
+	meta := normalizeMetadata(metadata)
+	entry := make(map[string]any, len(meta)+4)
+	entry["timestamp"] = time.Now().UTC().Format(time.RFC3339Nano)
+	entry["level"] = string(level)
+	entry["message"] = msg
+
+	mu.Lock()
+	p := prefix
+	mu.Unlock()
+
+	if p != "" {
+		entry["prefix"] = p
+	}
+
+	for k, v := range meta {
+		if reservedLogKey(k) {
+			entry["_"+k] = v
+			continue
+		}
+		entry[k] = v
+	}
+
+	return entry
+}
+
+func reservedLogKey(key string) bool {
+	switch key {
+	case "timestamp", "level", "message", "prefix":
+		return true
+	default:
+		return false
+	}
 }
 
 // Debug logs at debug level.

@@ -1,0 +1,45 @@
+{
+    "$schema": "https://lnav.org/schemas/format-v1.schema.json",
+    "valinor_log": {
+        "title": "Valinor",
+        "description": "JSON-lines logs from the Valinor agent runtime.",
+        "file-pattern": "valinor\\.log$",
+        "file-type": "json",
+        "timestamp-field": "timestamp",
+        "timestamp-format": ["%Y-%m-%dT%H:%M:%S.%fZ"],
+        "level-field": "level",
+        "body-field": "message",
+        "line-format": [
+            { "field": "__timestamp__" },
+            " ",
+            { "field": "prefix", "default-value": "-" },
+            " ",
+            { "field": "__level__", "text-transform": "uppercase", "auto-width": true },
+            " ",
+            { "field": "message" }
+        ],
+        "value": {
+            "prefix": {
+                "kind": "string",
+                "identifier": true
+            },
+            "session_id": {
+                "kind": "string",
+                "identifier": true
+            },
+            "error": {
+                "kind": "string"
+            }
+        },
+        "sample": [
+            {
+                "line": "{\"timestamp\":\"2026-06-25T20:20:06.294256Z\",\"level\":\"info\",\"message\":\"logging initialized\",\"prefix\":\"GATEWAY\",\"log_path\":\"/Users/bpicori/.valinor/logs/valinor.log\"}",
+                "level": "info"
+            },
+            {
+                "line": "{\"timestamp\":\"2026-06-25T20:20:06.510741Z\",\"level\":\"error\",\"message\":\"session create store error\",\"prefix\":\"GATEWAY\",\"session_id\":\"abc\",\"error\":\"disk full\"}",
+                "level": "error"
+            }
+        ]
+    }
+}
