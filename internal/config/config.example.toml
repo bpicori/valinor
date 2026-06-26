@@ -1,0 +1,64 @@
+# Example Valinor configuration file
+# Copy this to config.toml and fill in your provider details
+
+# Default provider to use for new sessions
+default_provider = "openai"
+
+# Provider configurations
+[providers.openai]
+type = "openai"
+api_key = "sk-..."
+default_model = "gpt-4o"
+
+[providers.anthropic]
+type = "anthropic"
+api_key = "sk-ant-..."
+default_model = "claude-3-5-sonnet-20241022"
+
+[providers.gemini]
+type = "gemini"
+api_key = "..."
+default_model = "gemini-2.0-flash"
+
+# Web server configuration (for future web UI)
+web_enabled = true
+web_host = "127.0.0.1"
+web_port = 7777
+
+# Gateway configuration for WebSocket client connections
+# This is how TUI and other clients connect to the session core
+gateway_enabled = true
+gateway_host = "127.0.0.1"
+gateway_port = 7778
+gateway_path = "/ws"
+
+# Directories (optional - defaults to ~/.valinor/)
+# valinor_dir = "~/.valinor"
+# session_dir = "~/.valinor/sessions"
+# workspace_dir = "~/.valinor/workspace"
+
+# Agent configuration
+max_agent_iterations = 20
+
+# Context compression (triggers at 85% of 200K window)
+# [context]
+# preserve_recent_messages = 20  # messages kept verbatim at the tail
+
+# Telegram Bot configuration (optional)
+# Uncomment to enable Telegram bot mode
+# [telegram]
+# enabled = true
+# bot_token = "YOUR_BOT_TOKEN_FROM_BOTFATHER"
+# poll_timeout = 30              # Long-polling timeout (seconds, max 90)
+# retry_base_delay = 1           # Base retry delay (seconds)
+# retry_max_delay = 30           # Maximum retry delay (seconds)
+# require_mention = false        # Require @bot mention in groups
+
+# Scheduled jobs configuration (optional)
+# The agent manages jobs via the cronjob tool (action=add|list|remove|history|pause|resume|run|edit).
+# Jobs are persisted to ~/.valinor/cron/jobs.json and run in isolated sessions.
+# no_agent scripts live in <workspace>/scripts/ (writable via write_file).
+# [scheduler]
+# enabled = true
+# script_timeout = "120s"        # Max runtime for no_agent scripts
+# scripts_dir = "/custom/path"   # optional override; default is workspace/scripts
