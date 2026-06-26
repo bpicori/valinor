@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"valinor/internal/config"
 	"valinor/internal/event"
 	"valinor/internal/event_bus"
 	"valinor/internal/logger"
@@ -18,11 +19,10 @@ type EventEmitter func(sessionID string, ev event.Event)
 // Runtime owns the session worker registry and handles command dispatch.
 // Commands are dispatched directly via HandleCommandForSession rather than through bus events.
 type Runtime struct {
-	ctx         context.Context
-	manager     *Manager
-	sessionOpts CreateSessionOptions
+	ctx     context.Context
+	manager *Manager
 
-	mu            sync.RWMutex
+	mu sync.RWMutex
 	workers       map[string]*sessionWorker // sessionID -> worker
 	runtimeCtx    context.Context
 	runtimeCancel context.CancelFunc
@@ -32,16 +32,11 @@ type Runtime struct {
 }
 
 // NewRuntime creates a session runtime with a worker registry.
-func NewRuntime(
-	ctx context.Context,
-	manager *Manager,
-	sessionOpts CreateSessionOptions,
-) *Runtime {
+func NewRuntime(ctx context.Context, manager *Manager) *Runtime {
 	return &Runtime{
-		ctx:         ctx,
-		manager:     manager,
-		sessionOpts: sessionOpts,
-		workers:     make(map[string]*sessionWorker),
+		ctx:     ctx,
+		manager: manager,
+		workers: make(map[string]*sessionWorker),
 	}
 }
 
@@ -214,7 +209,7 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model, clientT
 	}
 	r.mu.Unlock()
 
-	provider, model, err := r.manager.config.ResolveProviderModel(provider, model)
+	provider, model, err := config.Must().ResolveProviderModel(provider, model)
 	if err != nil {
 		return "", nil, err
 	}
@@ -235,12 +230,11 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model, clientT
 
 	// Create a new session with client binding
 	newSession, err := r.manager.Create(r.ctx, CreateSessionOptions{
-		MaxAgentIterations: r.sessionOpts.MaxAgentIterations,
-		Provider:           provider,
-		Model:              model,
-		ClientType:         clientType,
-		ClientIdentity:     clientIdentity,
-		Temporary:          false,
+		Provider:       provider,
+		Model:          model,
+		ClientType:     clientType,
+		ClientIdentity: clientIdentity,
+		Temporary:      false,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("create session for provider '%s' model '%s': %w", provider, model, err)

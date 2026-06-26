@@ -746,3 +746,25 @@ func (j *Jobs) saveRuns(runs []JobRun) error {
 func generateJobID() string {
 	return uuid.New().String()[:12]
 }
+
+var (
+	globalJobs   *Jobs
+	globalJobsMu sync.RWMutex
+)
+
+// Init stores the process-global cron jobs store.
+func Init(jobs *Jobs) {
+	globalJobsMu.Lock()
+	defer globalJobsMu.Unlock()
+	globalJobs = jobs
+}
+
+// Must returns the process-global cron jobs store.
+func Must() *Jobs {
+	globalJobsMu.RLock()
+	defer globalJobsMu.RUnlock()
+	if globalJobs == nil {
+		panic("cron: Init not called")
+	}
+	return globalJobs
+}

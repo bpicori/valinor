@@ -3,8 +3,6 @@ package agentcontext
 import (
 	"fmt"
 
-	"valinor/internal/config"
-	"valinor/internal/sandbox"
 	"valinor/internal/tools"
 )
 
@@ -17,12 +15,12 @@ type Context struct {
 }
 
 // New creates a fresh context with a built system prompt and tools.
-func New(workspaceDir string, runtime *sandbox.Runtime, cfg config.Config, providerName, model string) (Context, error) {
+func New(workspaceDir string, providerName, model string) (Context, error) {
 	systemPrompt, err := BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		return Context{}, fmt.Errorf("build system prompt: %w", err)
 	}
-	builtTools, runContext, err := tools.BuildTools(runtime, workspaceDir, cfg, providerName, model)
+	builtTools, runContext, err := tools.BuildTools(workspaceDir, providerName, model)
 	if err != nil {
 		return Context{}, fmt.Errorf("build tools: %w", err)
 	}
@@ -35,12 +33,12 @@ func New(workspaceDir string, runtime *sandbox.Runtime, cfg config.Config, provi
 }
 
 // Resume creates a context from persisted messages, normalizing the system prompt.
-func Resume(workspaceDir string, runtime *sandbox.Runtime, cfg config.Config, providerName, model string, messages []Message) (Context, error) {
+func Resume(workspaceDir string, providerName, model string, messages []Message) (Context, error) {
 	systemPrompt, err := BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		return Context{}, fmt.Errorf("build system prompt: %w", err)
 	}
-	builtTools, runContext, err := tools.BuildTools(runtime, workspaceDir, cfg, providerName, model)
+	builtTools, runContext, err := tools.BuildTools(workspaceDir, providerName, model)
 	if err != nil {
 		return Context{}, fmt.Errorf("build tools: %w", err)
 	}

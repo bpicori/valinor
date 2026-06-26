@@ -67,10 +67,11 @@ func Exclude(tools []Tool, names ...string) []Tool {
 }
 
 // BuildTools returns base tools plus any provider-specific tools for the run.
-func BuildTools(rt *sandbox.Runtime, workspaceDir string, cfg config.Config, providerName, model string) ([]Tool, *RunContext, error) {
+func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunContext, error) {
 	_ = workspaceDir
+	rt := sandbox.MustRuntime()
 
-	providerCfg, ok := cfg.Providers[providerName]
+	providerCfg, ok := config.Must().Providers[providerName]
 	if !ok {
 		return nil, nil, fmt.Errorf("provider %q not found in config", providerName)
 	}

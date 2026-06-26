@@ -39,10 +39,8 @@ var cronAgentExcludedTools = []string{agenttools.CronjobName}
 
 // Scheduler runs scheduled jobs from the jobs store.
 type Scheduler struct {
-	jobs *cron.Jobs
-	manager     *session.Manager
-	sessionOpts session.CreateSessionOptions
-	cfg         config.SchedulerConfig
+	jobs          *cron.Jobs
+	manager       *session.Manager
 	scriptsDir    string
 	workspaceDir  string
 	scriptTimeout time.Duration
@@ -56,19 +54,19 @@ type Scheduler struct {
 }
 
 // New creates a new scheduler with the given jobs store.
-func New(jobs *cron.Jobs, manager *session.Manager, sessionOpts session.CreateSessionOptions, cfg config.SchedulerConfig, scriptsDir, workspaceDir string) *Scheduler {
+func New(jobs *cron.Jobs, manager *session.Manager) *Scheduler {
+	cfg := config.Must().Scheduler
 	scriptTimeout, _ := time.ParseDuration(cfg.ScriptTimeout)
 	if scriptTimeout <= 0 {
 		scriptTimeout = 120 * time.Second
 	}
+	paths := config.MustPaths()
 
 	return &Scheduler{
 		jobs:          jobs,
 		manager:       manager,
-		sessionOpts:   sessionOpts,
-		cfg:           cfg,
-		scriptsDir:    scriptsDir,
-		workspaceDir:  workspaceDir,
+		scriptsDir:    paths.ScriptsDir,
+		workspaceDir:  paths.WorkspaceDir,
 		scriptTimeout: scriptTimeout,
 		interval:      tickInterval,
 	}
@@ -287,11 +285,8 @@ func (s *Scheduler) executeAgentJob(ctx context.Context, job *cron.CronJob) (str
 	}
 
 	sess, err := s.manager.Create(ctx, session.CreateSessionOptions{
-		MaxAgentIterations: s.sessionOpts.MaxAgentIterations,
-		Provider:           s.sessionOpts.Provider,
-		Model:              s.sessionOpts.Model,
-		Temporary:          true,
-		WorkspaceDir:       workspaceDir,
+		Temporary:    true,
+		WorkspaceDir: workspaceDir,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)

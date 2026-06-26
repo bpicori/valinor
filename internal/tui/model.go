@@ -138,7 +138,6 @@ type Usage struct {
 // Model is the top-level Bubble Tea model.
 type Model struct {
 	sender            CommandSender
-	config            config.Config
 	gatewayConnected  bool
 	gatewayStatus     string
 	sessionKey        string
@@ -164,7 +163,7 @@ type Model struct {
 }
 
 // New creates a new UI model.
-func New(sender CommandSender, cfg config.Config, providerName, modelName string) Model {
+func New(sender CommandSender, providerName, modelName string) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Send a message..."
 	ti.Prompt = "> "
@@ -180,7 +179,7 @@ func New(sender CommandSender, cfg config.Config, providerName, modelName string
 	sp.Spinner = spinner.Dot
 	sp.Style = themeStyles.Spinner
 
-	items := buildProviderItems(cfg, providerName)
+	items := buildProviderItems(config.Must(), providerName)
 	delegate := list.NewDefaultDelegate()
 	delegate.Styles.NormalTitle = themeStyles.PickerNormalTitle
 	delegate.Styles.NormalDesc = themeStyles.PickerNormalDesc
@@ -197,7 +196,6 @@ func New(sender CommandSender, cfg config.Config, providerName, modelName string
 
 	return Model{
 		sender:           sender,
-		config:           cfg,
 		gatewayConnected: true,
 		providerName:     providerName,
 		modelName:        modelName,
@@ -381,7 +379,7 @@ func (m Model) openProviderPicker() Model {
 	m.modelPickerBusy = false
 	m.modelPickerErr = ""
 	m.modelPicker.Title = "Select Provider"
-	m.modelPicker.SetItems(buildProviderItems(m.config, m.providerName))
+	m.modelPicker.SetItems(buildProviderItems(config.Must(), m.providerName))
 	m.modelPicker.ResetFilter()
 	items := m.modelPicker.Items()
 	for i := range items {
@@ -401,7 +399,7 @@ func (m Model) openModelPickerForProvider(provider string) Model {
 	if strings.TrimSpace(provider) == "" {
 		return m.openProviderPicker()
 	}
-	if _, ok := m.config.Providers[provider]; !ok {
+	if _, ok := config.Must().Providers[provider]; !ok {
 		logger.Warning("tui unknown provider for model picker", logger.BuildMetadata("provider", provider))
 		return m.openProviderPicker()
 	}
@@ -476,7 +474,7 @@ func (m Model) handleModelCommand(input string) (Model, tea.Cmd, bool, bool) {
 	if provider == "" {
 		return m.openProviderPicker(), nil, true, false
 	}
-	pc, ok := m.config.Providers[provider]
+	pc, ok := config.Must().Providers[provider]
 	if !ok {
 		logger.Warning("tui unknown provider", logger.BuildMetadata("provider", provider))
 		return m, nil, true, false
@@ -690,7 +688,7 @@ func (m *Model) handleProviderModelsResult(payload gateway.ProviderModelsResultP
 			Display:  strings.TrimSpace(model.DisplayName),
 		})
 	}
-	if providerCfg, ok := m.config.Providers[payload.Provider]; ok && providerCfg.DefaultModel != "" {
+	if providerCfg, ok := config.Must().Providers[payload.Provider]; ok && providerCfg.DefaultModel != "" {
 		if _, exists := seen[providerCfg.DefaultModel]; !exists {
 			items = append(items, providerModelItem{
 				Provider: payload.Provider,

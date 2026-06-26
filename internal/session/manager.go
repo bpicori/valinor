@@ -12,15 +12,12 @@ import (
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
-	"valinor/internal/sandbox"
 	"github.com/google/uuid"
 )
 
 // CreateSessionOptions holds parameters for creating/resuming a session.
 // For non-temporary sessions, ClientType and ClientIdentity are required.
 type CreateSessionOptions struct {
-	// MaxAgentIterations limits the number of agent turns per request.
-	MaxAgentIterations int
 	// Provider overrides the default provider when set.
 	Provider string
 	// Model overrides the default model when set.
@@ -42,8 +39,6 @@ type CreateSessionOptions struct {
 type Manager struct {
 	sessionDir    string
 	workspaceDir  string
-	config        config.Config
-	runtime       *sandbox.Runtime // shared sandbox runtime for all sessions
 	metadataStore MetadataRepository
 }
 
@@ -53,7 +48,7 @@ type Manager struct {
 // - On resume, persisted messages are loaded and system prompt is rebuilt.
 
 // NewManager creates a SessionManager that stores sessions under sessionDir and executes tools in workspaceDir.
-func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.Runtime) (*Manager, error) {
+func NewManager(sessionDir, workspaceDir string) (*Manager, error) {
 	metadataStore, err := NewSQLiteMetadataRepository(sessionDir)
 	if err != nil {
 		return nil, fmt.Errorf("create session metadata repository: %w", err)
@@ -61,8 +56,6 @@ func NewManager(sessionDir, workspaceDir string, cfg config.Config, rt *sandbox.
 	return &Manager{
 		sessionDir:    sessionDir,
 		workspaceDir:  workspaceDir,
-		config:        cfg,
-		runtime:       rt,
 		metadataStore: metadataStore,
 	}, nil
 }
@@ -85,7 +78,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		}
 	}
 
-	providerName, model, err := m.config.ResolveProviderModel(opts.Provider, opts.Model)
+	providerName, model, err := config.Must().ResolveProviderModel(opts.Provider, opts.Model)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +131,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	agentCtx, err := agentcontext.New(workspaceDir, m.runtime, m.config, providerName, model)
+	agentCtx, err := agentcontext.New(workspaceDir, providerName, model)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -150,7 +143,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save messages: %w", err)
 	}
 
-	sess, err := NewSession(meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime)
+	sess, err := NewSession(meta, store, agentCtx)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -203,7 +196,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 		workspaceDir = meta.WorkspaceDir
 	}
 
-	providerName, model, err := m.config.ResolveProviderModel(meta.Provider, meta.Model)
+	providerName, model, err := config.Must().ResolveProviderModel(meta.Provider, meta.Model)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
@@ -212,7 +205,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	meta.Provider = providerName
 	meta.Model = model
 
-	agentCtx, err := agentcontext.Resume(workspaceDir, m.runtime, m.config, providerName, model, messages)
+	agentCtx, err := agentcontext.Resume(workspaceDir, providerName, model, messages)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -223,7 +216,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	_ = store.SaveMetadata(ctx, *meta)
 	_ = store.SaveMessages(ctx, agentCtx.Messages())
 
-	sess, err := NewSession(*meta, store, agentCtx, m.config, opts.MaxAgentIterations, m.runtime)
+	sess, err := NewSession(*meta, store, agentCtx)
 	if err != nil {
 		_ = store.Close()
 		return nil, fmt.Errorf("create session instance: %w", err)
@@ -304,7 +297,7 @@ func (m *Manager) ListProviderModels(ctx context.Context, providerName string) (
 	if providerName == "" {
 		return nil, fmt.Errorf("provider is required")
 	}
-	providerCfg, ok := m.config.Providers[providerName]
+	providerCfg, ok := config.Must().Providers[providerName]
 	if !ok {
 		return nil, fmt.Errorf("provider '%s' not found in config", providerName)
 	}

@@ -45,7 +45,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 
 	var usage Usage
 	iterations := 0
-	memoryPrompted := false
+	toolsUsedThisRun := make(map[string]struct{})
 
 	// Helper to create events with session context
 	newEvent := func(eventType event.EventType, payload any) event.Event {
@@ -135,21 +135,6 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 
 		// Handle result message
 		if len(result.Message.ToolCalls) == 0 {
-			// Check if we should prompt the agent to write memory
-			if !memoryPrompted && !memoryToolUsed(messages) && countUserMessages(messages) >= 4 {
-				memoryPrompted = true
-				messages = append(messages, agentcontext.Message{
-					Role:    agentcontext.RoleAssistant,
-					Content: result.Message.Content,
-				})
-				messages = append(messages, agentcontext.Message{
-					Role:    agentcontext.RoleUser,
-					Content: "[System] This interaction is ending. If anything discussed is worth remembering for future sessions, call memory_log or memory_update now. If nothing is worth saving, just say so briefly.",
-				})
-				continue
-			}
-
-			// No tool calls and no prompt needed - we're done
 			messages = append(messages, agentcontext.Message{
 				Role:    agentcontext.RoleAssistant,
 				Content: result.Message.Content,
@@ -160,6 +145,14 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				TotalTokens:      usage.TotalTokens,
 			})
 			logger.Debug("llm iteration done", logger.BuildMetadata("iteration", iterations, "usage", usage))
+
+			if shouldRunMemoryPass(toolsUsedThisRun) {
+				memoryUsage := l.runSilentMemoryPass(ctx, req, messages)
+				usage.PromptTokens += memoryUsage.PromptTokens
+				usage.CompletionTokens += memoryUsage.CompletionTokens
+				usage.TotalTokens += memoryUsage.TotalTokens
+			}
+
 			return RunResult{Messages: messages, Usage: usage}, nil
 		}
 
@@ -201,6 +194,8 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				ToolName:   tc.Name,
 				ToolArgs:   string(args),
 			})
+
+			toolsUsedThisRun[tc.Name] = struct{}{}
 
 			toolResult, ok := executeTool(req.Tools, tc.Name, args)
 			if !ok {
@@ -279,26 +274,4 @@ func executeTool(toolset []toolschema.Tool, name string, args json.RawMessage) (
 	return "", false
 }
 
-func memoryToolUsed(messages []agentcontext.Message) bool {
-	for _, m := range messages {
-		if m.Role != agentcontext.RoleAssistantToolCalls {
-			continue
-		}
-		for _, tc := range m.ToolCalls {
-			if tc.Name == "memory_log" || tc.Name == "memory_update" {
-				return true
-			}
-		}
-	}
-	return false
-}
 
-func countUserMessages(messages []agentcontext.Message) int {
-	count := 0
-	for _, m := range messages {
-		if m.Role == agentcontext.RoleUser {
-			count++
-		}
-	}
-	return count
-}

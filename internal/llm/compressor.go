@@ -30,12 +30,11 @@ Max 2000 tokens.`
 type Compressor struct {
 	provider Provider
 	model    string
-	cfg      config.ContextConfig
 }
 
 // NewCompressor creates a compressor that uses the given provider for summarization.
-func NewCompressor(provider Provider, model string, cfg config.ContextConfig) *Compressor {
-	return &Compressor{provider: provider, model: model, cfg: cfg}
+func NewCompressor(provider Provider, model string) *Compressor {
+	return &Compressor{provider: provider, model: model}
 }
 
 // MaybeCompress replaces the middle of the conversation with a summary when over threshold.
@@ -47,7 +46,7 @@ func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.
 	}
 
 	const headEnd = 1 // keep system prompt
-	tailStart := len(messages) - c.cfg.PreserveRecentMessages
+	tailStart := len(messages) - config.Must().Context.PreserveRecentMessages
 	if tailStart < headEnd {
 		return messages
 	}

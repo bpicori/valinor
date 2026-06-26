@@ -11,12 +11,7 @@ import (
 	"valinor/internal/logger"
 )
 
-var jobs *cron.Jobs
 
-// SetJobs sets the cron jobs store for tool operations.
-func SetJobs(j *cron.Jobs) {
-	jobs = j
-}
 
 // CronjobName is the tool name for the cronjob tool.
 const CronjobName = "cronjob"
@@ -123,10 +118,6 @@ type cronjobArgs struct {
 }
 
 func cronjobExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, error) {
-	if jobs == nil {
-		return "Error: cron jobs store not initialized", nil
-	}
-
 	var p cronjobArgs
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -179,7 +170,7 @@ func cronjobAdd(runCtx *toolschema.RunContext, p cronjobArgs) (string, error) {
 	}
 
 	noAgent := p.NoAgent != nil && *p.NoAgent
-	job, err := jobs.Create(cron.CreateJobInput{
+	job, err := cron.Must().Create(cron.CreateJobInput{
 		Name:               p.Name,
 		Message:            p.Message,
 		Schedule:           schedule,
@@ -258,7 +249,7 @@ func cronjobEdit(p cronjobArgs) (string, error) {
 		return "Error: no fields to update", nil
 	}
 
-	job, ok, err := jobs.Edit(p.JobID, patch)
+	job, ok, err := cron.Must().Edit(p.JobID, patch)
 	if err != nil {
 		return fmt.Sprintf("Error editing job: %v", err), nil
 	}
@@ -276,7 +267,7 @@ func cronjobList(p cronjobArgs) (string, error) {
 		enabledOnly = *p.EnabledOnly
 	}
 
-	jobList, err := jobs.List(enabledOnly)
+	jobList, err := cron.Must().List(enabledOnly)
 	if err != nil {
 		return fmt.Sprintf("Error listing cron jobs: %v", err), nil
 	}
@@ -305,7 +296,7 @@ func cronjobRemove(p cronjobArgs) (string, error) {
 	if p.JobID == "" {
 		return "Error: job_id is required for remove", nil
 	}
-	removed, err := jobs.Remove(p.JobID)
+	removed, err := cron.Must().Remove(p.JobID)
 	if err != nil {
 		return fmt.Sprintf("Error removing job: %v", err), nil
 	}
@@ -324,7 +315,7 @@ func cronjobHistory(p cronjobArgs) (string, error) {
 		limit = 100
 	}
 
-	runs, err := jobs.ListRuns(p.JobID, limit)
+	runs, err := cron.Must().ListRuns(p.JobID, limit)
 	if err != nil {
 		return fmt.Sprintf("Error listing job history: %v", err), nil
 	}
@@ -364,7 +355,7 @@ func cronjobPause(p cronjobArgs) (string, error) {
 	if p.JobID == "" {
 		return "Error: job_id is required for pause", nil
 	}
-	job, ok, err := jobs.Pause(p.JobID)
+	job, ok, err := cron.Must().Pause(p.JobID)
 	if err != nil {
 		return fmt.Sprintf("Error pausing job: %v", err), nil
 	}
@@ -378,7 +369,7 @@ func cronjobResume(p cronjobArgs) (string, error) {
 	if p.JobID == "" {
 		return "Error: job_id is required for resume", nil
 	}
-	job, ok, err := jobs.Resume(p.JobID)
+	job, ok, err := cron.Must().Resume(p.JobID)
 	if err != nil {
 		return fmt.Sprintf("Error resuming job: %v", err), nil
 	}
@@ -392,7 +383,7 @@ func cronjobRun(p cronjobArgs) (string, error) {
 	if p.JobID == "" {
 		return "Error: job_id is required for run", nil
 	}
-	job, ok, err := jobs.RunNow(p.JobID)
+	job, ok, err := cron.Must().RunNow(p.JobID)
 	if err != nil {
 		return fmt.Sprintf("Error scheduling job run: %v", err), nil
 	}

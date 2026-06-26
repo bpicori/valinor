@@ -24,9 +24,8 @@ type ClientEventConsumer interface {
 // Router is the central routing component that manages client connections,
 // session bindings, and routes commands/events between clients and the session core.
 type Router struct {
-	runtime     *session.Runtime
-	manager     *session.Manager
-	sessionOpts session.CreateSessionOptions
+	runtime *session.Runtime
+	manager *session.Manager
 
 	// clientConsumers maps identity key to the connected consumer
 	mu              sync.RWMutex
@@ -43,15 +42,10 @@ type Router struct {
 }
 
 // NewRouter creates a new router instance.
-func NewRouter(
-	runtime *session.Runtime,
-	manager *session.Manager,
-	sessionOpts session.CreateSessionOptions,
-) *Router {
+func NewRouter(runtime *session.Runtime, manager *session.Manager) *Router {
 	return &Router{
 		runtime:         runtime,
 		manager:         manager,
-		sessionOpts:     sessionOpts,
 		clientConsumers: make(map[string]ClientEventConsumer),
 		sessionOwners:   make(map[string]string),
 	}
@@ -149,7 +143,7 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 	}
 
 	// Get or create active session for this client
-	sess, err := r.manager.GetActiveSessionForClient(ctx, identity.Type, identity.Identity, r.sessionOpts)
+	sess, err := r.manager.GetActiveSessionForClient(ctx, identity.Type, identity.Identity, session.CreateSessionOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get active session: %w", err)
 	}
@@ -163,12 +157,9 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 
 		// Create a new session for this client
 		sess, err = r.manager.Create(ctx, session.CreateSessionOptions{
-			MaxAgentIterations: r.sessionOpts.MaxAgentIterations,
-			Provider:           r.sessionOpts.Provider,
-			Model:              r.sessionOpts.Model,
-			ClientType:         identity.Type,
-			ClientIdentity:     identity.Identity,
-			Temporary:          false,
+			ClientType:     identity.Type,
+			ClientIdentity: identity.Identity,
+			Temporary:      false,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create session for client: %w", err)
@@ -231,7 +222,7 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 	key := cmd.Identity.Key()
 
 	// Get active session for this client
-	sess, err := r.manager.GetActiveSessionForClient(ctx, cmd.Identity.Type, cmd.Identity.Identity, r.sessionOpts)
+	sess, err := r.manager.GetActiveSessionForClient(ctx, cmd.Identity.Type, cmd.Identity.Identity, session.CreateSessionOptions{})
 	if err != nil {
 		return fmt.Errorf("get active session: %w", err)
 	}

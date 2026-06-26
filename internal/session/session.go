@@ -11,7 +11,6 @@ import (
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
-	"valinor/internal/sandbox"
 	"valinor/internal/tokens"
 	agenttools "valinor/internal/tools"
 )
@@ -34,14 +33,11 @@ type Metadata struct {
 // Session owns the conversation context and persists messages to the store.
 // The LLM agent is created fresh for each run.
 type Session struct {
-	meta          Metadata
-	store         Store
-	agentContext  agentcontext.Context
-	config        config.Config
-	maxIterations int
-	runtime       *sandbox.Runtime
-	lastUsage     llm.Usage // last real token usage from API response
-	mu            sync.Mutex
+	meta         Metadata
+	store        Store
+	agentContext agentcontext.Context
+	lastUsage    llm.Usage // last real token usage from API response
+	mu           sync.Mutex
 }
 
 // RunInteractionOptions controls how an interaction is executed.
@@ -50,17 +46,14 @@ type RunInteractionOptions struct {
 }
 
 // NewSession creates a session with the provided agent context.
-func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context, cfg config.Config, maxIterations int, runtime *sandbox.Runtime) (*Session, error) {
+func NewSession(meta Metadata, store Store, agentCtx agentcontext.Context) (*Session, error) {
 	if store == nil {
 		return nil, fmt.Errorf("store is required")
 	}
 	return &Session{
-		meta:          meta,
-		store:         store,
-		agentContext:  agentCtx,
-		config:        cfg,
-		maxIterations: maxIterations,
-		runtime:       runtime,
+		meta:         meta,
+		store:        store,
+		agentContext: agentCtx,
 	}, nil
 }
 
@@ -78,14 +71,14 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 	runData := s.agentContext.PrepareRun(message)
 	s.mu.Unlock()
 
-	providerCfg := s.config.Providers[s.meta.Provider]
+	providerCfg := config.Must().Providers[s.meta.Provider]
 	provider, err := factory.CreateProvider(providerCfg)
 	if err != nil {
 		return llm.RunResult{}, fmt.Errorf("create provider: %w", err)
 	}
 
-	agent := llm.New(provider, s.meta.Model, s.maxIterations)
-	compressor := llm.NewCompressor(provider, s.meta.Model, s.config.Context)
+	agent := llm.New(provider, s.meta.Model, config.Must().MaxAgentIterations)
+	compressor := llm.NewCompressor(provider, s.meta.Model)
 	agenttools.BindRunContext(runData.RunContext, s.meta.ID, requestID, opts.EmitEvents)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
@@ -159,7 +152,7 @@ func (s *Session) SetModel(ctx context.Context, model string) error {
 		return nil
 	}
 
-	builtTools, runContext, err := agenttools.BuildTools(s.runtime, s.meta.WorkspaceDir, s.config, s.meta.Provider, model)
+	builtTools, runContext, err := agenttools.BuildTools(s.meta.WorkspaceDir, s.meta.Provider, model)
 	if err != nil {
 		return fmt.Errorf("build tools: %w", err)
 	}
