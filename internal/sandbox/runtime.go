@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"valinor/internal/config"
 	"valinor/internal/logger"
 )
 
@@ -17,6 +18,9 @@ const (
 	fsToolTimeout           = 30 * time.Second
 	defaultMaxConcurrentOps = 10
 	podmanInstallURL        = "https://podman.io/docs/installation"
+	searxngInternalPort     = 8080
+	searxngReadyTimeout     = 45 * time.Second
+	entrypointScriptPath    = "/usr/local/bin/valinor-entrypoint.sh"
 )
 
 // Runtime holds workspace and execution context for tool calls.
@@ -31,7 +35,7 @@ type Runtime struct {
 // NewRuntime creates a runtime configured for a workspace root.
 // It starts a long-running Podman container with the workspace bind-mounted.
 // The image parameter specifies the container image to use (e.g., "valinor-sandbox:latest").
-func NewRuntime(dir, image string) (*Runtime, error) {
+func NewRuntime(dir, image string, searxngCfg config.SearXNGConfig) (*Runtime, error) {
 	logger.Debug("sandbox runtime creation starting", logger.BuildMetadata("workspace", dir, "image", image))
 
 	// Check 1: Verify Podman is installed
@@ -59,11 +63,16 @@ func NewRuntime(dir, image string) (*Runtime, error) {
 
 	logger.Debug("sandbox runtime starting container", logger.BuildMetadata("image", image, "abs_dir", absDir))
 
-	cmd := exec.CommandContext(ctx, "podman", "run", "-d", "--rm",
-		"-v", absDir+":/workspace:Z",
+	runArgs := []string{"run", "-d", "--rm",
+		"-v", absDir + ":/workspace:Z",
 		"-w", "/workspace",
-		image,
-		"sleep", "infinity")
+	}
+	if searxngCfg.PublishPort > 0 {
+		runArgs = append(runArgs, "-p", fmt.Sprintf("127.0.0.1:%d:%d", searxngCfg.PublishPort, searxngInternalPort))
+	}
+	runArgs = append(runArgs, image, entrypointScriptPath)
+
+	cmd := exec.CommandContext(ctx, "podman", runArgs...)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -82,15 +91,82 @@ func NewRuntime(dir, image string) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to get container ID from podman run")
 	}
 
-	logger.Info("sandbox runtime initialized",
-		logger.BuildMetadata("workspace", dir, "container_id", containerID[:12], "image", image))
+	if err := waitForSearXNG(containerID); err != nil {
+		logger.Error("searxng startup diagnostics", logger.BuildMetadata("container_id", containerID[:12], "detail", searxngStartupDiagnostics(containerID)))
+		_ = exec.Command("podman", "rm", "-f", containerID).Run()
+		return nil, err
+	}
 
-	return &Runtime{
+	rt := &Runtime{
 		workspaceDir: absDir,
 		containerID:  containerID,
 		image:        image,
 		sem:          make(chan struct{}, defaultMaxConcurrentOps),
-	}, nil
+	}
+
+	logger.Info("sandbox runtime initialized",
+		logger.BuildMetadata("workspace", dir, "container_id", containerID[:12], "image", image))
+
+	return rt, nil
+}
+
+func waitForSearXNG(containerID string) error {
+	deadline := time.Now().Add(searxngReadyTimeout)
+	probe := fmt.Sprintf(
+		"curl -sf 'http://127.0.0.1:%d/search?q=ping&format=json' >/dev/null",
+		searxngInternalPort,
+	)
+
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		cmd := exec.CommandContext(ctx, "podman", "exec", containerID, "bash", "-c", probe)
+		err := cmd.Run()
+		cancel()
+		if err == nil {
+			logger.Debug("searxng is ready", logger.BuildMetadata("container_id", containerID[:12]))
+			return nil
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+
+	logger.Error("searxng failed to become ready", logger.BuildMetadata("container_id", containerID[:12]))
+	return fmt.Errorf(
+		"searxng did not become ready within %s; rebuild the sandbox image with: valinor build-docker-image (details: %s)",
+		searxngReadyTimeout,
+		searxngStartupDiagnostics(containerID),
+	)
+}
+
+func searxngStartupDiagnostics(containerID string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	script := fmt.Sprintf(`
+if [ ! -x %q ]; then
+  echo -n "missing entrypoint script; "
+fi
+ps_out=$(ps aux 2>/dev/null | awk 'NR==1 || /granian|searx/ {print}')
+if [ -z "$ps_out" ]; then
+  echo -n "searxng process not running; "
+fi
+if ! curl -sf 'http://127.0.0.1:%d/search?q=ping&format=json' >/dev/null 2>&1; then
+  echo -n "http probe failed"
+fi
+`, entrypointScriptPath, searxngInternalPort)
+
+	cmd := exec.CommandContext(ctx, "podman", "exec", containerID, "bash", "-c", script)
+	out, err := cmd.CombinedOutput()
+	detail := strings.TrimSpace(string(out))
+	if detail == "" {
+		detail = "no diagnostics"
+	}
+	if err != nil {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += err.Error()
+	}
+	return detail
 }
 
 // checkPodmanInstalled verifies that podman is installed and accessible.
@@ -127,7 +203,7 @@ func ensureSandboxImage(image string) error {
 
 	// Image doesn't exist - provide clear instructions
 	logger.Error("sandbox image not found", logger.BuildMetadata("image", image))
-	return fmt.Errorf("sandbox image %q was not found locally.\n\nBuild it with:\n  valinor build-docker-image\n\nOr, from the source tree:\n  make build-sandbox\n  podman build -t %s -f internal/sandbox/Dockerfile.sandbox .", image, image)
+	return fmt.Errorf("sandbox image %q was not found locally.\n\nBuild it with:\n  valinor build-docker-image\n\nOr, from the source tree:\n  podman build -t %s -f internal/sandbox/Dockerfile.sandbox .", image, image)
 }
 
 // RunCommand executes a shell command inside the container.

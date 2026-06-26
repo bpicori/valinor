@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"google.golang.org/genai"
+
 )
 
 const googleSearchName = "google_search"
@@ -36,7 +37,6 @@ func BuildGeminiGoogleSearchTool(apiKey, model string) (Tool, error) {
 		googleSearchName,
 		"Search the web using Gemini Google Search grounding. Use for current events, recent facts, external information, or anything that may require live web results. Returns a concise grounded answer with sources.",
 		googleSearchParams(),
-		nil,
 		func(args json.RawMessage) (string, error) {
 			return googleSearchExec(client, model, args)
 		},

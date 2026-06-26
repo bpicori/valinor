@@ -40,6 +40,10 @@ gateway_path = "/ws"
 # Agent configuration
 max_agent_iterations = 20
 
+# SearXNG metasearch (always embedded in the sandbox image)
+# [searxng]
+# publish_port = 0   # 0 = internal only; set e.g. 8080 to expose UI on host
+
 # Context compression (triggers at 85% of 200K window)
 # [context]
 # preserve_recent_messages = 20  # messages kept verbatim at the tail

@@ -50,6 +50,11 @@ const (
 	DefaultSandboxImage = "valinor-sandbox:latest"
 )
 
+// Default SearXNG configuration.
+const (
+	DefaultSearXNGPublishPort = 0
+)
+
 // Default context compression configuration.
 const DefaultPreserveRecentMessages = 20
 
@@ -80,8 +85,18 @@ type Config struct {
 	// SandboxImage is the container image used for the sandbox runtime (default: "valinor-sandbox:latest").
 	SandboxImage string `toml:"sandbox_image"`
 
+	// SearXNG configures the local metasearch instance embedded in the sandbox image.
+	SearXNG SearXNGConfig `toml:"searxng"`
+
 	// Context holds context-window compression settings.
 	Context ContextConfig `toml:"context"`
+}
+
+// SearXNGConfig holds settings for the sandbox-embedded SearXNG instance.
+// SearXNG is always started in the sandbox; only host exposure is configurable.
+type SearXNGConfig struct {
+	// PublishPort maps SearXNG to the host when > 0 (default: 0, internal only).
+	PublishPort int `toml:"publish_port"`
 }
 
 // ContextConfig holds context compression settings.
@@ -221,6 +236,9 @@ func LoadFromFile(path string) (Config, error) {
 	// Apply sandbox defaults
 	if cfg.SandboxImage == "" {
 		cfg.SandboxImage = DefaultSandboxImage
+	}
+	if cfg.SearXNG.PublishPort < 0 {
+		cfg.SearXNG.PublishPort = DefaultSearXNGPublishPort
 	}
 
 	// Apply context compression defaults

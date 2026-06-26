@@ -67,10 +67,13 @@ logs:
 	@lnav -i "$(LNAV_FORMAT)" -q
 	lnav "$(LOG_FILE)"
 
+clean:
+	rm -f $(BINARY)
+
+# Required skills are re-created from the binary on the next gateway startup.
 clean-valinor-dir:
-	rm -rf ~/.valinor/*
-	rm -rf ~/.valinor/.[!.]*
-	rm -rf ~/.valinor/..?*
+	rm -rf "$(VALINOR_DIR)"/*
+	rm -rf "$(VALINOR_DIR)"/.[!.]* "$(VALINOR_DIR)"/..?* 2>/dev/null || true
 
 test:
 	go test ./...

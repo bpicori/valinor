@@ -3,7 +3,7 @@ package openai
 import (
 	"context"
 
-	"valinor/internal/llm"
+	"valinor/internal/llmapi"
 	"valinor/internal/logger"
 
 	"github.com/openai/openai-go/v3"
@@ -36,15 +36,15 @@ func (p *Provider) Name() string {
 }
 
 // ListModels returns models available from the OpenAI API.
-func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+func (p *Provider) ListModels(ctx context.Context) ([]llmapi.ModelInfo, error) {
 	iter := p.client.Models.ListAutoPaging(ctx)
-	var out []llm.ModelInfo
+	var out []llmapi.ModelInfo
 	for iter.Next() {
 		m := iter.Current()
 		if m.ID == "" {
 			continue
 		}
-		out = append(out, llm.ModelInfo{
+		out = append(out, llmapi.ModelInfo{
 			ID:          m.ID,
 			DisplayName: m.ID,
 		})
@@ -56,7 +56,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
 }
 
 // Stream implements the Provider interface for OpenAI.
-func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.StreamResult, error) {
+func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llmapi.StreamResult, error) {
 	oaiParams := openai.ChatCompletionNewParams{
 		Model:    params.Model,
 		Messages: ToOpenAIMessages(params.Messages),
@@ -78,7 +78,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	stream := p.client.Chat.Completions.NewStreaming(ctx, oaiParams)
 	acc := openai.ChatCompletionAccumulator{}
 
-	var usage llm.Usage
+	var usage llmapi.Usage
 	var assistantContent string
 
 	for stream.Next() {
@@ -87,7 +87,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 
 		// Handle token usage
 		if chunk.Usage.TotalTokens > 0 {
-			usage = llm.Usage{
+			usage = llmapi.Usage{
 				PromptTokens:     chunk.Usage.PromptTokens,
 				CompletionTokens: chunk.Usage.CompletionTokens,
 				TotalTokens:      chunk.Usage.TotalTokens,
@@ -100,12 +100,12 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 			if delta.Content != "" {
 				assistantContent += delta.Content
 				if params.OnDelta != nil {
-					params.OnDelta(llm.StreamDelta{Content: delta.Content})
+					params.OnDelta(llmapi.StreamDelta{Content: delta.Content})
 				}
 			}
 			if delta.Refusal != "" {
 				if params.OnDelta != nil {
-					params.OnDelta(llm.StreamDelta{Refusal: delta.Refusal})
+					params.OnDelta(llmapi.StreamDelta{Refusal: delta.Refusal})
 				}
 			}
 		}
@@ -117,33 +117,33 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	}
 
 	// Build result message
-	var resultMsg llm.Message
+	var resultMsg llmapi.Message
 	if len(acc.Choices) > 0 {
 		msg := acc.Choices[0].Message
 		if len(msg.ToolCalls) > 0 {
 			// Assistant requested tool calls
-			toolCalls := make([]llm.ToolCall, 0, len(msg.ToolCalls))
+			toolCalls := make([]llmapi.ToolCall, 0, len(msg.ToolCalls))
 			for _, tc := range msg.ToolCalls {
-				toolCalls = append(toolCalls, llm.ToolCall{
+				toolCalls = append(toolCalls, llmapi.ToolCall{
 					ID:        tc.ID,
 					Name:      tc.Function.Name,
 					Arguments: tc.Function.Arguments,
 				})
 			}
-			resultMsg = llm.Message{
-				Role:      llm.RoleAssistant,
+			resultMsg = llmapi.Message{
+				Role:      llmapi.RoleAssistant,
 				ToolCalls: toolCalls,
 			}
 		} else {
 			// Regular assistant message
-			resultMsg = llm.Message{
-				Role:    llm.RoleAssistant,
+			resultMsg = llmapi.Message{
+				Role:    llmapi.RoleAssistant,
 				Content: assistantContent,
 			}
 		}
 	}
 
-	return &llm.StreamResult{
+	return &llmapi.StreamResult{
 		Message: resultMsg,
 		Usage:   usage,
 	}, nil

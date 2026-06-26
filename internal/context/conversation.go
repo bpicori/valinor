@@ -13,15 +13,16 @@ type Context struct {
 	systemPrompt string
 	messages     []Message
 	tools        []tools.Tool
+	runContext   *tools.RunContext
 }
 
 // New creates a fresh context with a built system prompt and tools.
-func New(workspaceDir string, runtime *sandbox.Runtime, providerCfg config.ProviderConfig, model string) (Context, error) {
+func New(workspaceDir string, runtime *sandbox.Runtime, cfg config.Config, providerName, model string) (Context, error) {
 	systemPrompt, err := BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		return Context{}, fmt.Errorf("build system prompt: %w", err)
 	}
-	builtTools, err := tools.BuildTools(runtime, workspaceDir, providerCfg, model)
+	builtTools, runContext, err := tools.BuildTools(runtime, workspaceDir, cfg, providerName, model)
 	if err != nil {
 		return Context{}, fmt.Errorf("build tools: %w", err)
 	}
@@ -29,16 +30,17 @@ func New(workspaceDir string, runtime *sandbox.Runtime, providerCfg config.Provi
 		systemPrompt: systemPrompt,
 		messages:     []Message{{Role: RoleSystem, Content: systemPrompt}},
 		tools:        builtTools,
+		runContext:   runContext,
 	}, nil
 }
 
 // Resume creates a context from persisted messages, normalizing the system prompt.
-func Resume(workspaceDir string, runtime *sandbox.Runtime, providerCfg config.ProviderConfig, model string, messages []Message) (Context, error) {
+func Resume(workspaceDir string, runtime *sandbox.Runtime, cfg config.Config, providerName, model string, messages []Message) (Context, error) {
 	systemPrompt, err := BuildSystemPrompt(workspaceDir)
 	if err != nil {
 		return Context{}, fmt.Errorf("build system prompt: %w", err)
 	}
-	builtTools, err := tools.BuildTools(runtime, workspaceDir, providerCfg, model)
+	builtTools, runContext, err := tools.BuildTools(runtime, workspaceDir, cfg, providerName, model)
 	if err != nil {
 		return Context{}, fmt.Errorf("build tools: %w", err)
 	}
@@ -46,6 +48,7 @@ func Resume(workspaceDir string, runtime *sandbox.Runtime, providerCfg config.Pr
 		systemPrompt: systemPrompt,
 		messages:     normalizeSystemPrompt(CloneMessages(messages), systemPrompt),
 		tools:        builtTools,
+		runContext:   runContext,
 	}, nil
 }
 
@@ -66,9 +69,15 @@ func (c *Context) Tools() []tools.Tool {
 	return c.tools
 }
 
+// RunContext returns shared per-run metadata for context-bound tools.
+func (c *Context) RunContext() *tools.RunContext {
+	return c.runContext
+}
+
 // SetTools updates the tools available in this context.
-func (c *Context) SetTools(tools []tools.Tool) {
+func (c *Context) SetTools(tools []tools.Tool, runContext *tools.RunContext) {
 	c.tools = tools
+	c.runContext = runContext
 }
 
 // AppendUserMessage appends a user message to the context.
@@ -101,14 +110,19 @@ func (c *Context) Messages() []Message {
 
 // RunData holds the snapshot needed for an LLM run.
 type RunData struct {
-	Messages []Message
-	Tools    []tools.Tool
+	Messages   []Message
+	Tools      []tools.Tool
+	RunContext *tools.RunContext
 }
 
 // PrepareRun appends the user message and returns a snapshot of messages and tools for the LLM.
 func (c *Context) PrepareRun(userMessage string) RunData {
 	c.messages = append(c.messages, Message{Role: RoleUser, Content: userMessage})
-	return RunData{Messages: CloneMessages(c.messages), Tools: c.tools}
+	return RunData{
+		Messages:   CloneMessages(c.messages),
+		Tools:      c.tools,
+		RunContext: c.runContext,
+	}
 }
 
 // CompleteRun replaces internal messages with the agent's result and returns a clone for persistence.

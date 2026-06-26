@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"valinor/internal/toolschema"
 )
 
 // todoStore is the global todo store instance (lazy-initialized).
@@ -213,17 +215,13 @@ func todoWriteParams() map[string]any {
 }
 
 // todoWriteExec executes the todo_write tool.
-func todoWriteExec(runCtx *RunContext, args json.RawMessage) (string, error) {
+func todoWriteExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, error) {
 	if todoStore == nil {
 		return "Error: todo store not initialized", nil
 	}
 
-	// Get session ID from run context
-	runCtx.mu.RLock()
-	sessionID := runCtx.SessionID
-	runCtx.mu.RUnlock()
-
-	if sessionID == "" {
+	snap, ok := runCtx.Snapshot()
+	if !ok || snap.SessionID == "" {
 		return "Error: no session context available", nil
 	}
 
@@ -252,7 +250,7 @@ func todoWriteExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 		}
 	}
 
-	result := todoStore.Write(sessionID, p.Todos, p.Merge)
+	result := todoStore.Write(snap.SessionID, p.Todos, p.Merge)
 	return formatTodos(result), nil
 }
 
@@ -267,20 +265,16 @@ func todoReadParams() map[string]any {
 }
 
 // todoReadExec executes the todo_read tool.
-func todoReadExec(runCtx *RunContext, args json.RawMessage) (string, error) {
+func todoReadExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, error) {
 	if todoStore == nil {
 		return "Error: todo store not initialized", nil
 	}
 
-	// Get session ID from run context
-	runCtx.mu.RLock()
-	sessionID := runCtx.SessionID
-	runCtx.mu.RUnlock()
-
-	if sessionID == "" {
+	snap, ok := runCtx.Snapshot()
+	if !ok || snap.SessionID == "" {
 		return "Error: no session context available", nil
 	}
 
-	todos := todoStore.Read(sessionID)
+	todos := todoStore.Read(snap.SessionID)
 	return formatTodos(todos), nil
 }

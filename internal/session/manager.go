@@ -13,7 +13,6 @@ import (
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
-
 	"github.com/google/uuid"
 )
 
@@ -139,8 +138,7 @@ func (m *Manager) Create(ctx context.Context, opts CreateSessionOptions) (*Sessi
 		return nil, fmt.Errorf("save metadata: %w", err)
 	}
 
-	providerCfg := m.config.Providers[providerName]
-	agentCtx, err := agentcontext.New(workspaceDir, m.runtime, providerCfg, model)
+	agentCtx, err := agentcontext.New(workspaceDir, m.runtime, m.config, providerName, model)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session create context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))
@@ -214,8 +212,7 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	meta.Provider = providerName
 	meta.Model = model
 
-	providerCfg := m.config.Providers[providerName]
-	agentCtx, err := agentcontext.Resume(workspaceDir, m.runtime, providerCfg, model, messages)
+	agentCtx, err := agentcontext.Resume(workspaceDir, m.runtime, m.config, providerName, model, messages)
 	if err != nil {
 		_ = store.Close()
 		logger.Error("session resume context build error", logger.BuildMetadata("session_id", id, "workspace_dir", workspaceDir, "error", err))

@@ -86,8 +86,7 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 
 	agent := llm.New(provider, s.meta.Model, s.maxIterations)
 	compressor := llm.NewCompressor(provider, s.meta.Model, s.config.Context)
-	// Give tools access to the session and request IDs
-	agenttools.BindRunContext(runData.Tools, s.meta.ID, requestID, opts.EmitEvents)
+	agenttools.BindRunContext(runData.RunContext, s.meta.ID, requestID, opts.EmitEvents)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
 		Messages:   runData.Messages,
@@ -118,11 +117,18 @@ func (s *Session) Tools() []agenttools.Tool {
 	return s.agentContext.Tools()
 }
 
-// SetTools replaces the tools available in this session.
-func (s *Session) SetTools(tools []agenttools.Tool) {
+// RunContext returns shared per-run metadata for session tools.
+func (s *Session) RunContext() *agenttools.RunContext {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.agentContext.SetTools(tools)
+	return s.agentContext.RunContext()
+}
+
+// SetTools replaces the tools available in this session.
+func (s *Session) SetTools(tools []agenttools.Tool, runContext *agenttools.RunContext) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.agentContext.SetTools(tools, runContext)
 }
 
 // ResetConversation clears messages to only the base system prompt.
@@ -153,12 +159,11 @@ func (s *Session) SetModel(ctx context.Context, model string) error {
 		return nil
 	}
 
-	providerCfg := s.config.Providers[s.meta.Provider]
-	builtTools, err := agenttools.BuildTools(s.runtime, s.meta.WorkspaceDir, providerCfg, model)
+	builtTools, runContext, err := agenttools.BuildTools(s.runtime, s.meta.WorkspaceDir, s.config, s.meta.Provider, model)
 	if err != nil {
 		return fmt.Errorf("build tools: %w", err)
 	}
-	s.agentContext.SetTools(builtTools)
+	s.agentContext.SetTools(builtTools, runContext)
 
 	s.meta.Model = model
 	s.meta.UpdatedAt = time.Now()

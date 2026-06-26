@@ -3,19 +3,19 @@ package anthropic
 import (
 	"encoding/json"
 
-	"valinor/internal/llm"
+	"valinor/internal/llmapi"
 	"valinor/internal/logger"
-	"valinor/internal/tools"
+	"valinor/internal/toolschema"
 
 	"github.com/anthropics/anthropic-sdk-go"
 )
 
 // ExtractSystemMessages extracts system messages from the message array.
 // Anthropic requires system messages to be passed separately, not in the messages array.
-func ExtractSystemMessages(messages []llm.Message) []anthropic.TextBlockParam {
+func ExtractSystemMessages(messages []llmapi.Message) []anthropic.TextBlockParam {
 	systemBlocks := []anthropic.TextBlockParam{}
 	for _, m := range messages {
-		if m.Role == llm.RoleSystem {
+		if m.Role == llmapi.RoleSystem {
 			systemBlocks = append(systemBlocks, anthropic.TextBlockParam{
 				Text: m.Content,
 			})
@@ -27,21 +27,21 @@ func ExtractSystemMessages(messages []llm.Message) []anthropic.TextBlockParam {
 // ToAnthropicMessages converts provider-agnostic messages to Anthropic format.
 // Anthropic requires alternating user/assistant messages and does not include system messages
 // in the messages array (they go in a separate System parameter).
-func ToAnthropicMessages(messages []llm.Message) []anthropic.MessageParam {
+func ToAnthropicMessages(messages []llmapi.Message) []anthropic.MessageParam {
 	out := []anthropic.MessageParam{}
 
 	for _, m := range messages {
 		switch m.Role {
-		case llm.RoleSystem:
+		case llmapi.RoleSystem:
 			// Skip system messages - they're handled separately via ExtractSystemMessages
 			continue
 
-		case llm.RoleUser:
+		case llmapi.RoleUser:
 			out = append(out, anthropic.NewUserMessage(
 				anthropic.NewTextBlock(m.Content),
 			))
 
-		case llm.RoleAssistant:
+		case llmapi.RoleAssistant:
 			if len(m.ToolCalls) > 0 {
 				// Assistant message with tool calls
 				contentBlocks := []anthropic.ContentBlockParamUnion{}
@@ -75,7 +75,7 @@ func ToAnthropicMessages(messages []llm.Message) []anthropic.MessageParam {
 				))
 			}
 
-		case llm.RoleTool:
+		case llmapi.RoleTool:
 			// Tool results are sent as user messages with tool_result content blocks
 			out = append(out, anthropic.NewUserMessage(
 				anthropic.NewToolResultBlock(m.ToolCallID, m.Content, false),
@@ -87,7 +87,7 @@ func ToAnthropicMessages(messages []llm.Message) []anthropic.MessageParam {
 }
 
 // ToAnthropicTool converts a provider-agnostic tool to Anthropic format.
-func ToAnthropicTool(t tools.Tool) anthropic.ToolParam {
+func ToAnthropicTool(t toolschema.Tool) anthropic.ToolParam {
 	// Parse the JSON Schema parameters
 	var inputSchema map[string]interface{}
 	if err := json.Unmarshal(t.Parameters, &inputSchema); err != nil {

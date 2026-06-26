@@ -10,14 +10,7 @@ import (
 	"valinor/internal/event"
 	"valinor/internal/event_bus"
 	"valinor/internal/logger"
-	"valinor/internal/tools"
-)
-
-const (
-	RoleSystem    MessageRole = "system"
-	RoleUser      MessageRole = "user"
-	RoleAssistant MessageRole = "assistant"
-	RoleTool      MessageRole = "tool"
+	"valinor/internal/toolschema"
 )
 
 // New creates an LLM runtime with the given provider.
@@ -272,7 +265,7 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 	return out
 }
 
-func executeTool(toolset []tools.Tool, name string, args json.RawMessage) (string, bool) {
+func executeTool(toolset []toolschema.Tool, name string, args json.RawMessage) (string, bool) {
 	for _, t := range toolset {
 		if t.Name != name {
 			continue

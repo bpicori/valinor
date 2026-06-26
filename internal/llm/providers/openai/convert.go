@@ -3,9 +3,9 @@ package openai
 import (
 	"encoding/json"
 
-	"valinor/internal/llm"
+	"valinor/internal/llmapi"
 	"valinor/internal/logger"
-	"valinor/internal/tools"
+	"valinor/internal/toolschema"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/shared"
@@ -13,15 +13,15 @@ import (
 )
 
 // ToOpenAIMessages converts provider-agnostic messages to OpenAI format.
-func ToOpenAIMessages(messages []llm.Message) []openai.ChatCompletionMessageParamUnion {
+func ToOpenAIMessages(messages []llmapi.Message) []openai.ChatCompletionMessageParamUnion {
 	out := make([]openai.ChatCompletionMessageParamUnion, 0, len(messages))
 	for _, m := range messages {
 		switch m.Role {
-		case llm.RoleSystem:
+		case llmapi.RoleSystem:
 			out = append(out, openai.SystemMessage(m.Content))
-		case llm.RoleUser:
+		case llmapi.RoleUser:
 			out = append(out, openai.UserMessage(m.Content))
-		case llm.RoleAssistant:
+		case llmapi.RoleAssistant:
 			if len(m.ToolCalls) > 0 {
 				// Assistant message with tool calls
 				toolCalls := make([]openai.ChatCompletionMessageToolCallUnionParam, 0, len(m.ToolCalls))
@@ -47,7 +47,7 @@ func ToOpenAIMessages(messages []llm.Message) []openai.ChatCompletionMessagePara
 				// Regular assistant message
 				out = append(out, openai.AssistantMessage(m.Content))
 			}
-		case llm.RoleTool:
+		case llmapi.RoleTool:
 			out = append(out, openai.ToolMessage(m.Content, m.ToolCallID))
 		}
 	}
@@ -55,7 +55,7 @@ func ToOpenAIMessages(messages []llm.Message) []openai.ChatCompletionMessagePara
 }
 
 // ToOpenAITool converts a provider-agnostic tool to OpenAI format.
-func ToOpenAITool(t tools.Tool) openai.ChatCompletionToolUnionParam {
+func ToOpenAITool(t toolschema.Tool) openai.ChatCompletionToolUnionParam {
 	// Parse the JSON Schema parameters
 	var params shared.FunctionParameters
 	if err := json.Unmarshal(t.Parameters, &params); err != nil {

@@ -39,9 +39,10 @@ Prefer brief, frequent logs over infrequent detailed ones. A one-line daily log 
 
 ## Skills
 
-Skills are optional deep instructions. When needed:
-- Use the skill catalog in this prompt to identify relevant skills.
-- Read the selected skill file on demand before executing specialized work.
+Skills are deep instructions loaded on demand. Use the catalog below to find relevant skills, then read the skill file before specialized work.
+
+- For live external facts (news, docs, prices, schedules), read **web-research** before calling `web_search`.
+- Use workspace tools first when the answer is already in files or memory.
 - Do not read every skill preemptively; load only what is relevant.
 
 ## Python Env

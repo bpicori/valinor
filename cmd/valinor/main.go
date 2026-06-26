@@ -20,6 +20,7 @@ import (
 	"valinor/internal/tools"
 	"valinor/internal/tui"
 	"valinor/internal/version"
+	"valinor/skills"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -206,6 +207,9 @@ func initGateway(cfg config.Config, logPrefix string, transports []logger.Transp
 	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
 		return nil, fmt.Errorf("create workspace directory: %w", err)
 	}
+	if err := skills.EnsureRequired(workspaceDir); err != nil {
+		return nil, fmt.Errorf("ensure required skills: %w", err)
+	}
 	scriptsDir, err := cfg.ResolveScriptsDir()
 	if err != nil {
 		return nil, fmt.Errorf("resolve scripts dir: %w", err)
@@ -224,7 +228,7 @@ func initGateway(cfg config.Config, logPrefix string, transports []logger.Transp
 	logger.Info("logging initialized", logger.BuildMetadata("log_path", logPath))
 
 	// Create shared sandbox runtime
-	rt, err := sandbox.NewRuntime(workspaceDir, cfg.SandboxImage)
+	rt, err := sandbox.NewRuntime(workspaceDir, cfg.SandboxImage, cfg.SearXNG)
 	if err != nil {
 		closeLogger()
 		return nil, fmt.Errorf("create sandbox runtime: %w", err)

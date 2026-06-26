@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"valinor/internal/logger"
 )
@@ -321,6 +322,9 @@ func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory str
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(basePrompt))
 
+	sb.WriteString("\n\n")
+	sb.WriteString(currentDateContext())
+
 	sb.WriteString("\n\n## AgentIdentity\n")
 	if strings.TrimSpace(identity) == "" {
 		sb.WriteString("No identity file provided.\n")
@@ -353,6 +357,15 @@ func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory str
 	}
 
 	return strings.TrimSpace(sb.String())
+}
+
+func currentDateContext() string {
+	now := time.Now()
+	return fmt.Sprintf(
+		"## Current Date\n\nToday is %s (%s). Use this date for \"today\", \"now\", and other time-sensitive requests. Do not guess the year.",
+		now.Format("Monday, January 2, 2006"),
+		now.Format("2006-01-02"),
+	)
 }
 
 func parseSkillHeader(contents string) (name, description string, ok bool) {

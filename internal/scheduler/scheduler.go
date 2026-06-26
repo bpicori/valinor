@@ -24,7 +24,7 @@ import (
 	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 	"valinor/internal/session"
-	"valinor/internal/tools"
+	agenttools "valinor/internal/tools"
 )
 
 const (
@@ -35,7 +35,7 @@ const (
 )
 
 // cronAgentExcludedTools lists tools withheld from agents during scheduled job runs.
-var cronAgentExcludedTools = []string{tools.CronjobName}
+var cronAgentExcludedTools = []string{agenttools.CronjobName}
 
 // Scheduler runs scheduled jobs from the jobs store.
 type Scheduler struct {
@@ -296,7 +296,7 @@ func (s *Scheduler) executeAgentJob(ctx context.Context, job *cron.CronJob) (str
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
-	sess.SetTools(tools.Exclude(sess.Tools(), cronAgentExcludedTools...))
+	sess.SetTools(agenttools.Exclude(sess.Tools(), cronAgentExcludedTools...), sess.RunContext())
 	defer func() {
 		if err := sess.Close(); err != nil {
 			logger.Warning("scheduler: failed to close session",

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"valinor/internal/cron"
+	"valinor/internal/toolschema"
 	"valinor/internal/logger"
 )
 
@@ -121,7 +122,7 @@ type cronjobArgs struct {
 	Limit        int      `json:"limit,omitempty"`
 }
 
-func cronjobExec(runCtx *RunContext, args json.RawMessage) (string, error) {
+func cronjobExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, error) {
 	if jobs == nil {
 		return "Error: cron jobs store not initialized", nil
 	}
@@ -153,7 +154,7 @@ func cronjobExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 	}
 }
 
-func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
+func cronjobAdd(runCtx *toolschema.RunContext, p cronjobArgs) (string, error) {
 	if p.Name == "" {
 		return "Error: name is required for add", nil
 	}
@@ -173,10 +174,8 @@ func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 	}
 
 	var createdInSessionID string
-	if runCtx != nil {
-		runCtx.mu.RLock()
-		createdInSessionID = runCtx.SessionID
-		runCtx.mu.RUnlock()
+	if snap, ok := runCtx.Snapshot(); ok {
+		createdInSessionID = snap.SessionID
 	}
 
 	noAgent := p.NoAgent != nil && *p.NoAgent

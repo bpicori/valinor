@@ -12,6 +12,7 @@ import (
 	"valinor/internal/event"
 	"valinor/internal/event_bus"
 	"valinor/internal/sandbox"
+	"valinor/internal/toolschema"
 )
 
 const (
@@ -34,7 +35,7 @@ func sendImageParams() map[string]any {
 	}
 }
 
-func sendImageExec(rt *sandbox.Runtime, runContext *RunContext, args json.RawMessage) (string, error) {
+func sendImageExec(rt *sandbox.Runtime, runContext *toolschema.RunContext, args json.RawMessage) (string, error) {
 	if rt == nil {
 		return "", fmt.Errorf("sandbox runtime is required")
 	}
@@ -69,14 +70,7 @@ func sendImageExec(rt *sandbox.Runtime, runContext *RunContext, args json.RawMes
 		return fmt.Sprintf("Tool Error: unsupported image type %q.", mimeType), nil
 	}
 
-	if runContext != nil {
-		runContext.mu.RLock()
-		sessionID := runContext.SessionID
-		requestID := runContext.RequestID
-		emitEvents := runContext.EmitEvents
-		runContext.mu.RUnlock()
-
-		if emitEvents && sessionID != "" {
+	if snap, ok := runContext.Snapshot(); ok && snap.EmitEvents && snap.SessionID != "" {
 			event_bus.Publish(event.Event{
 				Type: event.AgentImage,
 				Payload: event.ImagePayload{
@@ -84,10 +78,9 @@ func sendImageExec(rt *sandbox.Runtime, runContext *RunContext, args json.RawMes
 					MIMEType: mimeType,
 					Base64:   base64.StdEncoding.EncodeToString(data),
 				},
-				SessionID: sessionID,
-				RequestID: requestID,
+				SessionID: snap.SessionID,
+				RequestID: snap.RequestID,
 			})
-		}
 	}
 
 	return cleaned, nil

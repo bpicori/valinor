@@ -4,14 +4,14 @@ import (
 	"fmt"
 
 	"valinor/internal/config"
-	"valinor/internal/llm"
+	"valinor/internal/llmapi"
 	"valinor/internal/llm/providers/anthropic"
 	"valinor/internal/llm/providers/gemini"
 	"valinor/internal/llm/providers/openai"
 )
 
 // CreateProvider instantiates a provider based on the given configuration.
-func CreateProvider(cfg config.ProviderConfig) (llm.Provider, error) {
+func CreateProvider(cfg config.ProviderConfig) (llmapi.Provider, error) {
 	switch cfg.Type {
 	case "openai":
 		return openai.New(cfg.APIKey, "")
