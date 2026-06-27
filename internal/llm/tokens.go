@@ -1,4 +1,4 @@
-package tokens
+package llm
 
 import (
 	"strings"
@@ -42,7 +42,6 @@ func estimateTextTokens(s string) int64 {
 	if trimmed == "" {
 		return 0
 	}
-	// Rough heuristic: ~4 characters per token for mixed English/code text.
 	runes := int64(len([]rune(trimmed)))
 	return (runes + 3) / 4
 }

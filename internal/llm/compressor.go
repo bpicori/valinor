@@ -8,7 +8,6 @@ import (
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/logger"
-	"valinor/internal/tokens"
 )
 
 const (
@@ -41,7 +40,7 @@ func NewCompressor(provider Provider, model string) *Compressor {
 // Fail-open: returns the original messages on error or when there is nothing to compress.
 func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.Message) []agentcontext.Message {
 	limit := int64(float64(maxContextWindow) * compressionThreshold)
-	if tokens.EstimatePromptTokens(messages) <= limit {
+	if EstimatePromptTokens(messages) <= limit {
 		return messages
 	}
 

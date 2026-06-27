@@ -11,7 +11,6 @@ import (
 	"valinor/internal/llm"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
-	"valinor/internal/tokens"
 	agenttools "valinor/internal/tools"
 )
 
@@ -205,5 +204,5 @@ func (s *Session) ContextTokenCount() (int64, bool) {
 		return s.lastUsage.TotalTokens, false
 	}
 	messages := s.agentContext.Messages()
-	return tokens.EstimatePromptTokens(messages), true
+	return llm.EstimatePromptTokens(messages), true
 }
