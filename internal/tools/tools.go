@@ -66,22 +66,23 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 
 	run := &RunContext{}
 	result := []Tool{
-		buildTool(readFileName, "Read the contents of a file. Path is relative to the workspace root.", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }),
-		buildTool(writeFileName, "Write content to a file. Path is relative to the workspace root. Creates parent directories if needed. Overwrites existing files.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }),
-		buildTool(editFileName, "Apply multiple targeted text edits to a file. Path is relative to the workspace root. Edits are applied in order.", editFileParams(), func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }),
-		buildTool(memoryLogName, "Append a brief entry to today's daily memory log (memory/daily/YYYY-MM-DD.md). Use after completing tasks, learning preferences, or making decisions worth remembering. Entries are timestamped and append-only.", memoryLogParams(), func(a json.RawMessage) (string, error) { return memoryLogExec(rt, a) }),
-		buildTool(memoryUpdateName, "Create or update a named section in MEMORY.md. Use for durable information: user preferences, project conventions, recurring constraints. Provide a section name and content; existing sections are replaced, new ones are appended.", memoryUpdateParams(), func(a json.RawMessage) (string, error) { return memoryUpdateExec(rt, a) }),
-		buildTool(listFilesName, "List files and directories at the given path. Path is relative to the workspace root. Use \".\" for the root. Directories are marked with a trailing slash.", listFilesParams(), func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }),
-		buildTool(grepName, "Search for a regex pattern in files. Returns matching lines with file paths and line numbers.", grepParams(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }),
-		buildTool(pythonExecName, "Execute Python code in a sandboxed container. Use for running Python scripts, data analysis, file processing, or Python automation.", pythonExecParams(), func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),
-		buildTool(SendImageName, "Send an image file to the current chat/client, including Telegram. Use whenever the user asks to show or send an existing image file from the workspace. Path is relative to the workspace root, and image bytes are not added to conversation history.", sendImageParams(), func(a json.RawMessage) (string, error) { return sendImageExec(rt, run, a) }),
-		buildTool(bashExecName, "Execute bash commands in a sandboxed container. Use for running shell commands, git operations, package management, builds, tests, and system automation. Commands run with workspace directory access.", bashExecParams(), func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
-		buildTool(todoWriteName, "Create or update a structured task list for the current job. Use to plan multi-step work, track progress, and ensure all steps are completed. Each todo has an id, content, and status (pending, in_progress, completed, cancelled).", todoWriteParams(), func(a json.RawMessage) (string, error) { return todoWriteExec(run, a) }),
-		buildTool(todoReadName, "Read the current task list for this session. Returns all todos with their status.", todoReadParams(), func(a json.RawMessage) (string, error) { return todoReadExec(run, a) }),
+		buildTool(readFileName, "Read a workspace file. Parameters: path.", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }),
+		buildTool(writeFileName, "Write a workspace file (overwrites). Parameters: path, content.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }),
+		buildTool(editFileName, "Apply ordered text edits to a workspace file. Parameters: path, edits.", editFileParams(), func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }),
+		buildTool(memoryLogName, "Append a bullet to today's daily log. Parameters: content.", memoryLogParams(), func(a json.RawMessage) (string, error) { return memoryLogExec(rt, a) }),
+		buildTool(memoryUpdateName, "Create or replace a section in MEMORY.md. Parameters: section, content.", memoryUpdateParams(), func(a json.RawMessage) (string, error) { return memoryUpdateExec(rt, a) }),
+		buildTool(memorySearchName, "Search daily memory logs by regex. Parameters: pattern, days (optional).", memorySearchParams(), func(a json.RawMessage) (string, error) { return memorySearchExec(rt, a) }),
+		buildTool(listFilesName, "List workspace entries. Parameters: path (default \".\").", listFilesParams(), func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }),
+		buildTool(grepName, "Search workspace files by regex. Parameters: pattern, path (optional), include (optional).", grepParams(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }),
+		buildTool(pythonExecName, "Run Python in the sandbox. Parameters: code or script_path, cwd (optional).", pythonExecParams(), func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),
+		buildTool(SendImageName, "Send a workspace image to the current client. Parameters: path.", sendImageParams(), func(a json.RawMessage) (string, error) { return sendImageExec(rt, run, a) }),
+		buildTool(bashExecName, "Run bash in the sandbox. Parameters: command, cwd (optional).", bashExecParams(), func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
+		buildTool(todoWriteName, "Create or update session todos. Parameters: todos, merge.", todoWriteParams(), func(a json.RawMessage) (string, error) { return todoWriteExec(run, a) }),
+		buildTool(todoReadName, "Read session todos.", todoReadParams(), func(a json.RawMessage) (string, error) { return todoReadExec(run, a) }),
 		buildTool(CronjobName,
-			"Manage scheduled cron jobs. For monitoring/alerts (price thresholds, health checks, status pings): write a script to scripts/<name>.sh first, then action=add with no_agent=true and script=<name>.sh. For tasks needing reasoning each run: action=add with message only. Other actions: list, remove, history, pause, resume, run, edit.",
+			"Manage cron jobs. Parameters: action (add|list|remove|history|pause|resume|run|edit) plus job fields.",
 			cronjobParams(), func(a json.RawMessage) (string, error) { return cronjobExec(run, a) }),
-		buildTool(webSearchName, webSearchDescription, webSearchParams(), func(a json.RawMessage) (string, error) {
+		buildTool(webSearchName, "Search the web via SearXNG. Parameters: query, categories (optional), time_range (optional).", webSearchParams(), func(a json.RawMessage) (string, error) {
 			return webSearchExec(rt, a)
 		}),
 	}

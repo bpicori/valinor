@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -17,11 +16,7 @@ const IdentityFile = "IDENTITY.md"
 const SkillsDir = "skills"
 
 const MemoryFile = "MEMORY.md"
-const MemoryDir = "memory"
-const MemoryDailyDir = "daily"
 const MaxMemoryMainChars = 15000
-const MaxMemoryDailyChars = 5000
-const MemoryDailyLookbackDays = 7
 
 var (
 	skillHeaderRE      = regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---`)
@@ -201,13 +196,10 @@ func LoadSkillBodies(workspaceDir string, skillNames []string) (string, error) {
 	return strings.TrimSpace(sb.String()), nil
 }
 
-// LoadMemory reads MEMORY.md and recent daily memory files from the workspace.
-// Returns combined content suitable for injection into the system prompt.
-// Missing files/directories are silently ignored (empty string returned).
+// LoadMemory reads MEMORY.md from the workspace for injection into the system prompt.
+// Daily logs are not included; use memory_search to query older daily entries.
+// Missing files are silently ignored (empty string returned).
 func LoadMemory(workspaceDir string) (string, error) {
-	var sb strings.Builder
-
-	// Load main MEMORY.md
 	mainPath := filepath.Join(workspaceDir, MemoryFile)
 	mainData, err := os.ReadFile(mainPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -215,81 +207,13 @@ func LoadMemory(workspaceDir string) (string, error) {
 		return "", fmt.Errorf("read memory file: %w", err)
 	}
 	mainContent := strings.TrimSpace(string(mainData))
+	if mainContent == "" {
+		return "", nil
+	}
 	if len(mainContent) > MaxMemoryMainChars {
 		mainContent = mainContent[:MaxMemoryMainChars] + "\n\n... (truncated)"
 	}
-	if mainContent != "" {
-		sb.WriteString("### MEMORY.md\n\n")
-		sb.WriteString(mainContent)
-		sb.WriteString("\n\n")
-	}
-
-	// Load recent daily memory files (last N days, newest first)
-	dailyDir := filepath.Join(workspaceDir, MemoryDir, MemoryDailyDir)
-	dailyContent := loadRecentDailyMemories(dailyDir, MemoryDailyLookbackDays, MaxMemoryDailyChars)
-	if dailyContent != "" {
-		sb.WriteString("### Recent Daily Memories\n\n")
-		sb.WriteString(dailyContent)
-	}
-
-	return strings.TrimSpace(sb.String()), nil
-}
-
-// loadRecentDailyMemories reads up to lookbackDays recent daily memory files,
-// collecting content up to maxChars total. Files are named YYYY-MM-DD.md and
-// sorted newest-first. Missing directory returns empty string.
-func loadRecentDailyMemories(dailyDir string, lookbackDays int, maxChars int) string {
-	entries, err := os.ReadDir(dailyDir)
-	if err != nil {
-		return ""
-	}
-
-	// Collect .md files, sort descending (newest first)
-	var files []string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if strings.HasSuffix(strings.ToLower(name), ".md") {
-			files = append(files, name)
-		}
-	}
-	sort.Sort(sort.Reverse(sort.StringSlice(files)))
-
-	var sb strings.Builder
-	totalChars := 0
-	count := 0
-	for _, name := range files {
-		if count >= lookbackDays {
-			break
-		}
-		data, err := os.ReadFile(filepath.Join(dailyDir, name))
-		if err != nil {
-			continue
-		}
-		content := strings.TrimSpace(string(data))
-		if content == "" {
-			continue
-		}
-		if totalChars+len(content) > maxChars {
-			remaining := maxChars - totalChars
-			if remaining > 100 {
-				content = content[:remaining] + "\n... (truncated)"
-			} else {
-				break
-			}
-		}
-		dateName := strings.TrimSuffix(name, filepath.Ext(name))
-		sb.WriteString("#### ")
-		sb.WriteString(dateName)
-		sb.WriteString("\n\n")
-		sb.WriteString(content)
-		sb.WriteString("\n\n")
-		totalChars += len(content)
-		count++
-	}
-	return sb.String()
+	return mainContent, nil
 }
 
 // loadNestedSkill attempts to load a SKILL.md file from a nested directory.
@@ -349,8 +273,9 @@ func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory str
 	}
 
 	sb.WriteString("\n## LoadedMemory\n")
+	sb.WriteString("MEMORY.md snapshot from session start (updates via memory_update take effect on the next session). Use memory_search for daily logs.\n\n")
 	if strings.TrimSpace(memory) == "" {
-		sb.WriteString("No memory files found. Use write_file to create MEMORY.md when you have important information to remember.\n")
+		sb.WriteString("MEMORY.md is empty. Use memory_update to add durable sections.\n")
 	} else {
 		sb.WriteString(memory)
 		sb.WriteString("\n")

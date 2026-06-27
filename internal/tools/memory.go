@@ -3,6 +3,10 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -10,10 +14,14 @@ import (
 )
 
 const (
-	memoryLogName    = "memory_log"
-	memoryUpdateName = "memory_update"
-	memoryFile       = "MEMORY.md"
-	memoryDailyDir   = "memory/daily"
+	memoryLogName           = "memory_log"
+	memoryUpdateName        = "memory_update"
+	memorySearchName        = "memory_search"
+	memoryFile              = "MEMORY.md"
+	memoryDailyDir          = "memory/daily"
+	memorySearchDefaultDays = 30
+	memorySearchMaxDays     = 365
+	memorySearchMaxChars    = 8000
 )
 
 func memoryLogParams() map[string]any {
@@ -122,6 +130,125 @@ func memoryUpdateExec(rt *sandbox.Runtime, args json.RawMessage) (string, error)
 	}
 
 	return fmt.Sprintf("ok: updated section '%s' in MEMORY.md", p.Section), nil
+}
+
+func memorySearchParams() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"pattern": map[string]string{
+				"type":        "string",
+				"description": "Regular expression to search for in daily memory files",
+			},
+			"days": map[string]any{
+				"type":        "integer",
+				"description": "How many days back to search (default 30, max 365)",
+			},
+		},
+		"required":             []string{"pattern"},
+		"additionalProperties": false,
+	}
+}
+
+func memorySearchExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {
+	var p struct {
+		Pattern string `json:"pattern"`
+		Days    int    `json:"days"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(p.Pattern) == "" {
+		return "Tool Error: pattern must not be empty", nil
+	}
+
+	result, err := searchDailyMemories(rt.WorkspaceDir(), p.Pattern, p.Days)
+	if err != nil {
+		return "", err
+	}
+	return result, nil
+}
+
+func searchDailyMemories(workspaceDir, pattern string, maxDays int) (string, error) {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return "", fmt.Errorf("pattern is required")
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return "", fmt.Errorf("invalid regex: %w", err)
+	}
+	if maxDays <= 0 {
+		maxDays = memorySearchDefaultDays
+	}
+	if maxDays > memorySearchMaxDays {
+		maxDays = memorySearchMaxDays
+	}
+
+	dailyDir := filepath.Join(workspaceDir, memoryDailyDir)
+	entries, err := os.ReadDir(dailyDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "No daily memory files found.", nil
+		}
+		return "", fmt.Errorf("read daily memory dir: %w", err)
+	}
+
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(strings.ToLower(name), ".md") {
+			files = append(files, name)
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(files)))
+
+	cutoff := time.Now().AddDate(0, 0, -maxDays)
+	var sb strings.Builder
+	totalChars := 0
+
+	for _, name := range files {
+		dateName := strings.TrimSuffix(name, filepath.Ext(name))
+		fileDate, err := time.Parse("2006-01-02", dateName)
+		if err != nil {
+			continue
+		}
+		if fileDate.Before(cutoff) {
+			break
+		}
+
+		data, err := os.ReadFile(filepath.Join(dailyDir, name))
+		if err != nil {
+			continue
+		}
+
+		var dayMatches []string
+		for i, line := range strings.Split(string(data), "\n") {
+			if re.MatchString(line) {
+				dayMatches = append(dayMatches, fmt.Sprintf("  L%d: %s", i+1, strings.TrimRight(line, "\r")))
+			}
+		}
+		if len(dayMatches) == 0 {
+			continue
+		}
+
+		section := fmt.Sprintf("## %s\n%s\n", dateName, strings.Join(dayMatches, "\n"))
+		if totalChars+len(section) > memorySearchMaxChars {
+			sb.WriteString("\n... (truncated)")
+			break
+		}
+		sb.WriteString(section)
+		totalChars += len(section)
+	}
+
+	result := strings.TrimSpace(sb.String())
+	if result == "" {
+		return fmt.Sprintf("No matches for pattern %q in the last %d days.", pattern, maxDays), nil
+	}
+	return result, nil
 }
 
 // upsertSection inserts or replaces a named section in markdown content.

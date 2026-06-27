@@ -252,6 +252,9 @@ func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayD
 	if err := agentcontext.EnsureMemory(paths.WorkspaceDir); err != nil {
 		return nil, fmt.Errorf("ensure memory file: %w", err)
 	}
+	if err := agentcontext.EnsureIdentity(paths.WorkspaceDir); err != nil {
+		return nil, fmt.Errorf("ensure identity file: %w", err)
+	}
 	if err := os.MkdirAll(paths.ScriptsDir, 0750); err != nil {
 		return nil, fmt.Errorf("create scripts directory: %w", err)
 	}
