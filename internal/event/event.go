@@ -1,5 +1,5 @@
-// Package event provides the unified event type system used across bus, router, and gateway.
-// This package eliminates the need for duplicate payload type definitions and conversion boilerplate.
+// Package event provides the unified event type system and application-wide pub/sub bus
+// used across router, gateway, and clients.
 package event
 
 import (

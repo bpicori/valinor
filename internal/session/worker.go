@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"valinor/internal/event"
-	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 )
 
@@ -58,7 +57,7 @@ func (w *sessionWorker) handleUserMessage(ctx context.Context, requestID string,
 	if err != nil {
 		if runCtx.Err() == context.Canceled {
 			logger.Info("session worker user message cancelled", logger.BuildMetadata("session_id", w.session.Meta().ID))
-			event_bus.Publish(event.Event{
+			event.Publish(event.Event{
 				Type:      event.AgentCancelled,
 				Payload:   event.AgentCancelledPayload{},
 				SessionID: w.session.Meta().ID,

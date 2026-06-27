@@ -7,7 +7,7 @@ import (
 
 	agentcontext "valinor/internal/context"
 	"valinor/internal/logger"
-	"valinor/internal/toolschema"
+	"valinor/internal/tools"
 )
 
 const memoryPassPrompt = "[System] Review this turn. If anything is worth remembering for future sessions, call memory_log or memory_update now. If nothing warrants saving, respond with exactly: NO_REPLY"
@@ -37,9 +37,9 @@ func shouldRunMemoryPass(toolsUsed map[string]struct{}) bool {
 	return false
 }
 
-func filterMemoryTools(tools []toolschema.Tool) []toolschema.Tool {
-	out := make([]toolschema.Tool, 0, 2)
-	for _, t := range tools {
+func filterMemoryTools(toolset []tools.Tool) []tools.Tool {
+	out := make([]tools.Tool, 0, 2)
+	for _, t := range toolset {
 		if t.Name == "memory_log" || t.Name == "memory_update" {
 			out = append(out, t)
 		}

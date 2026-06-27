@@ -8,9 +8,8 @@ import (
 
 	agentcontext "valinor/internal/context"
 	"valinor/internal/event"
-	"valinor/internal/event_bus"
 	"valinor/internal/logger"
-	"valinor/internal/toolschema"
+	"valinor/internal/tools"
 )
 
 // New creates an LLM runtime with the given provider.
@@ -60,7 +59,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		if !req.EmitEvents {
 			return
 		}
-		event_bus.Publish(newEvent(eventType, payload))
+		event.Publish(newEvent(eventType, payload))
 	}
 
 	for {
@@ -260,7 +259,7 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 	return out
 }
 
-func executeTool(toolset []toolschema.Tool, name string, args json.RawMessage) (string, bool) {
+func executeTool(toolset []tools.Tool, name string, args json.RawMessage) (string, bool) {
 	for _, t := range toolset {
 		if t.Name != name {
 			continue

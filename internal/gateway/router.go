@@ -7,7 +7,6 @@ import (
 
 	"valinor/internal/cron"
 	"valinor/internal/event"
-	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 	"valinor/internal/session"
 )
@@ -38,7 +37,7 @@ type Router struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	busSub *event_bus.Subscription
+	busSub *event.Subscription
 }
 
 // NewRouter creates a new router instance.
@@ -63,7 +62,7 @@ func (r *Router) Start(ctx context.Context) {
 	r.ctx, r.cancel = context.WithCancel(ctx)
 
 	// Subscribe to all agent events from the bus
-	r.busSub = event_bus.Subscribe(
+	r.busSub = event.Subscribe(
 		event.AgentContentDelta,
 		event.AgentContentFull,
 		event.AgentImage,
@@ -96,7 +95,7 @@ func (r *Router) Stop() {
 		r.cancel = nil
 	}
 	if r.busSub != nil {
-		event_bus.Unsubscribe(r.busSub)
+		event.Unsubscribe(r.busSub)
 		r.busSub = nil
 	}
 	r.mu.Unlock()

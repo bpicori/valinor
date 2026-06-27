@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"valinor/internal/cron"
-	"valinor/internal/toolschema"
+
 	"valinor/internal/logger"
 )
 
@@ -117,7 +117,7 @@ type cronjobArgs struct {
 	Limit        int      `json:"limit,omitempty"`
 }
 
-func cronjobExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, error) {
+func cronjobExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 	var p cronjobArgs
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
@@ -145,7 +145,7 @@ func cronjobExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, e
 	}
 }
 
-func cronjobAdd(runCtx *toolschema.RunContext, p cronjobArgs) (string, error) {
+func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 	if p.Name == "" {
 		return "Error: name is required for add", nil
 	}

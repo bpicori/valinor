@@ -18,7 +18,6 @@ import (
 	"valinor/internal/session"
 	"valinor/internal/telegram"
 	"valinor/internal/tui"
-	"valinor/internal/version"
 	"valinor/skills"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -70,7 +69,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println(version.String())
+		fmt.Println(versionString())
 		return
 	}
 

@@ -8,7 +8,6 @@ import (
 
 	"valinor/internal/config"
 	"valinor/internal/event"
-	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 )
 
@@ -151,7 +150,7 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 		r.publishContextTokens(worker.session)
 
 		// Publish event to notify client that conversation has been reset
-		event_bus.Publish(event.Event{
+		event.Publish(event.Event{
 			Type:      event.NewConversation,
 			SessionID: sessionID,
 			RequestID: requestID,
@@ -168,7 +167,7 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 		// A cancel from session A cannot interrupt session B.
 		worker.cancelRun()
 		// Emit cancelled event with session context for proper routing
-		event_bus.Publish(event.Event{
+		event.Publish(event.Event{
 			Type:      event.AgentCancelled,
 			Payload:   event.AgentCancelledPayload{},
 			SessionID: sessionID,
@@ -311,7 +310,7 @@ func (r *Runtime) publishContextTokens(sess *Session) {
 		return
 	}
 	promptTokens, estimated := sess.ContextTokenCount()
-	event_bus.Publish(event.Event{
+	event.Publish(event.Event{
 		Type: event.ContextTokens,
 		Payload: event.ContextTokensPayload{
 			PromptTokens: promptTokens,
@@ -350,7 +349,7 @@ func (r *Runtime) handleRequestProviderModels(provider string, sessionID string,
 				})
 			}
 		}
-		event_bus.Publish(event.Event{
+		event.Publish(event.Event{
 			Type:      event.ProviderModelsResult,
 			Payload:   payload,
 			SessionID: sessionID,

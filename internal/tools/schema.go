@@ -1,4 +1,4 @@
-package toolschema
+package tools
 
 import (
 	"encoding/json"

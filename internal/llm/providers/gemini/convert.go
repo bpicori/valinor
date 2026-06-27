@@ -3,28 +3,28 @@ package gemini
 import (
 	"encoding/json"
 
-	"valinor/internal/llmapi"
+	"valinor/internal/llm"
 	"valinor/internal/logger"
-	"valinor/internal/toolschema"
+	"valinor/internal/tools"
 
 	"google.golang.org/genai"
 )
 
 // ToGeminiContents converts provider-agnostic messages to Gemini Content format.
 // Gemini uses RoleUser and RoleModel (not assistant), and system messages are treated as user messages.
-func ToGeminiContents(messages []llmapi.Message, thoughtSignatures map[string][]byte) []*genai.Content {
+func ToGeminiContents(messages []llm.Message, thoughtSignatures map[string][]byte) []*genai.Content {
 	contents := []*genai.Content{}
 
 	for _, m := range messages {
 		switch m.Role {
-		case llmapi.RoleSystem:
+		case llm.RoleSystem:
 			// Gemini doesn't have a system role - treat as user message
 			contents = append(contents, genai.NewContentFromText(m.Content, genai.RoleUser))
 
-		case llmapi.RoleUser:
+		case llm.RoleUser:
 			contents = append(contents, genai.NewContentFromText(m.Content, genai.RoleUser))
 
-		case llmapi.RoleAssistant:
+		case llm.RoleAssistant:
 			if len(m.ToolCalls) > 0 {
 				// Assistant message with tool calls
 				parts := []*genai.Part{}
@@ -63,7 +63,7 @@ func ToGeminiContents(messages []llmapi.Message, thoughtSignatures map[string][]
 				contents = append(contents, genai.NewContentFromText(m.Content, genai.RoleModel))
 			}
 
-		case llmapi.RoleTool:
+		case llm.RoleTool:
 			// Tool results are sent as user messages with FunctionResponse
 			var response map[string]any
 			if err := json.Unmarshal([]byte(m.Content), &response); err != nil {
@@ -79,7 +79,7 @@ func ToGeminiContents(messages []llmapi.Message, thoughtSignatures map[string][]
 }
 
 // ToGeminiFunctionDeclaration converts a provider-agnostic tool to Gemini format.
-func ToGeminiFunctionDeclaration(t toolschema.Tool) *genai.FunctionDeclaration {
+func ToGeminiFunctionDeclaration(t tools.Tool) *genai.FunctionDeclaration {
 	// Parse the JSON Schema parameters
 	var schema map[string]any
 	if err := json.Unmarshal(t.Parameters, &schema); err != nil {

@@ -1,9 +1,9 @@
-package llmapi
+package llm
 
 import (
 	"context"
 
-	"valinor/internal/toolschema"
+	"valinor/internal/tools"
 )
 
 // StreamDelta represents a chunk of streamed content from the provider.
@@ -50,7 +50,7 @@ type Usage struct {
 // StreamParams contains parameters for a streaming LLM request.
 type StreamParams struct {
 	Messages  []Message
-	Tools     []toolschema.Tool
+	Tools     []tools.Tool
 	Model     string
 	MaxTokens int
 	OnDelta   StreamCallback

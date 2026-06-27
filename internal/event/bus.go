@@ -1,16 +1,9 @@
-package event_bus
+package event
 
 import (
 	"sync"
 
-	"valinor/internal/event"
 	"valinor/internal/logger"
-)
-
-// Event and EventType are aliases to the centralized event package types.
-type (
-	Event     = event.Event
-	EventType = event.EventType
 )
 
 // defaultBufSize is the channel buffer size for all subscriptions.
@@ -31,8 +24,8 @@ type Bus struct {
 	subs []*Subscription
 }
 
-// New creates a new event bus.
-func New() *Bus {
+// NewBus creates a new event bus.
+func NewBus() *Bus {
 	return &Bus{}
 }
 
@@ -95,10 +88,9 @@ var (
 	defaultBusOnce sync.Once
 )
 
-// bus returns the package-level default bus, creating it if needed.
-func bus() *Bus {
+func defaultBusInstance() *Bus {
 	defaultBusOnce.Do(func() {
-		defaultBus = New()
+		defaultBus = NewBus()
 	})
 	return defaultBus
 }
@@ -106,16 +98,16 @@ func bus() *Bus {
 // Subscribe creates a subscription on the default bus.
 // Events are filtered to the given types. If no types are given, all events are delivered.
 func Subscribe(types ...EventType) *Subscription {
-	return bus().Subscribe(types...)
+	return defaultBusInstance().Subscribe(types...)
 }
 
 // Unsubscribe removes a subscription from the default bus and closes its channel.
 func Unsubscribe(sub *Subscription) {
-	bus().Unsubscribe(sub)
+	defaultBusInstance().Unsubscribe(sub)
 }
 
 // Publish sends an event to all matching subscribers on the default bus.
 // Non-blocking: if a subscriber's buffer is full, the event is dropped.
 func Publish(ev Event) {
-	bus().Publish(ev)
+	defaultBusInstance().Publish(ev)
 }

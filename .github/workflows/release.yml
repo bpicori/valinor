@@ -86,7 +86,7 @@ jobs:
 
               CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
                 go build -trimpath \
-                -ldflags="-s -w -X valinor/internal/version.Version=${VERSION} -X valinor/internal/version.Commit=${short_sha} -X valinor/internal/version.BuildDate=${build_date}" \
+                -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${short_sha} -X main.BuildDate=${build_date}" \
                 -o "${binary_path}" \
                 ./cmd/valinor
 

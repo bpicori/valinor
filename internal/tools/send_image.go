@@ -10,9 +10,8 @@ import (
 	"strings"
 
 	"valinor/internal/event"
-	"valinor/internal/event_bus"
 	"valinor/internal/sandbox"
-	"valinor/internal/toolschema"
+
 )
 
 const (
@@ -35,7 +34,7 @@ func sendImageParams() map[string]any {
 	}
 }
 
-func sendImageExec(rt *sandbox.Runtime, runContext *toolschema.RunContext, args json.RawMessage) (string, error) {
+func sendImageExec(rt *sandbox.Runtime, runContext *RunContext, args json.RawMessage) (string, error) {
 	if rt == nil {
 		return "", fmt.Errorf("sandbox runtime is required")
 	}
@@ -71,7 +70,7 @@ func sendImageExec(rt *sandbox.Runtime, runContext *toolschema.RunContext, args 
 	}
 
 	if snap, ok := runContext.Snapshot(); ok && snap.EmitEvents && snap.SessionID != "" {
-			event_bus.Publish(event.Event{
+			event.Publish(event.Event{
 				Type: event.AgentImage,
 				Payload: event.ImagePayload{
 					FileName: filepath.Base(cleaned),

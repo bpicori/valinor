@@ -1,4 +1,4 @@
-package version
+package main
 
 import "fmt"
 
@@ -9,7 +9,6 @@ var (
 	BuildDate = "unknown"
 )
 
-// String returns the current build metadata in a single line.
-func String() string {
+func versionString() string {
 	return fmt.Sprintf("version=%s commit=%s build_date=%s", Version, Commit, BuildDate)
 }

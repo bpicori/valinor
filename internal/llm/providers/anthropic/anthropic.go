@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"valinor/internal/llmapi"
+	"valinor/internal/llm"
 	"valinor/internal/logger"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -37,15 +37,15 @@ func (p *Provider) Name() string {
 }
 
 // ListModels returns models available from the Anthropic API.
-func (p *Provider) ListModels(ctx context.Context) ([]llmapi.ModelInfo, error) {
+func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
 	iter := p.client.Models.ListAutoPaging(ctx, anthropic.ModelListParams{})
-	var out []llmapi.ModelInfo
+	var out []llm.ModelInfo
 	for iter.Next() {
 		m := iter.Current()
 		if m.ID == "" {
 			continue
 		}
-		out = append(out, llmapi.ModelInfo{
+		out = append(out, llm.ModelInfo{
 			ID:          m.ID,
 			DisplayName: m.DisplayName,
 		})
@@ -57,7 +57,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]llmapi.ModelInfo, error) {
 }
 
 // Stream implements the Provider interface for Anthropic.
-func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llmapi.StreamResult, error) {
+func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.StreamResult, error) {
 	// Extract system messages (Anthropic requires these separately)
 	systemMessages := ExtractSystemMessages(params.Messages)
 
@@ -89,7 +89,7 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 	// Start streaming
 	stream := p.client.Messages.NewStreaming(ctx, antParams)
 
-	var usage llmapi.Usage
+	var usage llm.Usage
 	var assistantContent string
 	contentBlocks := []anthropic.ContentBlockUnion{}
 
@@ -100,7 +100,7 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 		case "message_delta":
 			// Message delta contains usage information
 			msgDelta := evt.AsMessageDelta()
-			usage = llmapi.Usage{
+			usage = llm.Usage{
 				PromptTokens:     int64(msgDelta.Usage.InputTokens),
 				CompletionTokens: int64(msgDelta.Usage.OutputTokens),
 				TotalTokens:      int64(msgDelta.Usage.InputTokens + msgDelta.Usage.OutputTokens),
@@ -128,7 +128,7 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 				if blockDelta.Delta.Text != "" {
 					assistantContent += blockDelta.Delta.Text
 					if params.OnDelta != nil {
-						params.OnDelta(llmapi.StreamDelta{Content: blockDelta.Delta.Text})
+						params.OnDelta(llm.StreamDelta{Content: blockDelta.Delta.Text})
 					}
 				}
 			case "input_json_delta":
@@ -147,33 +147,33 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 	}
 
 	// Build result message
-	var resultMsg llmapi.Message
+	var resultMsg llm.Message
 
 	if len(contentBlocks) > 0 {
 		// Assistant requested tool calls
-		toolCalls := []llmapi.ToolCall{}
+		toolCalls := []llm.ToolCall{}
 		for _, block := range contentBlocks {
 			if block.Type == "tool_use" {
-				toolCalls = append(toolCalls, llmapi.ToolCall{
+				toolCalls = append(toolCalls, llm.ToolCall{
 					ID:        block.ID,
 					Name:      block.Name,
 					Arguments: string(block.Input),
 				})
 			}
 		}
-		resultMsg = llmapi.Message{
-			Role:      llmapi.RoleAssistant,
+		resultMsg = llm.Message{
+			Role:      llm.RoleAssistant,
 			ToolCalls: toolCalls,
 		}
 	} else {
 		// Regular assistant message
-		resultMsg = llmapi.Message{
-			Role:    llmapi.RoleAssistant,
+		resultMsg = llm.Message{
+			Role:    llm.RoleAssistant,
 			Content: assistantContent,
 		}
 	}
 
-	return &llmapi.StreamResult{
+	return &llm.StreamResult{
 		Message: resultMsg,
 		Usage:   usage,
 	}, nil

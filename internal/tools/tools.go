@@ -9,14 +9,7 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
-	"valinor/internal/toolschema"
 )
-
-// Tool is the agent-callable tool definition.
-type Tool = toolschema.Tool
-
-// RunContext carries per-run metadata for tools that emit client events.
-type RunContext = toolschema.RunContext
 
 // normalizePath converts path separators for LLM-provided paths that may mix
 // Windows and Unix separators, and cleans the path.
@@ -59,11 +52,6 @@ func BindRunContext(run *RunContext, sessionID, requestID string, emitEvents boo
 		return
 	}
 	run.Bind(sessionID, requestID, emitEvents)
-}
-
-// Exclude returns tools whose names are not in exclude.
-func Exclude(tools []Tool, names ...string) []Tool {
-	return toolschema.Exclude(tools, names...)
 }
 
 // BuildTools returns base tools plus any provider-specific tools for the run.

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sync"
 
-	"valinor/internal/llmapi"
+	"valinor/internal/llm"
 	"valinor/internal/logger"
 
 	"google.golang.org/genai"
@@ -46,8 +46,8 @@ func (p *Provider) Name() string {
 }
 
 // ListModels returns models available from the Gemini API.
-func (p *Provider) ListModels(ctx context.Context) ([]llmapi.ModelInfo, error) {
-	var out []llmapi.ModelInfo
+func (p *Provider) ListModels(ctx context.Context) ([]llm.ModelInfo, error) {
+	var out []llm.ModelInfo
 	for m, err := range p.client.Models.All(ctx) {
 		if err != nil {
 			return nil, err
@@ -60,7 +60,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]llmapi.ModelInfo, error) {
 		if len(id) > 7 && id[:7] == "models/" {
 			id = id[7:]
 		}
-		out = append(out, llmapi.ModelInfo{
+		out = append(out, llm.ModelInfo{
 			ID:          id,
 			DisplayName: m.DisplayName,
 		})
@@ -69,7 +69,7 @@ func (p *Provider) ListModels(ctx context.Context) ([]llmapi.ModelInfo, error) {
 }
 
 // Stream implements the Provider interface for Gemini.
-func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llmapi.StreamResult, error) {
+func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.StreamResult, error) {
 	// Convert messages to Gemini format
 	contents := ToGeminiContents(params.Messages, p.snapshotThoughtSignatures())
 
@@ -92,9 +92,9 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 	// Start streaming using iterator pattern
 	stream := p.client.Models.GenerateContentStream(ctx, params.Model, contents, config)
 
-	var usage llmapi.Usage
+	var usage llm.Usage
 	var assistantContent string
-	var toolCalls []llmapi.ToolCall
+	var toolCalls []llm.ToolCall
 	callIDCounter := 0
 
 	for response, err := range stream {
@@ -105,7 +105,7 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 
 		// Extract usage metadata
 		if response.UsageMetadata != nil {
-			usage = llmapi.Usage{
+			usage = llm.Usage{
 				PromptTokens:     int64(response.UsageMetadata.PromptTokenCount),
 				CompletionTokens: int64(response.UsageMetadata.CandidatesTokenCount),
 				TotalTokens:      int64(response.UsageMetadata.TotalTokenCount),
@@ -121,7 +121,7 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 					if part.Text != "" {
 						assistantContent += part.Text
 						if params.OnDelta != nil {
-							params.OnDelta(llmapi.StreamDelta{Content: part.Text})
+							params.OnDelta(llm.StreamDelta{Content: part.Text})
 						}
 					}
 
@@ -141,7 +141,7 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 							argsJSON = []byte("{}")
 						}
 
-						toolCalls = append(toolCalls, llmapi.ToolCall{
+						toolCalls = append(toolCalls, llm.ToolCall{
 							ID:        id,
 							Name:      part.FunctionCall.Name,
 							Arguments: string(argsJSON),
@@ -154,22 +154,22 @@ func (p *Provider) Stream(ctx context.Context, params llmapi.StreamParams) (*llm
 	}
 
 	// Build result message
-	var resultMsg llmapi.Message
+	var resultMsg llm.Message
 
 	if len(toolCalls) > 0 {
-		resultMsg = llmapi.Message{
-			Role:      llmapi.RoleAssistant,
+		resultMsg = llm.Message{
+			Role:      llm.RoleAssistant,
 			ToolCalls: toolCalls,
 		}
 	} else {
 		// Regular assistant message
-		resultMsg = llmapi.Message{
-			Role:    llmapi.RoleAssistant,
+		resultMsg = llm.Message{
+			Role:    llm.RoleAssistant,
 			Content: assistantContent,
 		}
 	}
 
-	return &llmapi.StreamResult{
+	return &llm.StreamResult{
 		Message: resultMsg,
 		Usage:   usage,
 	}, nil

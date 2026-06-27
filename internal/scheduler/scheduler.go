@@ -21,7 +21,6 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/cron"
 	"valinor/internal/event"
-	"valinor/internal/event_bus"
 	"valinor/internal/logger"
 	"valinor/internal/session"
 	agenttools "valinor/internal/tools"
@@ -247,7 +246,7 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 	}
 
 	if resultContent != "" && job.DeliverTo.Kind != cron.DeliverySilent {
-		event_bus.Publish(event.Event{
+		event.Publish(event.Event{
 			Type: event.CronJobResult,
 			Payload: event.CronJobResultPayload{
 				JobID:     job.ID,

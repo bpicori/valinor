@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"valinor/internal/toolschema"
+
 )
 
 // todoStore is the global todo store instance (lazy-initialized).
@@ -215,7 +215,7 @@ func todoWriteParams() map[string]any {
 }
 
 // todoWriteExec executes the todo_write tool.
-func todoWriteExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, error) {
+func todoWriteExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 	if todoStore == nil {
 		return "Error: todo store not initialized", nil
 	}
@@ -265,7 +265,7 @@ func todoReadParams() map[string]any {
 }
 
 // todoReadExec executes the todo_read tool.
-func todoReadExec(runCtx *toolschema.RunContext, args json.RawMessage) (string, error) {
+func todoReadExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 	if todoStore == nil {
 		return "Error: todo store not initialized", nil
 	}
