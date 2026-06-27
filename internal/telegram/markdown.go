@@ -6,6 +6,7 @@ import (
 	stdhtml "html"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -138,9 +139,19 @@ func renderTelegramHTMLNode(node ast.Node, source []byte, state *telegramRenderS
 		state.sb.WriteString("</pre>")
 		writeHTMLBlockBreak(node, state)
 	case *ast.Blockquote:
-		quote := strings.Trim(renderTelegramPlainText(node, source), "\n")
+		quote := strings.Trim(renderTelegramPlainTextChildrenToString(node, source), "\n")
 		if quote != "" {
-			state.sb.WriteString(escapeTelegramHTML(prefixLines(quote, "> ")))
+			state.sb.WriteString("<i>")
+			state.sb.WriteString(escapeTelegramHTML(quote))
+			state.sb.WriteString("</i>")
+			writeHTMLBlockBreak(node, state)
+		}
+	case *extensionast.Table:
+		table := formatTelegramTable(n, source)
+		if table != "" {
+			state.sb.WriteString("<pre>")
+			state.sb.WriteString(escapeTelegramHTML(table))
+			state.sb.WriteString("</pre>")
 			writeHTMLBlockBreak(node, state)
 		}
 	case *ast.List:
@@ -261,6 +272,12 @@ func renderTelegramPlainTextNode(node ast.Node, source []byte, state *telegramRe
 		quote := strings.Trim(renderTelegramPlainTextChildrenToString(node, source), "\n")
 		if quote != "" {
 			state.sb.WriteString(prefixLines(quote, "> "))
+			writePlainBlockBreak(node, state)
+		}
+	case *extensionast.Table:
+		table := formatTelegramTable(n, source)
+		if table != "" {
+			state.sb.WriteString(table)
 			writePlainBlockBreak(node, state)
 		}
 	case *ast.List:
@@ -395,4 +412,82 @@ func prefixLines(text, prefix string) string {
 		lines[i] = prefix + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+func formatTelegramTable(table *extensionast.Table, source []byte) string {
+	rows := extractTelegramTableRows(table, source)
+	if len(rows) == 0 {
+		return ""
+	}
+
+	colCount := 0
+	for _, row := range rows {
+		if len(row) > colCount {
+			colCount = len(row)
+		}
+	}
+	if colCount == 0 {
+		return ""
+	}
+
+	widths := make([]int, colCount)
+	for _, row := range rows {
+		for i, cell := range row {
+			if width := utf8.RuneCountInString(cell); width > widths[i] {
+				widths[i] = width
+			}
+		}
+	}
+
+	var sb strings.Builder
+	for ri, row := range rows {
+		for i := 0; i < colCount; i++ {
+			if i > 0 {
+				sb.WriteString("  ")
+			}
+			cell := ""
+			if i < len(row) {
+				cell = row[i]
+			}
+			sb.WriteString(padTelegramTableCell(cell, widths[i]))
+		}
+		if ri < len(rows)-1 {
+			sb.WriteString("\n")
+		}
+	}
+	return sb.String()
+}
+
+func extractTelegramTableRows(table *extensionast.Table, source []byte) [][]string {
+	var rows [][]string
+	for child := table.FirstChild(); child != nil; child = child.NextSibling() {
+		switch row := child.(type) {
+		case *extensionast.TableHeader, *extensionast.TableRow:
+			cells := extractTelegramTableRowCells(row, source)
+			if len(cells) > 0 {
+				rows = append(rows, cells)
+			}
+		}
+	}
+	return rows
+}
+
+func extractTelegramTableRowCells(row ast.Node, source []byte) []string {
+	var cells []string
+	for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+		tc, ok := cell.(*extensionast.TableCell)
+		if !ok {
+			continue
+		}
+		cells = append(cells, strings.TrimSpace(renderTelegramPlainText(tc, source)))
+	}
+	return cells
+}
+
+func padTelegramTableCell(cell string, width int) string {
+	padding := width - utf8.RuneCountInString(cell)
+	if padding <= 0 {
+		return cell
+	}
+	return cell + strings.Repeat(" ", padding)
 }
