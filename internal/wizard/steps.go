@@ -7,11 +7,9 @@ type wizardStep struct {
 
 var wizardSteps = []wizardStep{
 	{stepProviders, "Providers"},
-	{stepDirectories, "Directories"},
-	{stepNetworking, "Gateway & Web"},
+	{stepDirectories, "Data Directory"},
+	{stepNetworking, "Gateway"},
 	{stepAgent, "Agent & Context"},
 	{stepTelegram, "Telegram"},
-	{stepScheduler, "Scheduler"},
-	{stepSandbox, "Sandbox"},
 	{stepReview, "Review & Save"},
 }

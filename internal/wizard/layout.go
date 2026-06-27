@@ -109,12 +109,8 @@ func (m *Model) progressIndex() int {
 		return 3
 	case stepTelegram:
 		return 4
-	case stepScheduler:
-		return 5
-	case stepSandbox:
-		return 6
 	case stepReview, stepDone:
-		return 7
+		return 5
 	default:
 		return 0
 	}
@@ -139,17 +135,13 @@ func (m *Model) panelTitle() string {
 		}
 		return "Add Provider"
 	case stepDirectories:
-		return "Directories"
+		return "Data Directory"
 	case stepNetworking:
-		return "Gateway & Web"
+		return "Gateway"
 	case stepAgent:
 		return "Agent & Context"
 	case stepTelegram:
 		return "Telegram Bot"
-	case stepScheduler:
-		return "Scheduled Jobs"
-	case stepSandbox:
-		return "Sandbox Runtime"
 	case stepReview:
 		return "Review Configuration"
 	default:

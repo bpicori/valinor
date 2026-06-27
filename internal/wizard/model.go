@@ -24,8 +24,6 @@ const (
 	stepNetworking
 	stepAgent
 	stepTelegram
-	stepScheduler
-	stepSandbox
 	stepReview
 	stepDone
 )
@@ -382,8 +380,8 @@ func (m *Model) handleReviewKey(keyMsg tea.KeyMsg) (bool, tea.Cmd) {
 		m.step = stepDone
 		return true, tea.Quit
 	case "esc":
-		m.step = stepSandbox
-		m.form = m.buildStepForm(stepSandbox, m.panelWidth()-8)
+		m.step = stepTelegram
+		m.form = m.buildStepForm(stepTelegram, m.panelWidth()-8)
 		return true, nil
 	}
 	if isNextStepKey(keyMsg, true) {
@@ -427,7 +425,6 @@ func (m *Model) buildStepForm(s step, width int) fieldForm {
 	case stepDirectories:
 		return newFieldForm([]formField{
 			{label: "Valinor Dir", kind: fieldString, value: m.cfg.ValinorDir, hint: "~/.valinor"},
-			{label: "Workspace Dir", kind: fieldString, value: m.cfg.WorkspaceDir, optional: true, hint: "leave blank for default"},
 		}, width)
 	case stepNetworking:
 		return newFieldForm([]formField{
@@ -435,33 +432,20 @@ func (m *Model) buildStepForm(s step, width int) fieldForm {
 			{label: "Gateway Host", kind: fieldString, value: m.cfg.GatewayHost},
 			{label: "Gateway Port", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.GatewayPort)},
 			{label: "Gateway Path", kind: fieldString, value: m.cfg.GatewayPath},
-			{label: "Web Enabled", kind: fieldBool, value: boolString(m.cfg.WebEnabled)},
-			{label: "Web Host", kind: fieldString, value: m.cfg.WebHost},
-			{label: "Web Port", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.WebPort)},
 		}, width)
 	case stepAgent:
 		return newFieldForm([]formField{
 			{label: "Max Agent Iterations", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.MaxAgentIterations)},
-			{label: "Preserve Recent Messages", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.Context.PreserveRecentMessages)},
+			{
+				label: "Preserve Recent Messages",
+				kind:  fieldInt,
+				value: fmt.Sprintf("%d", m.cfg.Context.PreserveRecentMessages),
+				hint:  "When context exceeds ~85% capacity, older middle messages are summarized; this many recent messages stay verbatim",
+			},
 		}, width)
 	case stepTelegram:
 		return newFieldForm([]formField{
-			{label: "Enabled", kind: fieldBool, value: boolString(m.cfg.Telegram.Enabled)},
-			{label: "Bot Token", kind: fieldPassword, value: m.cfg.Telegram.BotToken, optional: !m.cfg.Telegram.Enabled},
-			{label: "Poll Timeout", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.Telegram.PollTimeout)},
-			{label: "Retry Base Delay", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.Telegram.RetryBaseDelay)},
-			{label: "Retry Max Delay", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.Telegram.RetryMaxDelay)},
-			{label: "Require Mention", kind: fieldBool, value: boolString(m.cfg.Telegram.RequireMention)},
-		}, width)
-	case stepScheduler:
-		return newFieldForm([]formField{
-			{label: "Enabled", kind: fieldBool, value: boolString(m.cfg.Scheduler.Enabled)},
-			{label: "Script Timeout", kind: fieldString, value: m.cfg.Scheduler.ScriptTimeout},
-			{label: "Scripts Dir", kind: fieldString, value: m.cfg.Scheduler.ScriptsDir, optional: true},
-		}, width)
-	case stepSandbox:
-		return newFieldForm([]formField{
-			{label: "Sandbox Image", kind: fieldString, value: m.cfg.SandboxImage},
+			{label: "Bot Token", kind: fieldString, value: m.cfg.Telegram.BotToken, hint: "from @BotFather"},
 		}, width)
 	default:
 		return fieldForm{}
@@ -473,7 +457,6 @@ func (m *Model) applyForm() error {
 	switch m.step {
 	case stepDirectories:
 		m.cfg.ValinorDir = strings.TrimSpace(m.form.fieldValue("Valinor Dir"))
-		m.cfg.WorkspaceDir = strings.TrimSpace(m.form.fieldValue("Workspace Dir"))
 	case stepNetworking:
 		m.cfg.GatewayEnabled = m.form.boolValue("Gateway Enabled")
 		m.cfg.GatewayHost = strings.TrimSpace(m.form.fieldValue("Gateway Host"))
@@ -483,13 +466,6 @@ func (m *Model) applyForm() error {
 		}
 		m.cfg.GatewayPort = gwPort
 		m.cfg.GatewayPath = strings.TrimSpace(m.form.fieldValue("Gateway Path"))
-		m.cfg.WebEnabled = m.form.boolValue("Web Enabled")
-		m.cfg.WebHost = strings.TrimSpace(m.form.fieldValue("Web Host"))
-		webPort, err := m.form.intValue("Web Port")
-		if err != nil {
-			return err
-		}
-		m.cfg.WebPort = webPort
 	case stepAgent:
 		maxIter, err := m.form.intValue("Max Agent Iterations")
 		if err != nil {
@@ -502,37 +478,17 @@ func (m *Model) applyForm() error {
 		m.cfg.MaxAgentIterations = maxIter
 		m.cfg.Context.PreserveRecentMessages = preserve
 	case stepTelegram:
-		m.cfg.Telegram.Enabled = m.form.boolValue("Enabled")
+		m.cfg.Telegram.Enabled = true
 		m.cfg.Telegram.BotToken = strings.TrimSpace(m.form.fieldValue("Bot Token"))
-		if m.cfg.Telegram.Enabled && m.cfg.Telegram.BotToken == "" {
-			return fmt.Errorf("bot token is required when telegram is enabled")
+		if m.cfg.Telegram.BotToken == "" {
+			return fmt.Errorf("bot token is required")
 		}
-		poll, err := m.form.intValue("Poll Timeout")
-		if err != nil {
-			return err
-		}
-		base, err := m.form.intValue("Retry Base Delay")
-		if err != nil {
-			return err
-		}
-		maxDelay, err := m.form.intValue("Retry Max Delay")
-		if err != nil {
-			return err
-		}
-		m.cfg.Telegram.PollTimeout = poll
-		m.cfg.Telegram.RetryBaseDelay = base
-		m.cfg.Telegram.RetryMaxDelay = maxDelay
-		m.cfg.Telegram.RequireMention = m.form.boolValue("Require Mention")
-	case stepScheduler:
-		m.cfg.Scheduler.Enabled = m.form.boolValue("Enabled")
-		m.cfg.Scheduler.ScriptTimeout = strings.TrimSpace(m.form.fieldValue("Script Timeout"))
-		m.cfg.Scheduler.ScriptsDir = strings.TrimSpace(m.form.fieldValue("Scripts Dir"))
-	case stepSandbox:
-		m.cfg.SandboxImage = strings.TrimSpace(m.form.fieldValue("Sandbox Image"))
 	}
 	if m.cfg.ValinorDir == "" {
 		m.cfg.ValinorDir = config.DefaultValinorDir
 	}
+	m.cfg.Telegram.Enabled = true
+	m.cfg.Scheduler.Enabled = true
 	if m.cfg.SandboxImage == "" {
 		m.cfg.SandboxImage = config.DefaultSandboxImage
 	}
@@ -563,25 +519,13 @@ func (m *Model) refreshReview() {
 		b.WriteString(fmt.Sprintf("%s%s (%s, %s)\n", marker, name, p.Type, p.DefaultModel))
 	}
 	b.WriteString(fmt.Sprintf("\nValinor dir:       %s\n", m.cfg.ValinorDir))
-	if m.cfg.WorkspaceDir != "" {
-		b.WriteString(fmt.Sprintf("Workspace dir:     %s\n", m.cfg.WorkspaceDir))
-	}
 	b.WriteString(fmt.Sprintf("Gateway:           %s\n", m.cfg.GatewayWebSocketURL()))
-	b.WriteString(fmt.Sprintf("Web:               %s:%d (%s)\n", m.cfg.WebHost, m.cfg.WebPort, enabledLabel(m.cfg.WebEnabled)))
 	b.WriteString(fmt.Sprintf("Max iterations:    %d\n", m.cfg.MaxAgentIterations))
-	b.WriteString(fmt.Sprintf("Telegram:          %s\n", enabledLabel(m.cfg.Telegram.Enabled)))
-	b.WriteString(fmt.Sprintf("Scheduler:         %s\n", enabledLabel(m.cfg.Scheduler.Enabled)))
-	b.WriteString(fmt.Sprintf("Sandbox image:     %s\n", m.cfg.SandboxImage))
+	b.WriteString(fmt.Sprintf("Preserve recent:   %d messages\n", m.cfg.Context.PreserveRecentMessages))
+	b.WriteString("Telegram:          enabled (token configured)\n")
 	b.WriteString("\n")
 	b.WriteString(m.styles.hint.Render("Press enter to save to ~/.valinor/config.toml"))
 	m.review.SetContent(b.String())
-}
-
-func enabledLabel(v bool) string {
-	if v {
-		return "enabled"
-	}
-	return "disabled"
 }
 
 func boolString(v bool) string {

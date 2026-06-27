@@ -145,16 +145,6 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 	if cfg.MaxAgentIterations <= 0 {
 		cfg.MaxAgentIterations = DefaultMaxAgentIterations
 	}
-	if cfg.WebHost == "" {
-		cfg.WebHost = DefaultWebHost
-	}
-	if cfg.WebPort <= 0 {
-		cfg.WebPort = DefaultWebPort
-	}
-	if !md.IsDefined("web_enabled") {
-		cfg.WebEnabled = DefaultWebEnabled
-	}
-
 	if cfg.GatewayHost == "" {
 		cfg.GatewayHost = DefaultGatewayHost
 	}
@@ -168,6 +158,8 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 		cfg.GatewayEnabled = DefaultGatewayEnabled
 	}
 
+	cfg.Telegram.Enabled = true
+
 	if cfg.Telegram.PollTimeout <= 0 {
 		cfg.Telegram.PollTimeout = DefaultTelegramPollTimeout
 	}
@@ -180,6 +172,8 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 	if cfg.Telegram.RetryMaxDelay <= 0 {
 		cfg.Telegram.RetryMaxDelay = DefaultTelegramRetryMaxDelay
 	}
+
+	cfg.Scheduler.Enabled = true
 
 	if cfg.Scheduler.ScriptTimeout == "" {
 		cfg.Scheduler.ScriptTimeout = DefaultSchedulerScriptTimeout

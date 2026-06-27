@@ -14,13 +14,6 @@ const DefaultValinorDir = "~/.valinor"
 // DefaultMaxAgentIterations is the default cap on agent tool-call iterations per user message.
 const DefaultMaxAgentIterations = 20
 
-// Default web server configuration.
-const (
-	DefaultWebEnabled = true
-	DefaultWebHost    = "127.0.0.1"
-	DefaultWebPort    = 7777
-)
-
 // Default gateway configuration.
 const (
 	DefaultGatewayEnabled = true
@@ -39,7 +32,7 @@ const (
 
 // Default scheduler configuration.
 const (
-	DefaultSchedulerEnabled       = false
+	DefaultSchedulerEnabled       = true
 	DefaultSchedulerScriptTimeout = "120s"
 )
 
@@ -61,12 +54,7 @@ type Config struct {
 	DefaultProvider    string                    `toml:"default_provider"`
 	Providers          map[string]ProviderConfig `toml:"providers"`
 	ValinorDir         string                    `toml:"valinor_dir"`
-	SessionDir         string                    `toml:"session_dir"`
-	WorkspaceDir       string                    `toml:"workspace_dir"`
 	MaxAgentIterations int                       `toml:"max_agent_iterations"`
-	WebEnabled         bool                      `toml:"web_enabled"`
-	WebHost            string                    `toml:"web_host"`
-	WebPort            int                       `toml:"web_port"`
 
 	// Gateway configuration for WebSocket client connections.
 	GatewayEnabled bool   `toml:"gateway_enabled"`
@@ -145,11 +133,8 @@ func (c Config) ResolveValinorDir() (string, error) {
 	return resolvePathWithTilde(dir)
 }
 
-// ResolveSessionDir returns the absolute path for the sessions directory
+// ResolveSessionDir returns the absolute path for the sessions directory.
 func (c Config) ResolveSessionDir() (string, error) {
-	if c.SessionDir != "" {
-		return resolvePathWithTilde(c.SessionDir)
-	}
 	baseDir, err := c.ResolveValinorDir()
 	if err != nil {
 		return "", err
@@ -157,11 +142,8 @@ func (c Config) ResolveSessionDir() (string, error) {
 	return filepath.Join(baseDir, "sessions"), nil
 }
 
-// ResolveWorkspaceDir returns the absolute path for the global tool workspace
+// ResolveWorkspaceDir returns the absolute path for the global tool workspace.
 func (c Config) ResolveWorkspaceDir() (string, error) {
-	if c.WorkspaceDir != "" {
-		return resolvePathWithTilde(c.WorkspaceDir)
-	}
 	baseDir, err := c.ResolveValinorDir()
 	if err != nil {
 		return "", err
