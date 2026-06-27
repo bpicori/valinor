@@ -357,6 +357,8 @@ func (m *Model) advanceFormStep() (bool, tea.Cmd) {
 	next := m.step + 1
 	if next == stepReview {
 		m.refreshReview()
+		m.step = next
+		return true, nil
 	}
 	m.step = next
 	m.form = m.buildStepForm(m.step, m.panelWidth()-8)
@@ -428,7 +430,6 @@ func (m *Model) buildStepForm(s step, width int) fieldForm {
 		}, width)
 	case stepNetworking:
 		return newFieldForm([]formField{
-			{label: "Gateway Enabled", kind: fieldBool, value: boolString(m.cfg.GatewayEnabled)},
 			{label: "Gateway Host", kind: fieldString, value: m.cfg.GatewayHost},
 			{label: "Gateway Port", kind: fieldInt, value: fmt.Sprintf("%d", m.cfg.GatewayPort)},
 			{label: "Gateway Path", kind: fieldString, value: m.cfg.GatewayPath},
@@ -458,7 +459,6 @@ func (m *Model) applyForm() error {
 	case stepDirectories:
 		m.cfg.ValinorDir = strings.TrimSpace(m.form.fieldValue("Valinor Dir"))
 	case stepNetworking:
-		m.cfg.GatewayEnabled = m.form.boolValue("Gateway Enabled")
 		m.cfg.GatewayHost = strings.TrimSpace(m.form.fieldValue("Gateway Host"))
 		gwPort, err := m.form.intValue("Gateway Port")
 		if err != nil {
@@ -478,7 +478,6 @@ func (m *Model) applyForm() error {
 		m.cfg.MaxAgentIterations = maxIter
 		m.cfg.Context.PreserveRecentMessages = preserve
 	case stepTelegram:
-		m.cfg.Telegram.Enabled = true
 		m.cfg.Telegram.BotToken = strings.TrimSpace(m.form.fieldValue("Bot Token"))
 		if m.cfg.Telegram.BotToken == "" {
 			return fmt.Errorf("bot token is required")
@@ -487,8 +486,6 @@ func (m *Model) applyForm() error {
 	if m.cfg.ValinorDir == "" {
 		m.cfg.ValinorDir = config.DefaultValinorDir
 	}
-	m.cfg.Telegram.Enabled = true
-	m.cfg.Scheduler.Enabled = true
 	if m.cfg.SandboxImage == "" {
 		m.cfg.SandboxImage = config.DefaultSandboxImage
 	}
@@ -528,9 +525,3 @@ func (m *Model) refreshReview() {
 	m.review.SetContent(b.String())
 }
 
-func boolString(v bool) string {
-	if v {
-		return "yes"
-	}
-	return "no"
-}

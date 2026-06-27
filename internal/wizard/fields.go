@@ -14,7 +14,6 @@ const (
 	fieldString fieldKind = iota
 	fieldInt
 	fieldBool
-	fieldPassword
 )
 
 type formField struct {
@@ -38,10 +37,6 @@ func newFieldForm(fields []formField, width int) fieldForm {
 		ti := styledTextInput(f.hint, width)
 		ti.CharLimit = 512
 		switch f.kind {
-		case fieldPassword:
-			ti.EchoMode = textinput.EchoPassword
-			ti.EchoCharacter = '•'
-			ti.SetValue(f.value)
 		case fieldBool:
 			if strings.EqualFold(f.value, "true") || f.value == "yes" {
 				ti.SetValue("yes")

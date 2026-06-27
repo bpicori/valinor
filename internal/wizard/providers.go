@@ -175,6 +175,9 @@ func (p *providerForm) validate() (config.ProviderConfig, string, error) {
 	if apiKey == "" {
 		return config.ProviderConfig{}, "", fmt.Errorf("api key is required")
 	}
+	if err := config.ValidateProviderAPIKey(apiKey); err != nil {
+		return config.ProviderConfig{}, "", err
+	}
 	model := strings.TrimSpace(p.model.Value())
 	if model == "" {
 		return config.ProviderConfig{}, "", fmt.Errorf("default model is required")

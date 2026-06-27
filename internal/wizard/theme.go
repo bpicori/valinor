@@ -36,12 +36,10 @@ var grokNight = theme{
 
 type styles struct {
 	title               lipgloss.Style
-	subtitle            lipgloss.Style
 	label               lipgloss.Style
 	hint                lipgloss.Style
 	error               lipgloss.Style
 	success             lipgloss.Style
-	footer              lipgloss.Style
 	footerBar           lipgloss.Style
 	footerKey           lipgloss.Style
 	inputAccent         lipgloss.Style
@@ -54,9 +52,6 @@ type styles struct {
 	pickerNormalDesc    lipgloss.Style
 	pickerSelectedTitle lipgloss.Style
 	pickerSelectedDesc  lipgloss.Style
-	progressActive      lipgloss.Style
-	progressInactive    lipgloss.Style
-	progressLabel       lipgloss.Style
 	panel               lipgloss.Style
 	panelTitle          lipgloss.Style
 	boolOn              lipgloss.Style
@@ -65,7 +60,6 @@ type styles struct {
 	emptyTitle          lipgloss.Style
 	emptyBody           lipgloss.Style
 	keyBadge            lipgloss.Style
-	stepBadge           lipgloss.Style
 	sidebar             lipgloss.Style
 	sidebarActive       lipgloss.Style
 	sidebarDone         lipgloss.Style
@@ -79,12 +73,10 @@ func newStyles(t theme) styles {
 	c := func(hex string) lipgloss.Color { return lipgloss.Color(hex) }
 	return styles{
 		title: lipgloss.NewStyle().Foreground(c(t.accent)).Bold(true),
-		subtitle: lipgloss.NewStyle().Foreground(c(t.textSecondary)),
 		label: lipgloss.NewStyle().Foreground(c(t.accentTool)).Bold(true),
 		hint: lipgloss.NewStyle().Foreground(c(t.grayDim)),
 		error: lipgloss.NewStyle().Foreground(c(t.accentError)).Bold(true),
 		success: lipgloss.NewStyle().Foreground(c(t.accentSuccess)).Bold(true),
-		footer: lipgloss.NewStyle().Foreground(c(t.grayDim)),
 		footerBar: lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder(), true, false, false, false).
 			BorderForeground(c(t.border)).
@@ -116,9 +108,6 @@ func newStyles(t theme) styles {
 		pickerSelectedDesc: lipgloss.NewStyle().
 			Foreground(c(t.textSecondary)).
 			Background(c(t.bgHighlight)),
-		progressActive: lipgloss.NewStyle().Foreground(c(t.accent)),
-		progressInactive: lipgloss.NewStyle().Foreground(c(t.border)),
-		progressLabel: lipgloss.NewStyle().Foreground(c(t.textSecondary)),
 		panel: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(c(t.border)).
@@ -137,10 +126,6 @@ func newStyles(t theme) styles {
 			Background(c(t.bgHighlight)).
 			Padding(0, 1).
 			Bold(true),
-		stepBadge: lipgloss.NewStyle().
-			Foreground(c(t.grayDim)).
-			Background(c(t.bgHighlight)).
-			Padding(0, 1),
 		sidebar: lipgloss.NewStyle().
 			Foreground(c(t.textSecondary)).
 			Padding(0, 1),

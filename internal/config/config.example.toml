@@ -1,5 +1,5 @@
 # Example Valinor configuration file
-# Copy this to config.toml and fill in your provider details
+# Copy this to ~/.valinor/config.toml and fill in your provider details
 
 # Default provider to use for new sessions
 default_provider = "openai"
@@ -20,9 +20,7 @@ type = "gemini"
 api_key = "..."
 default_model = "gemini-2.0-flash"
 
-# Gateway configuration for WebSocket client connections
-# This is how TUI and other clients connect to the session core
-gateway_enabled = true
+# Gateway (enabled by default; TUI and Telegram connect here)
 gateway_host = "127.0.0.1"
 gateway_port = 7778
 gateway_path = "/ws"
@@ -32,6 +30,10 @@ gateway_path = "/ws"
 
 # Agent configuration
 max_agent_iterations = 20
+
+# SearXNG metasearch (always embedded in the sandbox image)
+# [searxng]
+# publish_port = 0   # 0 = internal only; set e.g. 8080 to expose UI on host
 
 # Context compression (triggers at 85% of 200K window)
 # [context]

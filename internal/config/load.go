@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 
@@ -122,6 +123,9 @@ func Validate(cfg Config) error {
 		if provider.APIKey == "" {
 			return fmt.Errorf("provider '%s' missing api_key field", name)
 		}
+		if err := validateProviderAPIKey(name, provider.APIKey); err != nil {
+			return err
+		}
 		if provider.DefaultModel == "" {
 			return fmt.Errorf("provider '%s' missing default_model field", name)
 		}
@@ -154,10 +158,7 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 	if cfg.GatewayPath == "" {
 		cfg.GatewayPath = DefaultGatewayPath
 	}
-	if !md.IsDefined("gateway_enabled") {
-		cfg.GatewayEnabled = DefaultGatewayEnabled
-	}
-
+	cfg.GatewayEnabled = true
 	cfg.Telegram.Enabled = true
 
 	if cfg.Telegram.PollTimeout <= 0 {
@@ -204,6 +205,7 @@ func Save(cfg Config) error {
 
 // SaveToPath writes config to the given path, creating parent directories as needed.
 func SaveToPath(path string, cfg Config) error {
+	cfg = ApplyDefaults(cfg, toml.MetaData{})
 	if err := Validate(cfg); err != nil {
 		return err
 	}
@@ -245,4 +247,29 @@ func decodeTOMLString(content string) (Config, toml.MetaData, error) {
 		return Config{}, md, err
 	}
 	return cfg, md, nil
+}
+
+// ValidateProviderAPIKey rejects values that look like Telegram bot tokens.
+func ValidateProviderAPIKey(apiKey string) error {
+	return validateProviderAPIKey("provider", apiKey)
+}
+
+func validateProviderAPIKey(name, apiKey string) error {
+	if looksLikeTelegramBotToken(apiKey) {
+		return fmt.Errorf("%s api_key looks like a Telegram bot token; use your LLM provider API key instead", name)
+	}
+	return nil
+}
+
+func looksLikeTelegramBotToken(key string) bool {
+	botID, secret, ok := strings.Cut(key, ":")
+	if !ok || botID == "" || len(secret) < 20 {
+		return false
+	}
+	for _, r := range botID {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
 }
