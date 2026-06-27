@@ -180,9 +180,6 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 		cfg.Scheduler.ScriptTimeout = DefaultSchedulerScriptTimeout
 	}
 
-	if cfg.SandboxImage == "" {
-		cfg.SandboxImage = DefaultSandboxImage
-	}
 	if cfg.SearXNG.PublishPort < 0 {
 		cfg.SearXNG.PublishPort = DefaultSearXNGPublishPort
 	}

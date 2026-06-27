@@ -1,14 +1,11 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
 
-var (
-	// These values are injected at build time by the release workflow.
-	Version   = "dev"
-	Commit    = "unknown"
-	BuildDate = "unknown"
+	"valinor/internal/buildinfo"
 )
 
 func versionString() string {
-	return fmt.Sprintf("version=%s commit=%s build_date=%s", Version, Commit, BuildDate)
+	return fmt.Sprintf("version=%s commit=%s build_date=%s", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 }

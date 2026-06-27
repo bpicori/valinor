@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"valinor/internal/buildinfo"
 	"valinor/internal/config"
 	"valinor/internal/logger"
 )
@@ -17,8 +18,8 @@ import (
 const (
 	fsToolTimeout           = 30 * time.Second
 	defaultMaxConcurrentOps = 10
-	podmanInstallURL        = "https://podman.io/docs/installation"
-	searxngInternalPort     = 8080
+	podmanInstallURL    = "https://podman.io/docs/installation"
+	searxngInternalPort = 8080
 	searxngReadyTimeout     = 45 * time.Second
 	entrypointScriptPath    = "/usr/local/bin/valinor-entrypoint.sh"
 )
@@ -34,8 +35,8 @@ type Runtime struct {
 
 // NewRuntime creates a runtime configured for a workspace root.
 // It starts a long-running Podman container with the workspace bind-mounted.
-// The image parameter specifies the container image to use (e.g., "valinor-sandbox:latest").
-func NewRuntime(dir, image string, searxngCfg config.SearXNGConfig) (*Runtime, error) {
+func NewRuntime(dir string, searxngCfg config.SearXNGConfig) (*Runtime, error) {
+	image := buildinfo.SandboxImage()
 	logger.Debug("sandbox runtime creation starting", logger.BuildMetadata("workspace", dir, "image", image))
 
 	// Check 1: Verify Podman is installed
@@ -43,8 +44,8 @@ func NewRuntime(dir, image string, searxngCfg config.SearXNGConfig) (*Runtime, e
 		return nil, err
 	}
 
-	// Check 2: Verify the sandbox image exists
-	if err := ensureSandboxImage(image); err != nil {
+	// Check 2: Build the sandbox image when missing or outdated for this Valinor version.
+	if err := ensureSandboxImageReady(image); err != nil {
 		return nil, err
 	}
 
@@ -186,24 +187,6 @@ func checkPodmanInstalled() error {
 	}
 	logger.Debug("podman is installed and accessible", nil)
 	return nil
-}
-
-// ensureSandboxImage checks if the sandbox image exists locally.
-// For now, we require the image to be built locally. In the future, this could pull from a registry.
-func ensureSandboxImage(image string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Check if image exists locally
-	cmd := exec.CommandContext(ctx, "podman", "image", "exists", image)
-	if err := cmd.Run(); err == nil {
-		logger.Debug("sandbox image exists locally", logger.BuildMetadata("image", image))
-		return nil
-	}
-
-	// Image doesn't exist - provide clear instructions
-	logger.Error("sandbox image not found", logger.BuildMetadata("image", image))
-	return fmt.Errorf("sandbox image %q was not found locally.\n\nBuild it with:\n  valinor build-docker-image\n\nOr, from the source tree:\n  podman build -t %s -f internal/sandbox/Dockerfile.sandbox .", image, image)
 }
 
 // RunCommand executes a shell command inside the container.

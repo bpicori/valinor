@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"valinor/internal/buildinfo"
 	"valinor/internal/config"
 	"valinor/internal/cron"
 	"valinor/internal/gateway"
@@ -196,10 +197,9 @@ func validateCommand(command string) error {
 }
 
 func runCommand(command string) error {
-	cfg := config.Must()
 	switch command {
 	case "build-docker-image":
-		image := cfg.SandboxImage
+		image := buildinfo.SandboxImage()
 		fmt.Fprintf(os.Stdout, "Building sandbox image %q with Podman...\n", image)
 		if err := sandbox.BuildImage(context.Background(), image, os.Stdout, os.Stderr); err != nil {
 			return err
@@ -260,11 +260,11 @@ func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayD
 	logger.SetPrefix(logPrefix)
 	logger.Info("logging initialized", logger.BuildMetadata("log_path", logPath))
 
-	if err := sandbox.InitRuntime(paths.WorkspaceDir, cfg.SandboxImage, cfg.SearXNG); err != nil {
+	if err := sandbox.InitRuntime(paths.WorkspaceDir, cfg.SearXNG); err != nil {
 		closeLogger()
 		return nil, fmt.Errorf("create sandbox runtime: %w", err)
 	}
-	logger.Info("sandbox runtime initialized", logger.BuildMetadata("workspace", paths.WorkspaceDir, "image", cfg.SandboxImage))
+	logger.Info("sandbox runtime initialized", logger.BuildMetadata("workspace", paths.WorkspaceDir, "image", buildinfo.SandboxImage()))
 
 	cronJobs, err := cron.NewJobs(paths.CronDir)
 	if err != nil {

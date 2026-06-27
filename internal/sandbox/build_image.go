@@ -2,13 +2,17 @@ package sandbox
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"valinor/internal/buildinfo"
 )
 
 var (
@@ -45,6 +49,9 @@ func BuildImage(ctx context.Context, image string, stdout, stderr io.Writer) err
 
 	cmd := exec.CommandContext(ctx, "podman", "build",
 		"-t", image,
+		"--label", "valinor.version="+buildinfo.Version,
+		"--label", "valinor.commit="+buildinfo.Commit,
+		"--label", "valinor.digest="+sandboxBuildDigest(),
 		"-f", "-",
 		buildContextDir,
 	)
@@ -57,4 +64,9 @@ func BuildImage(ctx context.Context, image string, stdout, stderr io.Writer) err
 	}
 
 	return nil
+}
+
+func sandboxBuildDigest() string {
+	sum := sha256.Sum256([]byte(sandboxDockerfile + "\x00" + searxngSettings + "\x00" + sandboxEntrypoint))
+	return hex.EncodeToString(sum[:16])
 }

@@ -13,8 +13,8 @@ var (
 )
 
 // InitRuntime creates and stores the process-global sandbox runtime.
-func InitRuntime(workspaceDir, image string, searxng config.SearXNGConfig) error {
-	rt, err := NewRuntime(workspaceDir, image, searxng)
+func InitRuntime(workspaceDir string, searxng config.SearXNGConfig) error {
+	rt, err := NewRuntime(workspaceDir, searxng)
 	if err != nil {
 		return err
 	}

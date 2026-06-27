@@ -486,9 +486,6 @@ func (m *Model) applyForm() error {
 	if m.cfg.ValinorDir == "" {
 		m.cfg.ValinorDir = config.DefaultValinorDir
 	}
-	if m.cfg.SandboxImage == "" {
-		m.cfg.SandboxImage = config.DefaultSandboxImage
-	}
 	if m.cfg.Scheduler.ScriptTimeout == "" {
 		m.cfg.Scheduler.ScriptTimeout = config.DefaultSchedulerScriptTimeout
 	}

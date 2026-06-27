@@ -36,11 +36,6 @@ const (
 	DefaultSchedulerScriptTimeout = "120s"
 )
 
-// Default sandbox configuration.
-const (
-	DefaultSandboxImage = "valinor-sandbox:latest"
-)
-
 // Default SearXNG configuration.
 const (
 	DefaultSearXNGPublishPort = 0
@@ -67,9 +62,6 @@ type Config struct {
 
 	// Scheduler configuration for Cron.md based scheduled jobs.
 	Scheduler SchedulerConfig `toml:"scheduler"`
-
-	// SandboxImage is the container image used for the sandbox runtime (default: "valinor-sandbox:latest").
-	SandboxImage string `toml:"sandbox_image"`
 
 	// SearXNG configures the local metasearch instance embedded in the sandbox image.
 	SearXNG SearXNGConfig `toml:"searxng"`
