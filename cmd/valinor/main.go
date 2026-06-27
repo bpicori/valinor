@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	agentcontext "valinor/internal/context"
 	"valinor/internal/buildinfo"
 	"valinor/internal/config"
 	"valinor/internal/cron"
@@ -247,6 +248,9 @@ func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayD
 	}
 	if err := skills.EnsureRequired(paths.WorkspaceDir); err != nil {
 		return nil, fmt.Errorf("ensure required skills: %w", err)
+	}
+	if err := agentcontext.EnsureMemory(paths.WorkspaceDir); err != nil {
+		return nil, fmt.Errorf("ensure memory file: %w", err)
 	}
 	if err := os.MkdirAll(paths.ScriptsDir, 0750); err != nil {
 		return nil, fmt.Errorf("create scripts directory: %w", err)
