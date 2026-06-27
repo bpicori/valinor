@@ -240,6 +240,8 @@ func (b *Bot) processCommand(cmd *Command, tracker *messageTracker) error {
 
 	// Handle model picker and direct model switch before generic control dispatch.
 	switch cmd.Type {
+	case commandNewSession:
+		return b.createNewSession(cmd, bridge)
 	case commandModelPickerOpen:
 		return b.openModelPicker(cmd.Identity, tracker, "")
 	case commandModelPickerProvider:
@@ -517,6 +519,26 @@ func (b *Bot) openModelPicker(identity ChatIdentity, tracker *messageTracker, pr
 		return fmt.Errorf("failed to request provider models")
 	}
 
+	return nil
+}
+
+func (b *Bot) createNewSession(cmd *Command, bridge *Bridge) error {
+	_, provider, model, _, _, ok := bridge.SessionInfo()
+	if !ok {
+		cfg := config.Must()
+		provider = cfg.DefaultProvider
+		if pc, exists := cfg.Providers[provider]; exists {
+			model = pc.DefaultModel
+		}
+	}
+
+	if !bridge.SendCommand(gateway.CommandCreateNewSession, gateway.CreateNewSessionPayload{
+		Provider: provider,
+		Model:    model,
+		Force:    true,
+	}, cmd.RequestID) {
+		return fmt.Errorf("failed to send create_new_session command")
+	}
 	return nil
 }
 
