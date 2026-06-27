@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/BurntSushi/toml"
-
 	"valinor/internal/logger"
 )
 
@@ -15,13 +13,6 @@ const DefaultValinorDir = "~/.valinor"
 
 // DefaultMaxAgentIterations is the default cap on agent tool-call iterations per user message.
 const DefaultMaxAgentIterations = 20
-
-// Default web server configuration.
-const (
-	DefaultWebEnabled = true
-	DefaultWebHost    = "127.0.0.1"
-	DefaultWebPort    = 7777
-)
 
 // Default gateway configuration.
 const (
@@ -41,7 +32,7 @@ const (
 
 // Default scheduler configuration.
 const (
-	DefaultSchedulerEnabled       = false
+	DefaultSchedulerEnabled       = true
 	DefaultSchedulerScriptTimeout = "120s"
 )
 
@@ -63,12 +54,7 @@ type Config struct {
 	DefaultProvider    string                    `toml:"default_provider"`
 	Providers          map[string]ProviderConfig `toml:"providers"`
 	ValinorDir         string                    `toml:"valinor_dir"`
-	SessionDir         string                    `toml:"session_dir"`
-	WorkspaceDir       string                    `toml:"workspace_dir"`
 	MaxAgentIterations int                       `toml:"max_agent_iterations"`
-	WebEnabled         bool                      `toml:"web_enabled"`
-	WebHost            string                    `toml:"web_host"`
-	WebPort            int                       `toml:"web_port"`
 
 	// Gateway configuration for WebSocket client connections.
 	GatewayEnabled bool   `toml:"gateway_enabled"`
@@ -138,117 +124,6 @@ type ProviderConfig struct {
 	DefaultModel string `toml:"default_model"` // Default model for new sessions (bootstrap fallback)
 }
 
-// LoadFromFile loads configuration from a TOML file.
-func LoadFromFile(path string) (Config, error) {
-	var cfg Config
-	md, err := toml.DecodeFile(path, &cfg)
-	if err != nil {
-		logger.Error("config load failed", logger.BuildMetadata("path", path, "error", err))
-		return Config{}, err
-	}
-
-	// Validate default provider
-	if cfg.DefaultProvider == "" {
-		return Config{}, fmt.Errorf("default_provider is required")
-	}
-	if len(cfg.Providers) == 0 {
-		return Config{}, fmt.Errorf("at least one provider must be configured")
-	}
-	if _, ok := cfg.Providers[cfg.DefaultProvider]; !ok {
-		return Config{}, fmt.Errorf("default_provider '%s' not found in providers", cfg.DefaultProvider)
-	}
-
-	// Validate each provider
-	for name, provider := range cfg.Providers {
-		if provider.Type == "" {
-			return Config{}, fmt.Errorf("provider '%s' missing type field", name)
-		}
-		if provider.Type != "openai" && provider.Type != "anthropic" && provider.Type != "gemini" && provider.Type != "openai-compatible" {
-			return Config{}, fmt.Errorf("provider '%s' has invalid type '%s' (must be: openai, anthropic, gemini, or openai-compatible)", name, provider.Type)
-		}
-		if provider.APIKey == "" {
-			return Config{}, fmt.Errorf("provider '%s' missing api_key field", name)
-		}
-		if provider.DefaultModel == "" {
-			return Config{}, fmt.Errorf("provider '%s' missing default_model field", name)
-		}
-		cfg.Providers[name] = provider
-		if provider.Type == "openai-compatible" && provider.BaseURL == "" {
-			return Config{}, fmt.Errorf("provider '%s' of type 'openai-compatible' requires base_url field", name)
-		}
-	}
-
-	// Apply defaults
-	if cfg.ValinorDir == "" {
-		cfg.ValinorDir = DefaultValinorDir
-	}
-	if cfg.MaxAgentIterations <= 0 {
-		cfg.MaxAgentIterations = DefaultMaxAgentIterations
-	}
-	if cfg.WebHost == "" {
-		cfg.WebHost = DefaultWebHost
-	}
-	if cfg.WebPort <= 0 {
-		cfg.WebPort = DefaultWebPort
-	}
-	if !md.IsDefined("web_enabled") {
-		cfg.WebEnabled = DefaultWebEnabled
-	}
-
-	// Apply gateway defaults
-	if cfg.GatewayHost == "" {
-		cfg.GatewayHost = DefaultGatewayHost
-	}
-	if cfg.GatewayPort <= 0 {
-		cfg.GatewayPort = DefaultGatewayPort
-	}
-	if cfg.GatewayPath == "" {
-		cfg.GatewayPath = DefaultGatewayPath
-	}
-	if !md.IsDefined("gateway_enabled") {
-		cfg.GatewayEnabled = DefaultGatewayEnabled
-	}
-
-	// Validate and apply Telegram defaults
-	if cfg.Telegram.Enabled {
-		if cfg.Telegram.BotToken == "" {
-			return Config{}, fmt.Errorf("telegram bot_token is required when telegram is enabled")
-		}
-	}
-	if cfg.Telegram.PollTimeout <= 0 {
-		cfg.Telegram.PollTimeout = DefaultTelegramPollTimeout
-	}
-	if cfg.Telegram.PollTimeout > 90 {
-		cfg.Telegram.PollTimeout = 90 // Telegram API maximum
-	}
-	if cfg.Telegram.RetryBaseDelay <= 0 {
-		cfg.Telegram.RetryBaseDelay = DefaultTelegramRetryBaseDelay
-	}
-	if cfg.Telegram.RetryMaxDelay <= 0 {
-		cfg.Telegram.RetryMaxDelay = DefaultTelegramRetryMaxDelay
-	}
-
-	// Apply scheduler defaults
-	if cfg.Scheduler.ScriptTimeout == "" {
-		cfg.Scheduler.ScriptTimeout = DefaultSchedulerScriptTimeout
-	}
-
-	// Apply sandbox defaults
-	if cfg.SandboxImage == "" {
-		cfg.SandboxImage = DefaultSandboxImage
-	}
-	if cfg.SearXNG.PublishPort < 0 {
-		cfg.SearXNG.PublishPort = DefaultSearXNGPublishPort
-	}
-
-	// Apply context compression defaults
-	if cfg.Context.PreserveRecentMessages <= 0 {
-		cfg.Context.PreserveRecentMessages = DefaultPreserveRecentMessages
-	}
-
-	return cfg, nil
-}
-
 // ResolveValinorDir returns the absolute base directory for Valinor data.
 func (c Config) ResolveValinorDir() (string, error) {
 	dir := c.ValinorDir
@@ -258,11 +133,8 @@ func (c Config) ResolveValinorDir() (string, error) {
 	return resolvePathWithTilde(dir)
 }
 
-// ResolveSessionDir returns the absolute path for the sessions directory
+// ResolveSessionDir returns the absolute path for the sessions directory.
 func (c Config) ResolveSessionDir() (string, error) {
-	if c.SessionDir != "" {
-		return resolvePathWithTilde(c.SessionDir)
-	}
 	baseDir, err := c.ResolveValinorDir()
 	if err != nil {
 		return "", err
@@ -270,11 +142,8 @@ func (c Config) ResolveSessionDir() (string, error) {
 	return filepath.Join(baseDir, "sessions"), nil
 }
 
-// ResolveWorkspaceDir returns the absolute path for the global tool workspace
+// ResolveWorkspaceDir returns the absolute path for the global tool workspace.
 func (c Config) ResolveWorkspaceDir() (string, error) {
-	if c.WorkspaceDir != "" {
-		return resolvePathWithTilde(c.WorkspaceDir)
-	}
 	baseDir, err := c.ResolveValinorDir()
 	if err != nil {
 		return "", err

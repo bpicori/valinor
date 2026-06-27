@@ -21,15 +21,6 @@ var (
 	globalInited bool
 )
 
-// InitFromFile loads configuration from path and stores it as the process-global config.
-func InitFromFile(path string) error {
-	cfg, err := LoadFromFile(path)
-	if err != nil {
-		return err
-	}
-	return Init(cfg)
-}
-
 // Init stores configuration and resolves application paths.
 // Call once from main before any subsystem that uses Must or MustPaths.
 func Init(cfg Config) error {

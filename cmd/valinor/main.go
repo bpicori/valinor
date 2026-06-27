@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"valinor/internal/session"
 	"valinor/internal/telegram"
 	"valinor/internal/tui"
+	"valinor/internal/wizard"
 	"valinor/skills"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,6 +44,7 @@ var validModes = map[string]struct{}{
 
 var validCommands = map[string]struct{}{
 	"build-docker-image": {},
+	"init":               {},
 }
 
 // cleanup releases all resources in reverse initialization order.
@@ -73,12 +77,25 @@ func main() {
 		return
 	}
 
-	if err := config.InitFromFile("config.toml"); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: load config.toml: %v\n", err)
+	command := strings.TrimSpace(flag.Arg(0))
+	if command == "init" {
+		if err := runInit(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if err := config.Init(cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: init config: %v\n", err)
 		os.Exit(1)
 	}
 
-	command := strings.TrimSpace(flag.Arg(0))
 	if command != "" {
 		if err := validateCommand(command); err != nil {
 			flag.Usage()
@@ -107,12 +124,57 @@ func main() {
 func printUsage() {
 	fmt.Fprintf(os.Stderr, "Usage:\n")
 	fmt.Fprintf(os.Stderr, "  %s -mode=<gateway|tui|telegram|all> [flags]\n", os.Args[0])
+	fmt.Fprintf(os.Stderr, "  %s init\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "  %s build-docker-image\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "Examples:")
+	fmt.Fprintf(os.Stderr, "  %s init\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "  %s -mode=tui\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "  %s -mode=gateway\n", os.Args[0])
 	fmt.Fprintf(os.Stderr, "  %s build-docker-image\n\n", os.Args[0])
 	flag.PrintDefaults()
+}
+
+func runInit() error {
+	initial, err := config.LoadInitial()
+	if err != nil {
+		return fmt.Errorf("load initial config: %w", err)
+	}
+	if _, err := wizard.Run(initial); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stdout, "Configuration saved to ~/.valinor/config.toml")
+	return nil
+}
+
+func loadConfig() (config.Config, error) {
+	cfg, err := config.Load()
+	if err == nil {
+		return cfg, nil
+	}
+	if !errors.Is(err, config.ErrNotFound) {
+		return config.Config{}, fmt.Errorf("load config: %w", err)
+	}
+
+	fmt.Fprint(os.Stderr, "No configuration found at ~/.valinor/config.toml.\n")
+	fmt.Fprint(os.Stderr, "Run setup wizard? [Y/n]: ")
+	reader := bufio.NewReader(os.Stdin)
+	answer, readErr := reader.ReadString('\n')
+	if readErr != nil {
+		return config.Config{}, fmt.Errorf("read setup prompt: %w", readErr)
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer == "n" || answer == "no" {
+		return config.Config{}, fmt.Errorf("no configuration found; run `valinor init` to set up")
+	}
+
+	initial, err := config.LoadWizardTemplate()
+	if err != nil {
+		return config.Config{}, fmt.Errorf("load config template: %w", err)
+	}
+	if _, err := wizard.Run(initial); err != nil {
+		return config.Config{}, err
+	}
+	return config.Load()
 }
 
 func validateMode(mode string) error {
