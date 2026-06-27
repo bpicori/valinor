@@ -1,0 +1,9 @@
+[Unit]
+Description=Check for Valinor release updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/valinor/valinor.env
+ExecStart=%h/.local/share/valinor/update.sh
