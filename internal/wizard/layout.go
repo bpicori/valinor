@@ -16,7 +16,7 @@ const (
 )
 
 func (m *Model) contentAreaWidth() int {
-	w := m.width - sidebarWidth - 8
+	w := m.width - sidebarWidth - 4
 	if w < 40 {
 		return 40
 	}
@@ -27,6 +27,9 @@ func (m *Model) panelWidth() int {
 	w := m.contentAreaWidth() - 6
 	if w > maxPanelWidth {
 		return maxPanelWidth
+	}
+	if w < 40 {
+		return 40
 	}
 	return w
 }
@@ -91,7 +94,7 @@ func (m *Model) renderSidebar() string {
 
 func (m *Model) renderContentColumn() string {
 	panel := m.renderPanel()
-	return lipgloss.Place(m.contentAreaWidth(), m.contentHeight(), lipgloss.Left, lipgloss.Top, panel)
+	return lipgloss.Place(m.contentAreaWidth(), m.contentHeight(), lipgloss.Center, lipgloss.Center, panel)
 }
 
 func (m *Model) progressIndex() int {
