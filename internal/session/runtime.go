@@ -161,7 +161,20 @@ func (r *Runtime) HandleCommandForSession(sessionID string, requestID string, cm
 		if !ok {
 			return fmt.Errorf("invalid payload for change_provider_model")
 		}
-		return worker.session.SetModel(r.runtimeCtx, p.Model)
+		if err := worker.session.SetModel(r.runtimeCtx, p.Model); err != nil {
+			return err
+		}
+		meta := worker.session.Meta()
+		event.Publish(event.Event{
+			Type: event.ChangeModelEvent,
+			Payload: event.ChangeProviderModelPayload{
+				Provider: meta.Provider,
+				Model:    meta.Model,
+			},
+			SessionID: sessionID,
+			RequestID: requestID,
+		})
+		return nil
 	case event.CancelAgentRun:
 		// Cancel is scoped to the originating session only.
 		// A cancel from session A cannot interrupt session B.

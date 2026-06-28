@@ -78,6 +78,7 @@ func (r *Router) Start(ctx context.Context) {
 		event.AgentCancelled,
 		event.ProviderModelsResult,
 		event.CronJobResult,
+		event.ChangeModelEvent,
 	)
 
 	// Start the event forwarding goroutine
