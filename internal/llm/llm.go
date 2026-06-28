@@ -74,14 +74,18 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 
 		if iterations >= l.maxIterations {
-			publishEvent(event.AgentError, event.AgentErrorPayload{
-				Error: fmt.Errorf("max agent iterations (%d) reached; stopping to prevent runaway loop", l.maxIterations),
-			})
-			return RunResult{}, fmt.Errorf("max agent iterations (%d) reached", l.maxIterations)
+			return l.runGracefulFinalTurn(ctx, req, messages, usage, toolsUsedThisRun, publishEvent)
 		}
 		iterations++
 
 		logger.Debug("llm iteration start", logger.BuildMetadata("iteration", iterations, "provider", l.provider.Name()))
+
+		if warn := iterationBudgetWarning(iterations, l.maxIterations); warn != "" {
+			messages = append(messages, agentcontext.Message{
+				Role:    agentcontext.RoleUser,
+				Content: warn,
+			})
+		}
 
 		if req.Compressor != nil {
 			messages = req.Compressor.MaybeCompress(ctx, messages)
