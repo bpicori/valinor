@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"valinor/internal/llm"
@@ -21,14 +22,15 @@ type Provider struct {
 }
 
 // New creates a new Gemini provider instance.
-func New(apiKey string) (*Provider, error) {
+func New(apiKey string, httpClient *http.Client) (*Provider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Gemini provider")
 	}
 
 	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
-		APIKey:  apiKey,
-		Backend: genai.BackendGeminiAPI,
+		APIKey:     apiKey,
+		Backend:    genai.BackendGeminiAPI,
+		HTTPClient: httpClient,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gemini client: %w", err)

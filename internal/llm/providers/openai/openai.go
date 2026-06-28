@@ -2,6 +2,7 @@ package openai
 
 import (
 	"context"
+	"net/http"
 
 	"valinor/internal/llm"
 	"valinor/internal/logger"
@@ -16,8 +17,10 @@ type Provider struct {
 }
 
 // New creates a new OpenAI provider instance.
-func New(apiKey, baseURL string) (*Provider, error) {
-	opts := []option.RequestOption{}
+func New(apiKey, baseURL string, httpClient *http.Client) (*Provider, error) {
+	opts := []option.RequestOption{
+		option.WithHTTPClient(httpClient),
+	}
 	if apiKey != "" {
 		opts = append(opts, option.WithAPIKey(apiKey))
 	}

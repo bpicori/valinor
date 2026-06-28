@@ -3,6 +3,7 @@ package anthropic
 import (
 	"context"
 	"fmt"
+	"net/http"
 
 	"valinor/internal/llm"
 	"valinor/internal/logger"
@@ -17,13 +18,14 @@ type Provider struct {
 }
 
 // New creates a new Anthropic provider instance.
-func New(apiKey string) (*Provider, error) {
+func New(apiKey string, httpClient *http.Client) (*Provider, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required for Anthropic provider")
 	}
 
 	client := anthropic.NewClient(
 		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(httpClient),
 	)
 
 	return &Provider{

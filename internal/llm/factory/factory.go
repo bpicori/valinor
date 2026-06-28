@@ -12,16 +12,23 @@ import (
 
 // CreateProvider instantiates a provider based on the given configuration.
 func CreateProvider(cfg config.ProviderConfig) (llm.Provider, error) {
+	client := httpClient()
+	var provider llm.Provider
+	var err error
 	switch cfg.Type {
 	case "openai":
-		return openai.New(cfg.APIKey, "")
+		provider, err = openai.New(cfg.APIKey, "", client)
 	case "anthropic":
-		return anthropic.New(cfg.APIKey)
+		provider, err = anthropic.New(cfg.APIKey, client)
 	case "gemini":
-		return gemini.New(cfg.APIKey)
+		provider, err = gemini.New(cfg.APIKey, client)
 	case "openai-compatible":
-		return openai.New(cfg.APIKey, cfg.BaseURL)
+		provider, err = openai.New(cfg.APIKey, cfg.BaseURL, client)
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", cfg.Type)
 	}
+	if err != nil {
+		return nil, err
+	}
+	return withRequestTimeouts(provider), nil
 }
