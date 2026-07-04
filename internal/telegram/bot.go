@@ -12,6 +12,7 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/event"
 	"valinor/internal/gateway"
+	"valinor/internal/llm"
 	"valinor/internal/logger"
 )
 
@@ -58,7 +59,13 @@ type Config struct {
 	PollTimeout int
 	// Providers is the configured LLM providers for model selection.
 	Providers map[string]config.ProviderConfig
+	// Transcriber transcribes voice messages when configured; nil when disabled.
+	Transcriber llm.AudioTranscriber
+	// TranscriptionModel is the STT model slug from the transcription-enabled provider.
+	TranscriptionModel string
 }
+
+const voiceTranscriptionDisabledMessage = "Voice messages are not enabled. Set transcription_enabled = true and transcription_model = \"openai/whisper-1\" (or another STT model) on your provider in config.toml."
 
 // NewBot creates a new Telegram bot instance.
 func NewBot(cfg Config) (*Bot, error) {
@@ -197,6 +204,14 @@ func (b *Bot) onUpdate(update Update) {
 		return
 	}
 
+	if msg := extractMessage(update); msg != nil && msg.Voice != nil {
+		if err := b.processVoiceMessage(msg, update.UpdateID); err != nil {
+			logger.Error("telegram bot: failed to process voice message",
+				logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+		}
+		return
+	}
+
 	cmd, err := parseUpdate(update, b.config.Providers)
 	if err != nil {
 		logger.Error("telegram bot: failed to parse update",
@@ -229,6 +244,73 @@ func (b *Bot) onEvent(ev chatEvent) {
 		logger.Error("telegram bot: failed to process event",
 			logger.BuildMetadata("error", err, "chat_id", ev.identity.ChatID))
 	}
+}
+
+// processVoiceMessage downloads and transcribes a Telegram voice message.
+func (b *Bot) processVoiceMessage(msg *Message, updateID int64) error {
+	if msg == nil || msg.Voice == nil || msg.Chat == nil {
+		return nil
+	}
+
+	identity := FromTelegramUpdate(msg.Chat)
+	tracker := b.getOrCreateTracker(identity.ChatID)
+
+	if b.config.Transcriber == nil || b.config.TranscriptionModel == "" {
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{Text: voiceTranscriptionDisabledMessage})
+	}
+
+	if tracker.isBusy() {
+		notice := &RenderResult{
+			Text:      "\u23f3 Please wait for the current response to complete\\.",
+			ParseMode: "MarkdownV2",
+		}
+		return b.sendTelegramMessage(identity, tracker, notice)
+	}
+
+	if err := b.sendTypingAction(identity, tracker); err != nil {
+		logger.Warning("telegram bot: failed to send typing action for voice",
+			logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
+	}
+
+	file, err := b.client.GetFile(b.ctx, msg.Voice.FileID)
+	if err != nil {
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{
+			Text: "Could not fetch the voice message. Please try again.",
+		})
+	}
+
+	audio, err := b.client.DownloadFile(b.ctx, file.FilePath)
+	if err != nil {
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{
+			Text: "Could not download the voice message. Please try again.",
+		})
+	}
+
+	transcript, err := b.config.Transcriber.TranscribeAudio(b.ctx, llm.AudioTranscribeParams{
+		Model:  b.config.TranscriptionModel,
+		Audio:  audio,
+		Format: "ogg",
+	})
+	if err != nil {
+		logger.Error("telegram bot: voice transcription failed",
+			logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{
+			Text: "Could not transcribe the voice message. Please try again.",
+		})
+	}
+
+	requestID := fmt.Sprintf("tg_%d_%d", msg.Chat.ID, updateID)
+	cmd := &Command{
+		Identity:  identity,
+		RequestID: requestID,
+		Type:      gateway.CommandUserMessage,
+		Payload: gateway.UserMessagePayload{
+			Content: transcript,
+		},
+		RawText: transcript,
+	}
+
+	return b.processCommand(cmd, tracker)
 }
 
 // processCommand handles a user command.

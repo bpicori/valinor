@@ -295,6 +295,55 @@ func (c *Client) AnswerCallbackQuery(ctx context.Context, req AnswerCallbackQuer
 	return nil
 }
 
+const telegramFileBaseURL = "https://api.telegram.org/file/bot"
+
+// GetFile resolves a Telegram file_id to a download path.
+func (c *Client) GetFile(ctx context.Context, fileID string) (*File, error) {
+	resp, err := c.apiCall(ctx, "getFile", map[string]string{"file_id": fileID})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, resp
+	}
+
+	var file File
+	if err := json.Unmarshal(resp.Result, &file); err != nil {
+		return nil, fmt.Errorf("unmarshal file: %w", err)
+	}
+	if file.FilePath == "" {
+		return nil, fmt.Errorf("telegram file has no file_path")
+	}
+	return &file, nil
+}
+
+// DownloadFile fetches file bytes into memory. Nothing is written to disk.
+func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, error) {
+	url := telegramFileBaseURL + c.token + "/" + filePath
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create download request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download file: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download file failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read downloaded file: %w", err)
+	}
+	return data, nil
+}
+
 // GetMe returns basic information about the bot.
 func (c *Client) GetMe(ctx context.Context) (*User, error) {
 	resp, err := c.apiCall(ctx, "getMe", nil)

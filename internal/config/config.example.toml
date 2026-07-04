@@ -9,6 +9,8 @@ default_provider = "openai"
 type = "openai"
 api_key = "sk-..."
 default_model = "gpt-4o"
+# transcription_enabled = true
+# transcription_model = "whisper-1"
 
 [providers.anthropic]
 type = "anthropic"
@@ -19,6 +21,15 @@ default_model = "claude-3-5-sonnet-20241022"
 type = "gemini"
 api_key = "..."
 default_model = "gemini-2.0-flash"
+
+# OpenRouter example with voice transcription for Telegram:
+# [providers.openrouter]
+# type = "openai-compatible"
+# api_key = "sk-or-..."
+# base_url = "https://openrouter.ai/api/v1"
+# default_model = "deepseek/deepseek-v4-pro"
+# transcription_enabled = true
+# transcription_model = "openai/whisper-1"
 
 # Gateway (enabled by default; TUI and Telegram connect here)
 gateway_host = "127.0.0.1"

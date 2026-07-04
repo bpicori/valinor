@@ -68,6 +68,18 @@ type ModelInfo struct {
 	DisplayName string
 }
 
+// AudioTranscribeParams holds parameters for a one-shot audio transcription request.
+type AudioTranscribeParams struct {
+	Model  string
+	Audio  []byte
+	Format string
+}
+
+// AudioTranscriber is implemented by providers that support speech-to-text.
+type AudioTranscriber interface {
+	TranscribeAudio(ctx context.Context, params AudioTranscribeParams) (string, error)
+}
+
 // Provider defines the interface that all LLM providers must implement.
 type Provider interface {
 	Stream(ctx context.Context, params StreamParams) (*StreamResult, error)

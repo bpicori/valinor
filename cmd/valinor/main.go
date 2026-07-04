@@ -16,6 +16,7 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/cron"
 	"valinor/internal/gateway"
+	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
 	"valinor/internal/scheduler"
@@ -413,12 +414,9 @@ func runTelegram(ctx context.Context) error {
 	gatewayURL := cfg.GatewayWebSocketURL()
 	logger.Info("connecting to gateway", logger.BuildMetadata("url", gatewayURL))
 
-	botCfg := telegram.Config{
-		BotToken:    cfg.Telegram.BotToken,
-		GatewayURL:  gatewayURL,
-		StorageDir:  paths.ValinorDir,
-		PollTimeout: cfg.Telegram.PollTimeout,
-		Providers:   cfg.Providers,
+	botCfg, err := newTelegramBotConfig(cfg, paths.ValinorDir, gatewayURL)
+	if err != nil {
+		return err
 	}
 
 	bot, err := telegram.NewBot(botCfg)
@@ -497,12 +495,10 @@ func runAll(ctx context.Context) error {
 	gatewayURL := cfg.GatewayWebSocketURL()
 	logger.Info("connecting telegram to gateway", logger.BuildMetadata("url", gatewayURL))
 
-	botCfg := telegram.Config{
-		BotToken:    cfg.Telegram.BotToken,
-		GatewayURL:  gatewayURL,
-		StorageDir:  paths.ValinorDir,
-		PollTimeout: cfg.Telegram.PollTimeout,
-		Providers:   cfg.Providers,
+	botCfg, err := newTelegramBotConfig(cfg, paths.ValinorDir, gatewayURL)
+	if err != nil {
+		deps.cleanup()
+		return err
 	}
 
 	bot, err := telegram.NewBot(botCfg)
@@ -540,4 +536,27 @@ func runAll(ctx context.Context) error {
 	deps.cleanup()
 	logger.Info("all services stopped", nil)
 	return nil
+}
+
+func newTelegramBotConfig(cfg config.Config, storageDir, gatewayURL string) (telegram.Config, error) {
+	botCfg := telegram.Config{
+		BotToken:    cfg.Telegram.BotToken,
+		GatewayURL:  gatewayURL,
+		StorageDir:  storageDir,
+		PollTimeout: cfg.Telegram.PollTimeout,
+		Providers:   cfg.Providers,
+	}
+
+	if name, providerCfg, ok := cfg.TranscriptionProvider(); ok {
+		transcriber, err := factory.CreateAudioTranscriber(providerCfg)
+		if err != nil {
+			return telegram.Config{}, fmt.Errorf("create audio transcriber for provider %s: %w", name, err)
+		}
+		botCfg.Transcriber = transcriber
+		botCfg.TranscriptionModel = providerCfg.TranscriptionModel
+		logger.Info("telegram voice transcription enabled",
+			logger.BuildMetadata("provider", name, "model", providerCfg.TranscriptionModel))
+	}
+
+	return botCfg, nil
 }

@@ -13,7 +13,10 @@ import (
 
 // Provider implements the OpenAI LLM provider.
 type Provider struct {
-	client openai.Client
+	client     openai.Client
+	apiKey     string
+	baseURL    string
+	httpClient *http.Client
 }
 
 // New creates a new OpenAI provider instance.
@@ -28,8 +31,14 @@ func New(apiKey, baseURL string, httpClient *http.Client) (*Provider, error) {
 		opts = append(opts, option.WithBaseURL(baseURL))
 	}
 	client := openai.NewClient(opts...)
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
 	return &Provider{
-		client: client,
+		client:     client,
+		apiKey:     apiKey,
+		baseURL:    baseURL,
+		httpClient: httpClient,
 	}, nil
 }
 

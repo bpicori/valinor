@@ -2,6 +2,7 @@ package factory
 
 import (
 	"context"
+	"fmt"
 
 	"valinor/internal/llm"
 )
@@ -26,4 +27,14 @@ func (p *timeoutProvider) ListModels(ctx context.Context) ([]llm.ModelInfo, erro
 	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
 	defer cancel()
 	return p.inner.ListModels(ctx)
+}
+
+func (p *timeoutProvider) TranscribeAudio(ctx context.Context, params llm.AudioTranscribeParams) (string, error) {
+	transcriber, ok := p.inner.(llm.AudioTranscriber)
+	if !ok {
+		return "", fmt.Errorf("provider does not support audio transcription")
+	}
+	ctx, cancel := context.WithTimeout(ctx, RequestTimeout)
+	defer cancel()
+	return transcriber.TranscribeAudio(ctx, params)
 }

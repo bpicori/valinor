@@ -26,8 +26,26 @@ type Message struct {
 	Date            int64           `json:"date"`
 	Chat            *Chat           `json:"chat"`
 	Text            string          `json:"text,omitempty"`
+	Voice           *Voice          `json:"voice,omitempty"`
 	Entities        []MessageEntity `json:"entities,omitempty"`
 	ReplyToMessage  *Message        `json:"reply_to_message,omitempty"`
+}
+
+// Voice represents a Telegram voice message.
+// See: https://core.telegram.org/bots/api#voice
+type Voice struct {
+	FileID   string `json:"file_id"`
+	Duration int    `json:"duration"`
+	MimeType string `json:"mime_type,omitempty"`
+}
+
+// File represents a Telegram file reference returned by getFile.
+// See: https://core.telegram.org/bots/api#file
+type File struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	FileSize     int64  `json:"file_size,omitempty"`
+	FilePath     string `json:"file_path,omitempty"`
 }
 
 // IsCommand returns true if the message has a bot command entity at the start.

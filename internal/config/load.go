@@ -132,6 +132,14 @@ func Validate(cfg Config) error {
 		if provider.Type == "openai-compatible" && provider.BaseURL == "" {
 			return fmt.Errorf("provider '%s' of type 'openai-compatible' requires base_url field", name)
 		}
+		if provider.TranscriptionEnabled {
+			if provider.TranscriptionModel == "" {
+				return fmt.Errorf("provider '%s' has transcription_enabled but missing transcription_model", name)
+			}
+			if provider.Type != "openai" && provider.Type != "openai-compatible" {
+				return fmt.Errorf("provider '%s' transcription requires type openai or openai-compatible", name)
+			}
+		}
 	}
 
 	if cfg.Telegram.Enabled && cfg.Telegram.BotToken == "" {

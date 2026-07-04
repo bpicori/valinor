@@ -114,6 +114,25 @@ type ProviderConfig struct {
 	APIKey       string `toml:"api_key"`       // API key for the provider
 	BaseURL      string `toml:"base_url"`      // Base URL (for openai-compatible providers)
 	DefaultModel string `toml:"default_model"` // Default model for new sessions (bootstrap fallback)
+
+	// TranscriptionEnabled enables Telegram voice message transcription via this provider.
+	TranscriptionEnabled bool `toml:"transcription_enabled"`
+	// TranscriptionModel is the STT model slug (e.g. openai/whisper-1 on OpenRouter).
+	TranscriptionModel string `toml:"transcription_model"`
+}
+
+// TranscriptionProvider returns the provider configured for voice transcription.
+// Prefers default_provider when it has transcription enabled; otherwise the first enabled provider.
+func (c Config) TranscriptionProvider() (name string, cfg ProviderConfig, ok bool) {
+	if p, found := c.Providers[c.DefaultProvider]; found && p.TranscriptionEnabled {
+		return c.DefaultProvider, p, true
+	}
+	for name, p := range c.Providers {
+		if p.TranscriptionEnabled {
+			return name, p, true
+		}
+	}
+	return "", ProviderConfig{}, false
 }
 
 // ResolveValinorDir returns the absolute base directory for Valinor data.
