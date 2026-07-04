@@ -27,13 +27,6 @@ type release struct {
 	} `json:"assets"`
 }
 
-type updateOptions struct {
-	paths       Paths
-	repo        string
-	restart     func(context.Context) error
-	skipRestart bool
-}
-
 // LatestRelease fetches the latest GitHub release tag and matching asset for this platform.
 func LatestRelease(ctx context.Context, repo string) (tag, assetName string, assetID int, err error) {
 	var rel release
@@ -138,84 +131,79 @@ func BinaryVersion(binary string) (string, error) {
 	return "", nil
 }
 
-func updateRelease(ctx context.Context, opts updateOptions) (bool, string, error) {
-	repo := opts.repo
-	if repo == "" {
-		repo = DefaultRepo
+func updateRelease(ctx context.Context, paths Paths, restart bool) error {
+	latestTag, assetName, assetID, err := LatestRelease(ctx, DefaultRepo)
+	if err != nil {
+		return err
 	}
 
-	latestTag, assetName, assetID, err := LatestRelease(ctx, repo)
+	current, err := BinaryVersion(paths.Binary)
 	if err != nil {
-		return false, "", err
-	}
-
-	current, err := BinaryVersion(opts.paths.Binary)
-	if err != nil {
-		return false, "", err
+		return err
 	}
 	if current == latestTag {
 		msg := fmt.Sprintf("already up to date (%s)", latestTag)
-		_ = AppendDeployLog(opts.paths.DeployLog, msg)
+		_ = AppendDeployLog(paths.DeployLog, msg)
 		fmt.Println(msg)
-		return false, latestTag, nil
+		return nil
 	}
 
 	msg := fmt.Sprintf("updating %s -> %s (%s)", displayVersion(current), latestTag, assetName)
-	if err := AppendDeployLog(opts.paths.DeployLog, msg); err != nil {
-		return false, "", err
+	if err := AppendDeployLog(paths.DeployLog, msg); err != nil {
+		return err
 	}
 	fmt.Println(msg)
 
 	tmpDir, err := os.MkdirTemp("", "valinor-update-*")
 	if err != nil {
-		return false, "", fmt.Errorf("create temp directory: %w", err)
+		return fmt.Errorf("create temp directory: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	archivePath := filepath.Join(tmpDir, assetName)
-	if err := downloadReleaseAsset(ctx, repo, assetID, assetName, archivePath); err != nil {
-		_ = AppendDeployLog(opts.paths.DeployLog, "ERROR: "+err.Error())
-		return false, "", err
+	if err := downloadReleaseAsset(ctx, DefaultRepo, assetID, assetName, archivePath); err != nil {
+		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		return err
 	}
 
 	newBinary, err := extractBinary(archivePath, tmpDir)
 	if err != nil {
-		_ = AppendDeployLog(opts.paths.DeployLog, "ERROR: "+err.Error())
-		return false, "", err
+		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		return err
 	}
 
 	newVersion, err := BinaryVersion(newBinary)
 	if err != nil {
-		return false, "", err
+		return err
 	}
 	if newVersion != latestTag {
 		err := fmt.Errorf("downloaded binary version mismatch: expected %s, got %s", latestTag, displayVersion(newVersion))
-		_ = AppendDeployLog(opts.paths.DeployLog, "ERROR: "+err.Error())
-		return false, "", err
+		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		return err
 	}
 
-	if err := installBinary(opts.paths, newBinary); err != nil {
-		_ = AppendDeployLog(opts.paths.DeployLog, "ERROR: "+err.Error())
-		return false, "", err
+	if err := installBinary(paths, newBinary); err != nil {
+		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		return err
 	}
 
-	installedMsg := fmt.Sprintf("installed %s to %s", latestTag, opts.paths.Binary)
-	_ = AppendDeployLog(opts.paths.DeployLog, installedMsg)
+	installedMsg := fmt.Sprintf("installed %s to %s", latestTag, paths.Binary)
+	_ = AppendDeployLog(paths.DeployLog, installedMsg)
 	fmt.Println(installedMsg)
 
-	if !opts.skipRestart && opts.restart != nil {
-		if err := opts.restart(ctx); err != nil {
+	if restart {
+		if err := platformRestartIfInstalled(ctx, paths); err != nil {
 			warn := fmt.Sprintf("binary updated but service restart failed: %v", err)
-			_ = AppendDeployLog(opts.paths.DeployLog, warn)
-			return true, latestTag, fmt.Errorf("%s", warn)
+			_ = AppendDeployLog(paths.DeployLog, warn)
+			return fmt.Errorf("%s", warn)
 		}
-		_ = AppendDeployLog(opts.paths.DeployLog, "restarted service")
+		_ = AppendDeployLog(paths.DeployLog, "restarted service")
 	}
 
-	return true, latestTag, nil
+	return nil
 }
 
-func rollbackRelease(ctx context.Context, paths Paths, restart func(context.Context) error) error {
+func rollbackRelease(ctx context.Context, paths Paths, restart bool) error {
 	if _, err := os.Stat(paths.PrevBinary); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("no previous binary at %s", paths.PrevBinary)
@@ -234,8 +222,8 @@ func rollbackRelease(ctx context.Context, paths Paths, restart func(context.Cont
 	_ = AppendDeployLog(paths.DeployLog, msg)
 	fmt.Println(msg)
 
-	if restart != nil {
-		if err := restart(ctx); err != nil {
+	if restart {
+		if err := platformRestartIfInstalled(ctx, paths); err != nil {
 			return fmt.Errorf("restored binary but restart failed: %w", err)
 		}
 	}

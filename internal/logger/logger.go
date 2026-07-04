@@ -11,9 +11,17 @@ import (
 )
 
 const (
-	logDirName  = "logs"
-	logFileName = "valinor.log"
+	LogDirName  = "logs"
+	LogFileName = "valinor.log"
+
+	logDirName  = LogDirName
+	logFileName = LogFileName
 )
+
+// AppLogPath returns the default application log path under valinorDir.
+func AppLogPath(valinorDir string) string {
+	return filepath.Join(valinorDir, LogDirName, LogFileName)
+}
 
 // Level is the log severity.
 type Level string

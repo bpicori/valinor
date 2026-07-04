@@ -8,20 +8,10 @@ import (
 	"path/filepath"
 )
 
-// ServiceState describes the installed service state.
-type ServiceState string
-
-const (
-	ServiceNotInstalled ServiceState = "not installed"
-	ServiceActive       ServiceState = "active"
-	ServiceInactive     ServiceState = "inactive"
-	ServiceFailed       ServiceState = "failed"
-)
-
 // Status summarizes deployment state for operator commands.
 type Status struct {
 	Platform      string
-	Service       ServiceState
+	Service       string
 	ServiceDetail string
 	UpdateTimer   string
 	UpdateDetail  string
@@ -48,12 +38,7 @@ func Install(ctx context.Context) error {
 		return err
 	}
 
-	_, _, err = updateRelease(ctx, updateOptions{
-		paths:       paths,
-		repo:        DefaultRepo,
-		skipRestart: true,
-	})
-	if err != nil {
+	if err := updateRelease(ctx, paths, false); err != nil {
 		return err
 	}
 
@@ -133,14 +118,7 @@ func RunUpdate(ctx context.Context) error {
 		return err
 	}
 
-	_, _, err = updateRelease(ctx, updateOptions{
-		paths: paths,
-		repo:  DefaultRepo,
-		restart: func(ctx context.Context) error {
-			return platformRestartIfInstalled(ctx, paths)
-		},
-	})
-	return err
+	return updateRelease(ctx, paths, true)
 }
 
 // RunRollback restores the previous binary.
@@ -150,9 +128,7 @@ func RunRollback(ctx context.Context) error {
 		return err
 	}
 
-	return rollbackRelease(ctx, paths, func(ctx context.Context) error {
-		return platformRestartIfInstalled(ctx, paths)
-	})
+	return rollbackRelease(ctx, paths, true)
 }
 
 // RunRestart restarts the installed service.
@@ -207,6 +183,16 @@ func ensureDeployDirs(paths Paths) error {
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+func writeFiles(dir string, files map[string]string) error {
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
 		}
 	}
 	return nil

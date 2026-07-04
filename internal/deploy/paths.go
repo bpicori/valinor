@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"valinor/internal/config"
+	"valinor/internal/logger"
 )
 
 const (
@@ -32,15 +35,21 @@ func DefaultPaths() (Paths, error) {
 		return Paths{}, fmt.Errorf("resolve home directory: %w", err)
 	}
 
+	configFile, err := config.DefaultConfigPath()
+	if err != nil {
+		return Paths{}, err
+	}
+
 	binDir := filepath.Join(home, ".local", "bin")
-	logDir := filepath.Join(home, ".valinor", "logs")
+	valinorDir := filepath.Dir(configFile)
+	logDir := filepath.Join(valinorDir, logger.LogDirName)
 
 	return Paths{
 		Home:       home,
 		Binary:     filepath.Join(binDir, BinaryName),
 		PrevBinary: filepath.Join(binDir, BinaryName+".prev"),
-		ConfigFile: filepath.Join(home, ".valinor", "config.toml"),
-		AppLog:     filepath.Join(logDir, "valinor.log"),
+		ConfigFile: configFile,
+		AppLog:     logger.AppLogPath(valinorDir),
 		DeployLog:  filepath.Join(logDir, "deploy.log"),
 	}, nil
 }

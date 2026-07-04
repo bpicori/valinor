@@ -53,7 +53,7 @@ func platformUninstall(ctx context.Context, paths Paths) error {
 func platformStatus(ctx context.Context, paths Paths) (Status, error) {
 	status := Status{
 		Platform:    platformName(),
-		Service:     ServiceNotInstalled,
+		Service:     "not installed",
 		UpdateTimer: "not installed",
 	}
 
@@ -122,18 +122,11 @@ func writeSystemdUnits(paths Paths) error {
 		return fmt.Errorf("create systemd user directory: %w", err)
 	}
 
-	files := map[string]string{
+	return writeFiles(unitDir, map[string]string{
 		serviceUnit:   systemdMainUnit(paths),
 		updateService: systemdUpdateUnit(paths),
 		updateTimer:   systemdUpdateTimer(),
-	}
-	for name, content := range files {
-		path := filepath.Join(unitDir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return fmt.Errorf("write %s: %w", path, err)
-		}
-	}
-	return nil
+	})
 }
 
 func systemdMainUnit(paths Paths) string {
@@ -207,14 +200,14 @@ func systemdUnitInstalled(paths Paths, name string) bool {
 	return err == nil
 }
 
-func systemdUnitActiveState(ctx context.Context, unit string) (ServiceState, string, error) {
+func systemdUnitActiveState(ctx context.Context, unit string) (string, string, error) {
 	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show", unit, "-p", "ActiveState", "-p", "SubState", "--value").Output()
 	if err != nil {
-		return ServiceNotInstalled, "", fmt.Errorf("read service state: %w", err)
+		return "not installed", "", fmt.Errorf("read service state: %w", err)
 	}
 	lines := strings.Fields(strings.TrimSpace(string(out)))
 	if len(lines) == 0 {
-		return ServiceInactive, "", nil
+		return "inactive", "", nil
 	}
 	return mapSystemdState(lines[0]), strings.Join(lines, " "), nil
 }
@@ -254,13 +247,13 @@ func systemdRun(ctx context.Context, args ...string) error {
 	return nil
 }
 
-func mapSystemdState(state string) ServiceState {
+func mapSystemdState(state string) string {
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "active":
-		return ServiceActive
+		return "active"
 	case "failed":
-		return ServiceFailed
+		return "failed"
 	default:
-		return ServiceInactive
+		return "inactive"
 	}
 }

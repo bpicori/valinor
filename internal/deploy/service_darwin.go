@@ -46,7 +46,7 @@ func platformUninstall(ctx context.Context, paths Paths) error {
 func platformStatus(ctx context.Context, paths Paths) (Status, error) {
 	status := Status{
 		Platform:    platformName(),
-		Service:     ServiceNotInstalled,
+		Service:     "not installed",
 		UpdateTimer: "not installed",
 	}
 
@@ -98,7 +98,7 @@ func platformRestartIfInstalled(ctx context.Context, paths Paths) error {
 	if err != nil {
 		return err
 	}
-	if state == ServiceNotInstalled {
+	if state == "not installed" {
 		fmt.Println("service not loaded; binary updated but service not restarted")
 		return nil
 	}
@@ -119,20 +119,14 @@ func writeLaunchdPlists(paths Paths) error {
 		return fmt.Errorf("create LaunchAgents directory: %w", err)
 	}
 
-	files := map[string]string{
+	return writeFiles(agentDir, map[string]string{
 		agentLabel + ".plist":  launchdAgentPlist(paths),
 		updateLabel + ".plist": launchdUpdatePlist(paths),
-	}
-	for name, content := range files {
-		path := filepath.Join(agentDir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return fmt.Errorf("write %s: %w", path, err)
-		}
-	}
-	return nil
+	})
 }
 
 func launchdAgentPlist(paths Paths) string {
+	logDir := filepath.Dir(paths.AppLog)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -150,12 +144,12 @@ func launchdAgentPlist(paths Paths) string {
 	<key>KeepAlive</key>
 	<true/>
 	<key>StandardOutPath</key>
-	<string>%s/.valinor/logs/valinor.stdout.log</string>
+	<string>%s</string>
 	<key>StandardErrorPath</key>
-	<string>%s/.valinor/logs/valinor.stderr.log</string>
+	<string>%s</string>
 </dict>
 </plist>
-`, paths.Binary, DefaultMode, paths.Home, paths.Home)
+`, paths.Binary, DefaultMode, filepath.Join(logDir, "valinor.stdout.log"), filepath.Join(logDir, "valinor.stderr.log"))
 }
 
 func launchdUpdatePlist(paths Paths) string {
@@ -206,28 +200,28 @@ func launchdBootout(ctx context.Context, plist string) error {
 	return nil
 }
 
-func launchdAgentState(ctx context.Context, label string) (ServiceState, string, error) {
+func launchdAgentState(ctx context.Context, label string) (string, string, error) {
 	domain, err := guiDomain()
 	if err != nil {
-		return ServiceNotInstalled, "", err
+		return "not installed", "", err
 	}
 
 	out, err := exec.CommandContext(ctx, "launchctl", "print", filepath.Join(domain, label)).CombinedOutput()
 	if err != nil {
-		return ServiceInactive, "not loaded", nil
+		return "inactive", "not loaded", nil
 	}
 
 	text := string(out)
 	if strings.Contains(text, "state = running") {
-		return ServiceActive, "running", nil
+		return "active", "running", nil
 	}
 	if strings.Contains(text, "state = waiting") || strings.Contains(text, "state = sleeping") {
-		return ServiceActive, strings.TrimSpace(lastLine(text)), nil
+		return "active", strings.TrimSpace(lastLine(text)), nil
 	}
 	if strings.Contains(text, "state = exited") {
-		return ServiceFailed, "exited", nil
+		return "failed", "exited", nil
 	}
-	return ServiceInactive, strings.TrimSpace(lastLine(text)), nil
+	return "inactive", strings.TrimSpace(lastLine(text)), nil
 }
 
 func guiDomain() (string, error) {
