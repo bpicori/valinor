@@ -78,10 +78,3 @@ func MustPaths() Paths {
 	}
 	return globalPaths
 }
-
-// Get returns the process-global configuration and whether Init was called.
-func Get() (Config, bool) {
-	globalMu.RLock()
-	defer globalMu.RUnlock()
-	return globalCfg, globalInited
-}

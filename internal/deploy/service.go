@@ -25,7 +25,7 @@ type LogOptions struct {
 
 // PrintStatus writes deployment status to stdout.
 func PrintStatus(ctx context.Context) error {
-	paths, err := DefaultPaths()
+	paths, err := defaultPaths()
 	if err != nil {
 		return err
 	}
@@ -35,13 +35,13 @@ func PrintStatus(ctx context.Context) error {
 		return err
 	}
 
-	installed, err := BinaryVersion(paths.Binary)
+	installed, err := binaryVersion(paths.Binary)
 	if err != nil {
 		return err
 	}
 
 	latest := ""
-	if tag, _, _, err := LatestRelease(ctx, DefaultRepo); err == nil {
+	if tag, _, _, err := latestRelease(ctx, DefaultRepo); err == nil {
 		latest = tag
 	}
 
@@ -79,7 +79,7 @@ func PrintStatus(ctx context.Context) error {
 
 // RunUpdate performs a release update and restarts the service when installed.
 func RunUpdate(ctx context.Context) error {
-	paths, err := DefaultPaths()
+	paths, err := defaultPaths()
 	if err != nil {
 		return err
 	}
@@ -89,7 +89,7 @@ func RunUpdate(ctx context.Context) error {
 
 // RunRollback restores the previous binary.
 func RunRollback(ctx context.Context) error {
-	paths, err := DefaultPaths()
+	paths, err := defaultPaths()
 	if err != nil {
 		return err
 	}
@@ -99,7 +99,7 @@ func RunRollback(ctx context.Context) error {
 
 // RunRestart restarts the installed service.
 func RunRestart(ctx context.Context) error {
-	paths, err := DefaultPaths()
+	paths, err := defaultPaths()
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func RunRestart(ctx context.Context) error {
 
 // RunUninstall removes the installed service.
 func RunUninstall(ctx context.Context) error {
-	paths, err := DefaultPaths()
+	paths, err := defaultPaths()
 	if err != nil {
 		return err
 	}
@@ -121,7 +121,7 @@ func RunUninstall(ctx context.Context) error {
 
 // RunLogs streams deployment or service logs.
 func RunLogs(ctx context.Context, opts LogOptions) error {
-	paths, err := DefaultPaths()
+	paths, err := defaultPaths()
 	if err != nil {
 		return err
 	}

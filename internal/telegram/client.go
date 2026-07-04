@@ -39,11 +39,6 @@ func NewClient(token string) *Client {
 	}
 }
 
-// SetHTTPClient allows customizing the HTTP client (useful for testing).
-func (c *Client) SetHTTPClient(client *http.Client) {
-	c.httpClient = client
-}
-
 // apiCall performs a request to the Telegram Bot API.
 func (c *Client) apiCall(ctx context.Context, method string, payload interface{}) (*APIResponse, error) {
 	url := c.endpoint + method

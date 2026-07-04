@@ -13,9 +13,6 @@ import (
 const (
 	LogDirName  = "logs"
 	LogFileName = "valinor.log"
-
-	logDirName  = LogDirName
-	logFileName = LogFileName
 )
 
 // AppLogPath returns the default application log path under valinorDir.
@@ -55,12 +52,12 @@ func Init(valinorDir string, transports []TransportType) (logPath string, closeF
 
 	if hasFile {
 		// ensure the log directory exists
-		targetDir := filepath.Join(valinorDir, logDirName)
+		targetDir := filepath.Join(valinorDir, LogDirName)
 		if err := os.MkdirAll(targetDir, 0o700); err != nil {
 			return "", nil, err
 		}
 
-		logPath = filepath.Join(targetDir, logFileName)
+		logPath = filepath.Join(targetDir, LogFileName)
 		file, err = os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			return "", nil, err

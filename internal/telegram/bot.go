@@ -882,36 +882,6 @@ func (b *Bot) stopAllBridges() {
 	}
 }
 
-// GetStats returns bot statistics for monitoring.
-func (b *Bot) GetStats() BotStats {
-	stats := BotStats{
-		Ready: b.ready.Load(),
-	}
-
-	stats.ActiveChats = len(b.trackers)
-
-	b.bridgesMu.RLock()
-	for _, bridge := range b.bridges {
-		if bridge.IsConnected() {
-			stats.Connected = true
-			break
-		}
-	}
-	b.bridgesMu.RUnlock()
-
-	stats.Polling = b.poller != nil && b.ready.Load()
-
-	return stats
-}
-
-// BotStats contains bot statistics.
-type BotStats struct {
-	Ready       bool
-	Connected   bool
-	Polling     bool
-	ActiveChats int
-}
-
 // ChatIdentity uniquely identifies a Telegram DM chat for session binding.
 type ChatIdentity struct {
 	ChatID   int64  `json:"chat_id"`            // Telegram chat ID
@@ -922,16 +892,6 @@ type ChatIdentity struct {
 // The identity string is formatted as "{chatID}".
 func (ci ChatIdentity) ToClientIdentity() string {
 	return strconv.FormatInt(ci.ChatID, 10)
-}
-
-// ParseChatIdentity parses a client identity string into ChatIdentity.
-// Expected format: "{chatID}".
-func ParseChatIdentity(identity string) (ChatIdentity, error) {
-	chatID, err := strconv.ParseInt(identity, 10, 64)
-	if err != nil {
-		return ChatIdentity{}, fmt.Errorf("invalid chat identity format: %s", identity)
-	}
-	return ChatIdentity{ChatID: chatID}, nil
 }
 
 // FromTelegramUpdate extracts ChatIdentity from a Telegram update.

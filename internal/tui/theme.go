@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"strings"
-
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -93,11 +91,4 @@ func truncateMiddle(s string, max int) string {
 	}
 	keep := (max - 3) / 2
 	return s[:keep] + "..." + s[len(s)-((max-3)-keep):]
-}
-
-func repeatSpaces(n int) string {
-	if n <= 0 {
-		return ""
-	}
-	return strings.Repeat(" ", n)
 }

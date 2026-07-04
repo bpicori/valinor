@@ -27,8 +27,7 @@ type release struct {
 	} `json:"assets"`
 }
 
-// LatestRelease fetches the latest GitHub release tag and matching asset for this platform.
-func LatestRelease(ctx context.Context, repo string) (tag, assetName string, assetID int, err error) {
+func latestRelease(ctx context.Context, repo string) (tag, assetName string, assetID int, err error) {
 	var rel release
 	if err := githubGET(ctx, fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo), &rel); err != nil {
 		return "", "", 0, err
@@ -112,8 +111,7 @@ func downloadReleaseAsset(ctx context.Context, repo string, assetID int, assetNa
 	return nil
 }
 
-// BinaryVersion returns the version string from a valinor binary, or empty if unavailable.
-func BinaryVersion(binary string) (string, error) {
+func binaryVersion(binary string) (string, error) {
 	if strings.TrimSpace(binary) == "" {
 		return "", fmt.Errorf("binary path is empty")
 	}
@@ -132,24 +130,24 @@ func BinaryVersion(binary string) (string, error) {
 }
 
 func updateRelease(ctx context.Context, paths Paths, restart bool) error {
-	latestTag, assetName, assetID, err := LatestRelease(ctx, DefaultRepo)
+	latestTag, assetName, assetID, err := latestRelease(ctx, DefaultRepo)
 	if err != nil {
 		return err
 	}
 
-	current, err := BinaryVersion(paths.Binary)
+	current, err := binaryVersion(paths.Binary)
 	if err != nil {
 		return err
 	}
 	if current == latestTag {
 		msg := fmt.Sprintf("already up to date (%s)", latestTag)
-		_ = AppendDeployLog(paths.DeployLog, msg)
+		_ = appendDeployLog(paths.DeployLog, msg)
 		fmt.Println(msg)
 		return nil
 	}
 
 	msg := fmt.Sprintf("updating %s -> %s (%s)", displayVersion(current), latestTag, assetName)
-	if err := AppendDeployLog(paths.DeployLog, msg); err != nil {
+	if err := appendDeployLog(paths.DeployLog, msg); err != nil {
 		return err
 	}
 	fmt.Println(msg)
@@ -162,42 +160,42 @@ func updateRelease(ctx context.Context, paths Paths, restart bool) error {
 
 	archivePath := filepath.Join(tmpDir, assetName)
 	if err := downloadReleaseAsset(ctx, DefaultRepo, assetID, assetName, archivePath); err != nil {
-		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
 		return err
 	}
 
 	newBinary, err := extractBinary(archivePath, tmpDir)
 	if err != nil {
-		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
 		return err
 	}
 
-	newVersion, err := BinaryVersion(newBinary)
+	newVersion, err := binaryVersion(newBinary)
 	if err != nil {
 		return err
 	}
 	if newVersion != latestTag {
 		err := fmt.Errorf("downloaded binary version mismatch: expected %s, got %s", latestTag, displayVersion(newVersion))
-		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
 		return err
 	}
 
 	if err := installBinary(paths, newBinary); err != nil {
-		_ = AppendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
+		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
 		return err
 	}
 
 	installedMsg := fmt.Sprintf("installed %s to %s", latestTag, paths.Binary)
-	_ = AppendDeployLog(paths.DeployLog, installedMsg)
+	_ = appendDeployLog(paths.DeployLog, installedMsg)
 	fmt.Println(installedMsg)
 
 	if restart {
 		if err := platformRestartIfInstalled(ctx, paths); err != nil {
 			warn := fmt.Sprintf("binary updated but service restart failed: %v", err)
-			_ = AppendDeployLog(paths.DeployLog, warn)
+			_ = appendDeployLog(paths.DeployLog, warn)
 			return fmt.Errorf("%s", warn)
 		}
-		_ = AppendDeployLog(paths.DeployLog, "restarted service")
+		_ = appendDeployLog(paths.DeployLog, "restarted service")
 	}
 
 	return nil
@@ -219,7 +217,7 @@ func rollbackRelease(ctx context.Context, paths Paths, restart bool) error {
 	}
 
 	msg := fmt.Sprintf("restored previous binary to %s", paths.Binary)
-	_ = AppendDeployLog(paths.DeployLog, msg)
+	_ = appendDeployLog(paths.DeployLog, msg)
 	fmt.Println(msg)
 
 	if restart {

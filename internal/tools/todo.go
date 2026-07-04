@@ -5,21 +5,18 @@ import (
 	"fmt"
 	"strings"
 	"sync"
-
-
 )
 
-// todoStore is the global todo store instance (lazy-initialized).
-// Todos are scoped per-interaction (keyed by RequestID), not per-session.
 var (
 	todoStore     *TodoStore
 	todoStoreOnce sync.Once
 )
 
-// getTodoStore returns the global todo store, initializing it on first call.
 func getTodoStore() *TodoStore {
 	todoStoreOnce.Do(func() {
-		todoStore = NewTodoStore()
+		todoStore = &TodoStore{
+			items: make(map[string][]TodoItem),
+		}
 	})
 	return todoStore
 }
@@ -33,13 +30,12 @@ type TodoItem struct {
 
 // Valid statuses for a todo item.
 const (
-	StatusPending     = "pending"
-	StatusInProgress  = "in_progress"
-	StatusCompleted   = "completed"
-	StatusCancelled   = "cancelled"
+	StatusPending    = "pending"
+	StatusInProgress = "in_progress"
+	StatusCompleted  = "completed"
+	StatusCancelled  = "cancelled"
 )
 
-// isValidStatus checks if the given status is valid.
 func isValidStatus(status string) bool {
 	switch status {
 	case StatusPending, StatusInProgress, StatusCompleted, StatusCancelled:
@@ -49,7 +45,6 @@ func isValidStatus(status string) bool {
 	}
 }
 
-// formatStatus returns a formatted status string for display.
 func formatStatus(status string) string {
 	switch status {
 	case StatusPending:
@@ -66,36 +61,22 @@ func formatStatus(status string) string {
 }
 
 // TodoStore is an in-memory, session-scoped store for todo items.
-// It is safe for concurrent use.
 type TodoStore struct {
 	mu    sync.RWMutex
-	items map[string][]TodoItem // sessionID -> todos
+	items map[string][]TodoItem
 }
 
-// NewTodoStore creates a new empty TodoStore.
-func NewTodoStore() *TodoStore {
-	return &TodoStore{
-		items: make(map[string][]TodoItem),
-	}
-}
-
-// Write creates or updates the todo list for a session.
-// If merge is true, updates existing items by ID and appends new ones.
-// If merge is false, replaces the entire list.
-// Returns the resulting todo list for the session.
 func (s *TodoStore) Write(sessionID string, todos []TodoItem, merge bool) []TodoItem {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if !merge {
-		// Replace entire list
 		s.items[sessionID] = todos
 		return s.cloneItems(todos)
 	}
 
-	// Merge: update existing items by ID, append new ones
 	existing := s.items[sessionID]
-	existingMap := make(map[string]int) // id -> index in existing
+	existingMap := make(map[string]int)
 	for i, item := range existing {
 		if item.ID != "" {
 			existingMap[item.ID] = i
@@ -107,16 +88,12 @@ func (s *TodoStore) Write(sessionID string, todos []TodoItem, merge bool) []Todo
 
 	for _, newItem := range todos {
 		if newItem.ID == "" {
-			// Items without ID are always appended
 			result = append(result, newItem)
 			continue
 		}
-
 		if idx, exists := existingMap[newItem.ID]; exists {
-			// Update existing item
 			result[idx] = newItem
 		} else {
-			// Append new item
 			result = append(result, newItem)
 		}
 	}
@@ -125,8 +102,6 @@ func (s *TodoStore) Write(sessionID string, todos []TodoItem, merge bool) []Todo
 	return s.cloneItems(result)
 }
 
-// Read returns the current todo list for a session.
-// Returns an empty slice if no todos exist for the session.
 func (s *TodoStore) Read(sessionID string) []TodoItem {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -138,21 +113,12 @@ func (s *TodoStore) Read(sessionID string) []TodoItem {
 	return s.cloneItems(items)
 }
 
-// ClearSession removes all todos for a given session.
-func (s *TodoStore) ClearSession(sessionID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.items, sessionID)
-}
-
-// cloneItems creates a deep copy of a todo slice.
 func (s *TodoStore) cloneItems(items []TodoItem) []TodoItem {
 	result := make([]TodoItem, len(items))
 	copy(result, items)
 	return result
 }
 
-// formatTodos formats a list of todos as a human-readable string.
 func formatTodos(todos []TodoItem) string {
 	if len(todos) == 0 {
 		return "No todos found."
@@ -169,13 +135,11 @@ func formatTodos(todos []TodoItem) string {
 	return sb.String()
 }
 
-// Tool name constants
 const (
 	todoWriteName = "todo_write"
 	todoReadName  = "todo_read"
 )
 
-// todoWriteParams returns the parameters schema for todo_write.
 func todoWriteParams() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -214,12 +178,7 @@ func todoWriteParams() map[string]any {
 	}
 }
 
-// todoWriteExec executes the todo_write tool.
 func todoWriteExec(runCtx *RunContext, args json.RawMessage) (string, error) {
-	if todoStore == nil {
-		return "Error: todo store not initialized", nil
-	}
-
 	snap, ok := runCtx.Snapshot()
 	if !ok || snap.SessionID == "" {
 		return "Error: no session context available", nil
@@ -233,7 +192,6 @@ func todoWriteExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	// Validate todo items
 	if len(p.Todos) == 0 && !p.Merge {
 		return "Error: todos array must be non-empty when merge is false", nil
 	}
@@ -250,11 +208,10 @@ func todoWriteExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 		}
 	}
 
-	result := todoStore.Write(snap.SessionID, p.Todos, p.Merge)
+	result := getTodoStore().Write(snap.SessionID, p.Todos, p.Merge)
 	return formatTodos(result), nil
 }
 
-// todoReadParams returns the parameters schema for todo_read.
 func todoReadParams() map[string]any {
 	return map[string]any{
 		"type":                 "object",
@@ -264,17 +221,12 @@ func todoReadParams() map[string]any {
 	}
 }
 
-// todoReadExec executes the todo_read tool.
 func todoReadExec(runCtx *RunContext, args json.RawMessage) (string, error) {
-	if todoStore == nil {
-		return "Error: todo store not initialized", nil
-	}
-
 	snap, ok := runCtx.Snapshot()
 	if !ok || snap.SessionID == "" {
 		return "Error: no session context available", nil
 	}
 
-	todos := todoStore.Read(snap.SessionID)
+	todos := getTodoStore().Read(snap.SessionID)
 	return formatTodos(todos), nil
 }

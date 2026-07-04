@@ -117,11 +117,6 @@ func (f *fieldForm) fieldValue(label string) string {
 	return ""
 }
 
-func (f *fieldForm) boolValue(label string) bool {
-	v := strings.TrimSpace(strings.ToLower(f.fieldValue(label)))
-	return v == "yes" || v == "true" || v == "1"
-}
-
 func (f *fieldForm) intValue(label string) (int, error) {
 	v := strings.TrimSpace(f.fieldValue(label))
 	if v == "" {

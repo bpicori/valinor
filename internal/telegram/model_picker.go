@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"valinor/internal/config"
-	"valinor/internal/event"
 	"valinor/internal/gateway"
 )
 
@@ -276,8 +275,4 @@ func pickerRenderResult(text string, markup *InlineKeyboardMarkup) *RenderResult
 
 func pickerConfirmationText(provider, model string) string {
 	return fmt.Sprintf("Switched to %s / %s", provider, model)
-}
-
-func isProviderModelsResult(ev gateway.Event) bool {
-	return ev.Type == event.ProviderModelsResult
 }

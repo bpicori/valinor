@@ -25,16 +25,6 @@ func New(provider Provider, model string, maxIterations int) *LLM {
 	}
 }
 
-// SetModel updates the model used for subsequent runs.
-func (l *LLM) SetModel(model string) {
-	l.model = model
-}
-
-// MaxIterations returns the max iterations cap.
-func (l *LLM) MaxIterations() int {
-	return l.maxIterations
-}
-
 // Run executes one LLM operation: reset, restore, or user-message turn.
 func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 	messages := append([]agentcontext.Message{}, req.Messages...)

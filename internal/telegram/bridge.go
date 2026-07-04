@@ -113,13 +113,6 @@ func (b *Bridge) Stop() {
 	})
 }
 
-// IsConnected returns true if the bridge is connected and handshaked.
-func (b *Bridge) IsConnected() bool {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.connected && b.handshaked
-}
-
 // SessionInfo returns the handshake session metadata if available.
 func (b *Bridge) SessionInfo() (sessionKey, provider, model string, contextTokens int64, tokensEstimated, ok bool) {
 	b.mu.RLock()

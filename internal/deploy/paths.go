@@ -27,8 +27,7 @@ type Paths struct {
 	DeployLog  string
 }
 
-// DefaultPaths resolves deployment paths for the current user.
-func DefaultPaths() (Paths, error) {
+func defaultPaths() (Paths, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Paths{}, fmt.Errorf("resolve home directory: %w", err)
@@ -53,8 +52,7 @@ func DefaultPaths() (Paths, error) {
 	}, nil
 }
 
-// AppendDeployLog writes a timestamped line to the deploy log.
-func AppendDeployLog(path, message string) error {
+func appendDeployLog(path, message string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("create deploy log directory: %w", err)
 	}

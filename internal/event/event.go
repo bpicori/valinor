@@ -87,11 +87,6 @@ var registry = map[EventType]PayloadFactory{
 	CronJobResult: func() any { return &CronJobResultPayload{} },
 }
 
-// RegisterPayloadType allows external packages to register custom payload types.
-func RegisterPayloadType(eventType EventType, factory PayloadFactory) {
-	registry[eventType] = factory
-}
-
 // ParseEvent parses an event from a type string and raw JSON payload.
 // This eliminates the need for duplicate switch statements in ws_bridge.go.
 func ParseEvent(eventType string, payloadData []byte) (Event, error) {
@@ -165,19 +160,4 @@ func deref(v any) any {
 	default:
 		return v
 	}
-}
-
-// MustParseEvent is like ParseEvent but panics on error (for tests only).
-func MustParseEvent(eventType string, payloadData []byte) Event {
-	event, err := ParseEvent(eventType, payloadData)
-	if err != nil {
-		panic(err)
-	}
-	return event
-}
-
-// IsValidEventType checks if an event type string is valid.
-func IsValidEventType(eventType string) bool {
-	_, ok := registry[EventType(eventType)]
-	return ok
 }
