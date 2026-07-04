@@ -1,4 +1,4 @@
-package skills
+package requiredskills
 
 import (
 	"embed"
@@ -16,9 +16,9 @@ const workspaceSkillsDir = "skills"
 //go:embed all:*
 var bundled embed.FS
 
-// EnsureRequired writes embedded skill files into workspaceDir/skills/ when missing.
+// EnsureRequiredSkills writes embedded required skills into workspaceDir/skills/ when missing.
 // Existing workspace skills are never overwritten.
-func EnsureRequired(workspaceDir string) error {
+func EnsureRequiredSkills(workspaceDir string) error {
 	workspaceDir = strings.TrimSpace(workspaceDir)
 	if workspaceDir == "" {
 		return fmt.Errorf("workspace directory is required")
@@ -37,7 +37,7 @@ func EnsureRequired(workspaceDir string) error {
 
 		data, err := bundled.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("read embedded skill %q: %w", path, err)
+			return fmt.Errorf("read embedded required skill %q: %w", path, err)
 		}
 
 		target := filepath.Join(destRoot, filepath.FromSlash(path))

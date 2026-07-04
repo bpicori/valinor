@@ -5,7 +5,6 @@ VALINOR_DIR ?= $(HOME)/.valinor
 SESSIONS_DIR ?= $(VALINOR_DIR)/sessions
 METADATA_DB ?= $(SESSIONS_DIR)/metadata.db
 LOG_FILE ?= $(VALINOR_DIR)/logs/valinor.log
-LNAV_FORMAT := configs/lnav/valinor_log.json
 
 # Build the binary
 build:
@@ -62,10 +61,8 @@ sqlite-repl:
 	@sqlite3 "$(METADATA_DB)" -cmd ".headers on" -cmd ".mode column"
 
 logs:
-	@command -v lnav >/dev/null || (echo "lnav not found in PATH; install with: brew install lnav" && exit 1)
 	@test -f "$(LOG_FILE)" || (echo "Log file not found: $(LOG_FILE)" && exit 1)
-	@lnav -i "$(LNAV_FORMAT)" -q
-	lnav "$(LOG_FILE)"
+	tail -f "$(LOG_FILE)"
 
 clean:
 	rm -f $(BINARY)

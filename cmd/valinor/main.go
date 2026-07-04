@@ -23,7 +23,7 @@ import (
 	"valinor/internal/telegram"
 	"valinor/internal/tui"
 	"valinor/internal/wizard"
-	"valinor/skills"
+	"valinor/internal/requiredskills"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -246,7 +246,7 @@ func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayD
 	if err := os.MkdirAll(paths.WorkspaceDir, 0755); err != nil {
 		return nil, fmt.Errorf("create workspace directory: %w", err)
 	}
-	if err := skills.EnsureRequired(paths.WorkspaceDir); err != nil {
+	if err := requiredskills.EnsureRequiredSkills(paths.WorkspaceDir); err != nil {
 		return nil, fmt.Errorf("ensure required skills: %w", err)
 	}
 	if err := agentcontext.EnsureMemory(paths.WorkspaceDir); err != nil {
