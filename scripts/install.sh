@@ -2,11 +2,6 @@
 # Valinor installer — download binary, configure, register service.
 #
 #   curl -fsSL https://raw.githubusercontent.com/bpicori/valinor/main/scripts/install.sh | bash
-#
-# Non-interactive (set secrets before piping):
-#   export VALINOR_OPENAI_API_KEY=sk-...
-#   export VALINOR_TELEGRAM_BOT_TOKEN=123:ABC
-#   curl -fsSL https://raw.githubusercontent.com/bpicori/valinor/main/scripts/install.sh | bash
 set -euo pipefail
 
 REPO="${VALINOR_INSTALL_REPO:-bpicori/valinor}"
@@ -40,11 +35,11 @@ scripts_base() {
 fetch_script_file() {
 	local rel="$1" dest="$2" base
 	base="$(scripts_base)"
-	if [[ "$base" == http* ]]; then
-		curl -fsSL "${base}/${rel}" -o "$dest"
-	else
+	if [[ "$base" != http* ]]; then
 		cp "${base}/${rel}" "$dest"
+		return
 	fi
+	curl -fsSL "${base}/${rel}" -o "$dest"
 }
 
 render_template() {
@@ -93,13 +88,14 @@ preflight() {
 	esac
 }
 
-latest_asset_url() {
-	local tag version asset_name release_json
-	release_json="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")"
+latest_release_asset() {
+	local tag version asset_name release_json asset_url
+	release_json="$(curl -fsSL -H "Accept: application/vnd.github+json" \
+		"https://api.github.com/repos/${REPO}/releases/latest")"
 	tag="$(printf '%s' "$release_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tag_name"])')"
 	version="${tag#v}"
 	asset_name="valinor_${version}_${PLATFORM_OS}_${PLATFORM_ARCH}.tar.gz"
-	printf '%s' "$release_json" | python3 -c '
+	asset_url="$(printf '%s' "$release_json" | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
 name = sys.argv[1]
@@ -109,20 +105,24 @@ for asset in data.get("assets", []):
         break
 else:
     raise SystemExit(f"release asset not found: {name}")
-' "$asset_name"
+' "$asset_name")"
+	RELEASE_ASSET_NAME="$asset_name"
+	RELEASE_ASSET_URL="$asset_url"
 }
 
 install_binary() {
-	local url tmp archive binary
-	url="$(latest_asset_url)"
-	tmp="$(mktemp -d)"
-	archive="${tmp}/valinor.tar.gz"
-	binary="${tmp}/valinor"
-	trap 'rm -rf "${tmp}"' EXIT
+	local archive_dir archive binary extract_dir
+	latest_release_asset
+	archive_dir="$(mktemp -d)"
+	archive="${archive_dir}/valinor.tar.gz"
+	extract_dir="${RELEASE_ASSET_NAME%.tar.gz}"
+	binary="${archive_dir}/${extract_dir}/valinor"
+	trap 'rm -rf "${archive_dir}"' RETURN
 
-	echo "==> Downloading ${url##*/}"
-	curl -fsSL "$url" -o "$archive"
-	tar -xzf "$archive" -C "$tmp" valinor
+	echo "==> Downloading ${RELEASE_ASSET_NAME}"
+	curl -fsSL "$RELEASE_ASSET_URL" -o "$archive"
+	tar -xzf "$archive" -C "$archive_dir"
+	[[ -f "$binary" ]] || die "archive did not contain valinor binary at ${extract_dir}/valinor"
 	chmod 0755 "$binary"
 
 	mkdir -p "$BIN_DIR"
