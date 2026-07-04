@@ -24,7 +24,8 @@ type LogOptions struct {
 	Deploy bool
 }
 
-// Install performs a full deployment install as gateway + Telegram (run --mode=all).
+// Install registers the user service and auto-update timer.
+// The binary must already exist at ~/.local/bin/valinor (see scripts/install.sh).
 func Install(ctx context.Context) error {
 	paths, err := DefaultPaths()
 	if err != nil {
@@ -38,16 +39,12 @@ func Install(ctx context.Context) error {
 		return err
 	}
 
-	if err := updateRelease(ctx, paths, false); err != nil {
-		return err
-	}
-
 	if err := platformInstall(ctx, paths); err != nil {
 		return err
 	}
 
 	fmt.Println("")
-	fmt.Println("Install complete.")
+	fmt.Println("Service install complete.")
 	fmt.Println("")
 	fmt.Println("Useful commands:")
 	fmt.Println("  valinor status")
@@ -163,6 +160,12 @@ func RunLogs(ctx context.Context, opts LogOptions) error {
 }
 
 func preflightInstall(paths Paths) error {
+	if _, err := os.Stat(paths.Binary); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("binary not found at %s; run the install script first", paths.Binary)
+		}
+		return fmt.Errorf("stat binary: %w", err)
+	}
 	if _, err := os.Stat(paths.ConfigFile); err != nil {
 		if os.IsNotExist(err) {
 			return fmt.Errorf("config not found at %s; run `valinor init` first", paths.ConfigFile)

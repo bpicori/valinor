@@ -15,8 +15,9 @@ var (
 )
 
 var installCmd = &cobra.Command{
-	Use:   "install",
-	Short: "Install valinor as a user service with auto-updates",
+	Use:    "install",
+	Hidden: true,
+	Short:  "Register the user service (called by scripts/install.sh)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return deploy.Install(context.Background())
 	},
