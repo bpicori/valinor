@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 
+	"valinor/internal/buildinfo"
+
 	"github.com/spf13/cobra"
 )
 
@@ -13,4 +15,8 @@ var versionCmd = &cobra.Command{
 		fmt.Println(versionString())
 		return nil
 	},
+}
+
+func versionString() string {
+	return fmt.Sprintf("version=%s commit=%s build_date=%s", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
 }

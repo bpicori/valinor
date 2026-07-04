@@ -25,16 +25,24 @@ import (
 )
 
 type gatewayDeps struct {
-	closeLogger func() error
-	cronJobs    *cron.Jobs
-	sm          *session.Manager
-	rtr         *gateway.Router
-	gw          *gateway.Server
+	closeLogger    func() error
+	cronJobs       *cron.Jobs
+	sm             *session.Manager
+	sessionRuntime *session.Runtime
+	sched          *scheduler.Scheduler
+	rtr            *gateway.Router
+	gw             *gateway.Server
 }
 
 func (d *gatewayDeps) cleanup() {
 	if d.rtr != nil {
 		d.rtr.Stop()
+	}
+	if d.sessionRuntime != nil {
+		d.sessionRuntime.Close()
+	}
+	if d.sched != nil {
+		d.sched.Stop()
 	}
 	if err := sandbox.CloseRuntime(); err != nil {
 		logger.Error("sandbox runtime close error", logger.BuildMetadata("error", err))
@@ -65,9 +73,8 @@ func runRuntime(mode, gatewayURL, identity string) error {
 		return runTelegram(ctx)
 	case "all":
 		return runAll(ctx)
-	default:
-		return fmt.Errorf("invalid mode %q: must be one of gateway, tui, telegram, or all", mode)
 	}
+	return nil
 }
 
 func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayDeps, error) {
@@ -127,28 +134,21 @@ func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayD
 	}, nil
 }
 
-func runGateway(ctx context.Context) error {
+func startGatewayStack(ctx context.Context, deps *gatewayDeps) (*gateway.Server, error) {
 	cfg := config.Must()
-	deps, err := initGateway("GATEWAY", []logger.TransportType{logger.TransportFile, logger.TransportStdout})
-	if err != nil {
-		return err
-	}
-	defer deps.cleanup()
 
-	logger.Info("starting valinor in gateway mode", nil)
+	sessionRuntime := session.NewRuntime(ctx, deps.sm)
+	sessionRuntime.Start()
+	deps.sessionRuntime = sessionRuntime
 
-	runtime := session.NewRuntime(ctx, deps.sm)
-	runtime.Start()
-	defer runtime.Close()
-
-	rtr := gateway.NewRouter(runtime, deps.sm)
+	rtr := gateway.NewRouter(sessionRuntime, deps.sm)
 	rtr.Start(ctx)
 	deps.rtr = rtr
 
 	if cfg.Scheduler.Enabled && deps.cronJobs != nil {
 		sched := scheduler.New(deps.cronJobs, deps.sm)
 		sched.Start(ctx)
-		defer sched.Stop()
+		deps.sched = sched
 		logger.Info("scheduler enabled", nil)
 	} else if cfg.Scheduler.Enabled && deps.cronJobs == nil {
 		logger.Warning("scheduler enabled but cron jobs store failed to initialize", nil)
@@ -163,6 +163,22 @@ func runGateway(ctx context.Context) error {
 	deps.gw = gw
 
 	logger.Info("gateway server starting", logger.BuildMetadata("url", cfg.GatewayWebSocketURL()))
+	return gw, nil
+}
+
+func runGateway(ctx context.Context) error {
+	deps, err := initGateway("GATEWAY", []logger.TransportType{logger.TransportFile, logger.TransportStdout})
+	if err != nil {
+		return err
+	}
+	defer deps.cleanup()
+
+	logger.Info("starting valinor in gateway mode", nil)
+
+	gw, err := startGatewayStack(ctx, deps)
+	if err != nil {
+		return err
+	}
 
 	if err := gw.Start(ctx); err != nil {
 		return fmt.Errorf("gateway server: %w", err)
@@ -282,32 +298,11 @@ func runAll(ctx context.Context) error {
 
 	logger.Info("starting valinor in all mode (gateway + telegram)", nil)
 
-	runtime := session.NewRuntime(ctx, deps.sm)
-	runtime.Start()
-	defer runtime.Close()
-
-	rtr := gateway.NewRouter(runtime, deps.sm)
-	rtr.Start(ctx)
-	deps.rtr = rtr
-
-	if cfg.Scheduler.Enabled && deps.cronJobs != nil {
-		sched := scheduler.New(deps.cronJobs, deps.sm)
-		sched.Start(ctx)
-		defer sched.Stop()
-		logger.Info("scheduler enabled", nil)
-	} else if cfg.Scheduler.Enabled && deps.cronJobs == nil {
-		logger.Warning("scheduler enabled but cron jobs store failed to initialize", nil)
+	gw, err := startGatewayStack(ctx, deps)
+	if err != nil {
+		deps.cleanup()
+		return err
 	}
-
-	gwCfg := gateway.Config{
-		Host: cfg.GatewayHost,
-		Port: cfg.GatewayPort,
-		Path: cfg.GatewayPath,
-	}
-	gw := gateway.NewServer(gwCfg, rtr)
-	deps.gw = gw
-
-	logger.Info("gateway server starting", logger.BuildMetadata("url", cfg.GatewayWebSocketURL()))
 
 	gwErrCh := make(chan error, 1)
 	go func() {
