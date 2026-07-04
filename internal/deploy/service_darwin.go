@@ -20,19 +20,6 @@ const (
 
 func platformName() string { return "launchd (darwin)" }
 
-func platformInstall(ctx context.Context, paths Paths) error {
-	if _, err := exec.LookPath("launchctl"); err != nil {
-		return fmt.Errorf("missing required command: launchctl")
-	}
-	if err := writeLaunchdPlists(paths); err != nil {
-		return err
-	}
-	if err := launchdBootstrap(ctx, paths, agentLabel); err != nil {
-		return err
-	}
-	return launchdBootstrap(ctx, paths, updateLabel)
-}
-
 func platformUninstall(ctx context.Context, paths Paths) error {
 	agentDir := filepath.Join(paths.Home, agentsDir)
 	for _, label := range []string{updateLabel, agentLabel} {
@@ -111,83 +98,6 @@ func platformLogs(ctx context.Context, paths Paths, opts LogOptions) error {
 		path = paths.DeployLog
 	}
 	return tailFile(path, opts)
-}
-
-func writeLaunchdPlists(paths Paths) error {
-	agentDir := filepath.Join(paths.Home, agentsDir)
-	if err := os.MkdirAll(agentDir, 0755); err != nil {
-		return fmt.Errorf("create LaunchAgents directory: %w", err)
-	}
-
-	return writeFiles(agentDir, map[string]string{
-		agentLabel + ".plist":  launchdAgentPlist(paths),
-		updateLabel + ".plist": launchdUpdatePlist(paths),
-	})
-}
-
-func launchdAgentPlist(paths Paths) string {
-	logDir := filepath.Dir(paths.AppLog)
-	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>com.valinor.agent</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>%s</string>
-		<string>run</string>
-		<string>--mode=%s</string>
-	</array>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<true/>
-	<key>StandardOutPath</key>
-	<string>%s</string>
-	<key>StandardErrorPath</key>
-	<string>%s</string>
-</dict>
-</plist>
-`, paths.Binary, DefaultMode, filepath.Join(logDir, "valinor.stdout.log"), filepath.Join(logDir, "valinor.stderr.log"))
-}
-
-func launchdUpdatePlist(paths Paths) string {
-	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>com.valinor.update</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>%s</string>
-		<string>update</string>
-	</array>
-	<key>StartInterval</key>
-	<integer>1800</integer>
-	<key>RunAtLoad</key>
-	<false/>
-</dict>
-</plist>
-`, paths.Binary)
-}
-
-func launchdBootstrap(ctx context.Context, paths Paths, label string) error {
-	plist := filepath.Join(paths.Home, agentsDir, label+".plist")
-	_ = launchdBootout(ctx, plist)
-
-	domain, err := guiDomain()
-	if err != nil {
-		return err
-	}
-	cmd := exec.CommandContext(ctx, "launchctl", "bootstrap", domain, plist)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("bootstrap %s: %w", label, err)
-	}
-	return nil
 }
 
 func launchdBootout(ctx context.Context, plist string) error {

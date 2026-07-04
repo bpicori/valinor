@@ -20,25 +20,6 @@ const (
 
 func platformName() string { return "systemd (linux)" }
 
-func platformInstall(ctx context.Context, paths Paths) error {
-	if _, err := exec.LookPath("systemctl"); err != nil {
-		return fmt.Errorf("missing required command: systemctl")
-	}
-	if err := writeSystemdUnits(paths); err != nil {
-		return err
-	}
-	if err := systemdRun(ctx, "daemon-reload"); err != nil {
-		return err
-	}
-	if err := systemdRun(ctx, "enable", "--now", serviceUnit); err != nil {
-		return err
-	}
-	if err := systemdRun(ctx, "enable", "--now", updateTimer); err != nil {
-		return err
-	}
-	return enableLinger(ctx)
-}
-
 func platformUninstall(ctx context.Context, paths Paths) error {
 	_ = systemdRun(ctx, "disable", "--now", updateTimer)
 	_ = systemdRun(ctx, "disable", "--now", serviceUnit)
@@ -114,85 +95,6 @@ func platformLogs(ctx context.Context, paths Paths, opts LogOptions) error {
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 	return cmd.Run()
-}
-
-func writeSystemdUnits(paths Paths) error {
-	unitDir := filepath.Join(paths.Home, systemdUserDir)
-	if err := os.MkdirAll(unitDir, 0755); err != nil {
-		return fmt.Errorf("create systemd user directory: %w", err)
-	}
-
-	return writeFiles(unitDir, map[string]string{
-		serviceUnit:   systemdMainUnit(paths),
-		updateService: systemdUpdateUnit(paths),
-		updateTimer:   systemdUpdateTimer(),
-	})
-}
-
-func systemdMainUnit(paths Paths) string {
-	return fmt.Sprintf(`[Unit]
-Description=Valinor gateway and Telegram bot
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=%s run --mode=%s
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-`, paths.Binary, DefaultMode)
-}
-
-func systemdUpdateUnit(paths Paths) string {
-	return fmt.Sprintf(`[Unit]
-Description=Check for Valinor release updates
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=%s update
-`, paths.Binary)
-}
-
-func systemdUpdateTimer() string {
-	return `[Unit]
-Description=Check for Valinor releases every 30 minutes
-
-[Timer]
-OnBootSec=5min
-OnUnitActiveSec=30min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-`
-}
-
-func enableLinger(ctx context.Context) error {
-	if _, err := exec.LookPath("loginctl"); err != nil {
-		return fmt.Errorf("missing required command: loginctl")
-	}
-	user := os.Getenv("USER")
-	if user == "" {
-		return fmt.Errorf("USER environment variable is empty")
-	}
-
-	out, err := exec.CommandContext(ctx, "loginctl", "show-user", user, "-p", "Linger", "--value").Output()
-	if err != nil {
-		return fmt.Errorf("check systemd linger: %w", err)
-	}
-	if strings.EqualFold(strings.TrimSpace(string(out)), "yes") {
-		return nil
-	}
-	if err := exec.CommandContext(ctx, "loginctl", "enable-linger", user).Run(); err != nil {
-		return fmt.Errorf("enable systemd linger: %w", err)
-	}
-	fmt.Printf("Enabled systemd linger for %s (service runs when logged out)\n", user)
-	return nil
 }
 
 func systemdUnitInstalled(paths Paths, name string) bool {

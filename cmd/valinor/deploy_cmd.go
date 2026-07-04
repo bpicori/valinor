@@ -14,15 +14,6 @@ var (
 	logsDeploy bool
 )
 
-var installCmd = &cobra.Command{
-	Use:    "install",
-	Hidden: true,
-	Short:  "Register the user service (called by scripts/install.sh)",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return deploy.Install(context.Background())
-	},
-}
-
 var updateCmd = &cobra.Command{
 	Use:   "update",
 	Short: "Download the latest release and restart the service",

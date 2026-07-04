@@ -19,7 +19,6 @@ func init() {
 	rootCmd.AddCommand(
 		runCmd,
 		initCmd,
-		installCmd,
 		updateCmd,
 		statusCmd,
 		logsCmd,

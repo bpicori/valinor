@@ -1,0 +1,13 @@
+[Unit]
+Description=Valinor gateway and Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@VALINOR_BINARY@ run --mode=@VALINOR_MODE@
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

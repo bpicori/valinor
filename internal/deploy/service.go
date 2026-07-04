@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 )
 
 // Status summarizes deployment state for operator commands.
@@ -22,36 +21,6 @@ type LogOptions struct {
 	Follow bool
 	Lines  int
 	Deploy bool
-}
-
-// Install registers the user service and auto-update timer.
-// The binary must already exist at ~/.local/bin/valinor (see scripts/install.sh).
-func Install(ctx context.Context) error {
-	paths, err := DefaultPaths()
-	if err != nil {
-		return err
-	}
-
-	if err := preflightInstall(paths); err != nil {
-		return err
-	}
-	if err := ensureDeployDirs(paths); err != nil {
-		return err
-	}
-
-	if err := platformInstall(ctx, paths); err != nil {
-		return err
-	}
-
-	fmt.Println("")
-	fmt.Println("Service install complete.")
-	fmt.Println("")
-	fmt.Println("Useful commands:")
-	fmt.Println("  valinor status")
-	fmt.Println("  valinor logs -f")
-	fmt.Println("  valinor update")
-	fmt.Println("  valinor version")
-	return nil
 }
 
 // PrintStatus writes deployment status to stdout.
@@ -157,48 +126,6 @@ func RunLogs(ctx context.Context, opts LogOptions) error {
 		return err
 	}
 	return platformLogs(ctx, paths, opts)
-}
-
-func preflightInstall(paths Paths) error {
-	if _, err := os.Stat(paths.Binary); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("binary not found at %s; run the install script first", paths.Binary)
-		}
-		return fmt.Errorf("stat binary: %w", err)
-	}
-	if _, err := os.Stat(paths.ConfigFile); err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("config not found at %s; run `valinor init` first", paths.ConfigFile)
-		}
-		return fmt.Errorf("stat config file: %w", err)
-	}
-	if _, err := exec.LookPath("podman"); err != nil {
-		return fmt.Errorf("missing required command: podman")
-	}
-	return nil
-}
-
-func ensureDeployDirs(paths Paths) error {
-	dirs := []string{
-		filepath.Dir(paths.Binary),
-		filepath.Dir(paths.AppLog),
-	}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return fmt.Errorf("create directory %s: %w", dir, err)
-		}
-	}
-	return nil
-}
-
-func writeFiles(dir string, files map[string]string) error {
-	for name, content := range files {
-		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-			return fmt.Errorf("write %s: %w", path, err)
-		}
-	}
-	return nil
 }
 
 func tailFile(path string, opts LogOptions) error {

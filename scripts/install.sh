@@ -10,9 +10,15 @@
 set -euo pipefail
 
 REPO="${VALINOR_INSTALL_REPO:-bpicori/valinor}"
+BRANCH="${VALINOR_INSTALL_BRANCH:-main}"
 BIN_DIR="${HOME}/.local/bin"
 VALINOR="${BIN_DIR}/valinor"
 CONFIG_FILE="${HOME}/.valinor/config.toml"
+LOG_DIR="${HOME}/.valinor/logs"
+RUN_MODE="${VALINOR_RUN_MODE:-all}"
+
+SYSTEMD_USER_DIR="${HOME}/.config/systemd/user"
+LAUNCH_AGENTS_DIR="${HOME}/Library/LaunchAgents"
 
 die() {
 	echo "ERROR: $*" >&2
@@ -21,6 +27,34 @@ die() {
 
 require_cmd() {
 	command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+scripts_base() {
+	if [[ "${BASH_SOURCE[0]}" == */install.sh ]]; then
+		cd "$(dirname "${BASH_SOURCE[0]}")" && pwd
+		return
+	fi
+	echo "https://raw.githubusercontent.com/${REPO}/${BRANCH}/scripts"
+}
+
+fetch_script_file() {
+	local rel="$1" dest="$2" base
+	base="$(scripts_base)"
+	if [[ "$base" == http* ]]; then
+		curl -fsSL "${base}/${rel}" -o "$dest"
+	else
+		cp "${base}/${rel}" "$dest"
+	fi
+}
+
+render_template() {
+	local src="$1" dest="$2"
+	sed \
+		-e "s|@VALINOR_BINARY@|${VALINOR}|g" \
+		-e "s|@VALINOR_MODE@|${RUN_MODE}|g" \
+		-e "s|@VALINOR_STDOUT_LOG@|${LOG_DIR}/valinor.stdout.log|g" \
+		-e "s|@VALINOR_STDERR_LOG@|${LOG_DIR}/valinor.stderr.log|g" \
+		"$src" >"$dest"
 }
 
 detect_platform() {
@@ -46,6 +80,7 @@ preflight() {
 	require_cmd python3
 	require_cmd tar
 	require_cmd podman
+	require_cmd sed
 
 	case "$PLATFORM_OS" in
 	linux)
@@ -146,9 +181,85 @@ ensure_config() {
 	"$VALINOR" init
 }
 
+enable_systemd_linger() {
+	local user linger
+	user="${USER:-}"
+	[[ -n "$user" ]] || die "USER environment variable is empty"
+
+	linger="$(loginctl show-user "$user" -p Linger --value 2>/dev/null || true)"
+	linger="$(printf '%s' "$linger" | tr '[:upper:]' '[:lower:]')"
+	if [[ "$linger" == "yes" ]]; then
+		return 0
+	fi
+
+	loginctl enable-linger "$user"
+	echo "==> Enabled systemd linger for ${user}"
+}
+
+install_systemd_service() {
+	local tmp unit
+	tmp="$(mktemp -d)"
+	trap 'rm -rf "${tmp}"' RETURN
+
+	mkdir -p "$SYSTEMD_USER_DIR" "$LOG_DIR"
+
+	for unit in valinor.service valinor-update.service valinor-update.timer; do
+		fetch_script_file "systemd/${unit}" "${tmp}/${unit}"
+		render_template "${tmp}/${unit}" "${SYSTEMD_USER_DIR}/${unit}"
+		chmod 0644 "${SYSTEMD_USER_DIR}/${unit}"
+	done
+
+	echo "==> Enabling systemd user service"
+	systemctl --user daemon-reload
+	systemctl --user enable --now valinor.service
+	systemctl --user enable --now valinor-update.timer
+	enable_systemd_linger
+}
+
+launchd_gui_domain() {
+	echo "gui/$(id -u)"
+}
+
+launchd_bootout() {
+	local plist="$1" domain
+	domain="$(launchd_gui_domain)"
+	launchctl bootout "$domain" "$plist" 2>/dev/null || true
+}
+
+launchd_bootstrap() {
+	local label="$1" plist="$2" domain
+	domain="$(launchd_gui_domain)"
+	launchd_bootout "$plist"
+	launchctl bootstrap "$domain" "$plist"
+}
+
+install_launchd_service() {
+	local tmp agent_plist update_plist
+	tmp="$(mktemp -d)"
+	trap 'rm -rf "${tmp}"' RETURN
+
+	mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
+
+	agent_plist="${LAUNCH_AGENTS_DIR}/com.valinor.agent.plist"
+	update_plist="${LAUNCH_AGENTS_DIR}/com.valinor.update.plist"
+
+	fetch_script_file "launchd/com.valinor.agent.plist" "${tmp}/com.valinor.agent.plist"
+	fetch_script_file "launchd/com.valinor.update.plist" "${tmp}/com.valinor.update.plist"
+	render_template "${tmp}/com.valinor.agent.plist" "$agent_plist"
+	render_template "${tmp}/com.valinor.update.plist" "$update_plist"
+	chmod 0644 "$agent_plist" "$update_plist"
+
+	echo "==> Enabling launchd agents"
+	launchd_bootstrap "com.valinor.agent" "$agent_plist"
+	launchd_bootstrap "com.valinor.update" "$update_plist"
+}
+
 install_service() {
 	echo "==> Registering service"
-	"$VALINOR" install
+	case "$PLATFORM_OS" in
+	linux) install_systemd_service ;;
+	darwin) install_launchd_service ;;
+	esac
 }
 
 main() {

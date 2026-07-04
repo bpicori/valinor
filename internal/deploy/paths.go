@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	DefaultRepo    = "bpicori/valinor"
-	DefaultMode    = "all"
-	BinaryName     = "valinor"
+	DefaultRepo = "bpicori/valinor"
+	BinaryName  = "valinor"
 	ServiceName    = "valinor"
 	UpdateInterval = "30 minutes"
 )
