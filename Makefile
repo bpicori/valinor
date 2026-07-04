@@ -13,27 +13,27 @@ build:
 # Run both gateway and tui (for local development, starts gateway in background then tui)
 run: build
 	@echo "Starting gateway in background..."
-	@./$(BINARY) -mode=gateway &
+	@./$(BINARY) run --mode=gateway &
 	@sleep 1
 	@echo "Starting TUI..."
-	@./$(BINARY) -mode=tui || true
+	@./$(BINARY) run --mode=tui || true
 	@echo "Stopping gateway..."
-	@pkill -f "$(BINARY) -mode=gateway" 2>/dev/null || true
+	@pkill -f "$(BINARY) run --mode=gateway" 2>/dev/null || true
 
 # Run only the gateway (session core + WebSocket server)
 run-gateway: build
-	./$(BINARY) -mode=gateway
+	./$(BINARY) run --mode=gateway
 
 # Run only the TUI (connects to existing gateway)
 run-tui: build
-	./$(BINARY) -mode=tui
+	./$(BINARY) run --mode=tui
 
 # Run TUI connecting to a specific gateway URL
 run-tui-remote: build
-	./$(BINARY) -mode=tui -gateway-url=ws://$(REMOTE_GATEWAY)/ws
+	./$(BINARY) run --mode=tui --gateway-url=ws://$(REMOTE_GATEWAY)/ws
 
 run-telegram: build
-	./$(BINARY) -mode=telegram
+	./$(BINARY) run --mode=telegram
 
 monitor-processes:
 	@while true; do \
@@ -45,7 +45,7 @@ monitor-processes:
 				found = 0; \
 				printf "%-8s %-8s %-8s %-10s %-12s %s\n", "PID", "PPID", "CPU%", "MEM(MB)", "ELAPSED", "COMMAND"; \
 			} \
-			/-mode=(gateway|tui|telegram)/ && /valinor/ { \
+			/run --mode=(gateway|tui|telegram|all)/ && /valinor/ { \
 				found = 1; \
 				printf "%-8s %-8s %-8s %-10.1f %-12s %s\n", $$1, $$2, $$3, $$4 / 1024, $$5, substr($$0, index($$0, $$6)); \
 			} \

@@ -10,7 +10,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/valinor",
-            "args": ["-mode=gateway"],
+            "args": ["run", "--mode=gateway"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -19,7 +19,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/valinor",
-            "args": ["-mode=tui", "-identity=debug"],
+            "args": ["run", "--mode=tui", "--identity=debug"],
             "cwd": "${workspaceFolder}"
         },
         {
@@ -28,7 +28,7 @@
             "request": "launch",
             "mode": "auto",
             "program": "${workspaceFolder}/cmd/valinor",
-            "args": ["-mode=telegram"],
+            "args": ["run", "--mode=telegram"],
             "cwd": "${workspaceFolder}"
         }
     ]

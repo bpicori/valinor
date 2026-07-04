@@ -247,7 +247,7 @@ Common `type` values:
 
 ## Quick Postman test flow
 
-1. Start gateway mode: `go run ./cmd/valinor -mode=gateway`
+1. Start gateway mode: `go run ./cmd/valinor run --mode=gateway`
 2. In Postman, open a new WebSocket request to `ws://127.0.0.1:7778/ws`.
 3. Send `client_hello`.
 4. Confirm you receive `hello_ack` (and usually `session_attached`).
