@@ -120,7 +120,7 @@ For deterministic checks (price thresholds, HTTP health, disk space):
 2. Script runs on the **host** (curl, jq, bash).
 3. On alert: print message to stdout (delivered to user).
 4. On success with nothing to report: exit 0 with no stdout.
-5. `cronjob action=add` with `no_agent=true`, `script=<name>.sh`, plus schedule.
+5. `cronjob action=add` with `no_agent=true`, `script=<name>.sh` (filename only, e.g. `btc-alert.sh`), plus schedule.
 
 ### Agent jobs (for tasks needing reasoning)
 

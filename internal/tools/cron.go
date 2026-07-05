@@ -3,11 +3,13 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"valinor/internal/config"
 	"valinor/internal/cron"
-
 	"valinor/internal/logger"
 )
 
@@ -71,7 +73,7 @@ func cronjobParams() map[string]any {
 			},
 			"script": map[string]any{
 				"type":        "string",
-				"description": "For add/edit: script filename in workspace scripts/ (e.g. btc-alert.sh). Write the script with write_file first. Required when no_agent=true.",
+				"description": "For add/edit: script filename only (e.g. btc-alert.sh), not scripts/btc-alert.sh. File must already exist in workspace scripts/. Required when no_agent=true.",
 			},
 			"context_from": map[string]any{
 				"type":        "string",
@@ -170,6 +172,13 @@ func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 	}
 
 	noAgent := p.NoAgent != nil && *p.NoAgent
+	script := p.Script
+	if noAgent {
+		if err := validateCronScript(script); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
+	}
+
 	job, err := cron.Must().Create(cron.CreateJobInput{
 		Name:               p.Name,
 		Message:            p.Message,
@@ -179,7 +188,7 @@ func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 		Skills:             p.Skills,
 		Workdir:            p.Workdir,
 		NoAgent:            noAgent,
-		Script:             p.Script,
+		Script:             script,
 		ContextFrom:        p.ContextFrom,
 	})
 	if err != nil {
@@ -237,6 +246,9 @@ func cronjobEdit(p cronjobArgs) (string, error) {
 		hasPatch = true
 	}
 	if p.Script != "" {
+		if err := validateCronScript(p.Script); err != nil {
+			return fmt.Sprintf("Error: %v", err), nil
+		}
 		patch.Script = &p.Script
 		hasPatch = true
 	}
@@ -391,6 +403,26 @@ func cronjobRun(p cronjobArgs) (string, error) {
 		return fmt.Sprintf("No job found with ID: %s", p.JobID), nil
 	}
 	return fmt.Sprintf("Scheduled immediate run for job '%s' (ID: %s)", job.Name, job.ID), nil
+}
+
+func validateCronScript(filename string) error {
+	filename = strings.TrimSpace(filename)
+	if filename == "" {
+		return fmt.Errorf("script is required when no_agent is true")
+	}
+	if strings.Contains(filename, "..") || strings.Contains(filename, "/") || strings.Contains(filename, "\\") || filepath.IsAbs(filename) {
+		return fmt.Errorf("script must be a filename only (e.g. btc-alert.sh), not a path")
+	}
+
+	paths := config.MustPaths()
+	scriptPath := filepath.Join(paths.ScriptsDir, filename)
+	if _, err := os.Stat(scriptPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("script not found in workspace scripts/: %s", filename)
+		}
+		return fmt.Errorf("check script %s: %w", filename, err)
+	}
+	return nil
 }
 
 func parseSchedule(p cronjobArgs) (cron.Schedule, error) {
