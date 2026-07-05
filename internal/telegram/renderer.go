@@ -69,6 +69,10 @@ func (r *Renderer) RenderEvent(ev gateway.Event) *RenderResult {
 		return r.renderModelChanged(ev.Payload)
 	case event.CronJobResult:
 		return r.renderCronJobResult(ev.Payload)
+	case event.ContextCompressed:
+		return r.renderContextCompressed(ev.Payload)
+	case event.ContextCompressionFailed:
+		return r.renderContextCompressionFailed(ev.Payload)
 	default:
 		// Events like AgentStepTokens, ContextTokens don't need messages
 		return nil
@@ -228,6 +232,45 @@ func (r *Renderer) renderModelChanged(payload interface{}) *RenderResult {
 	}
 
 	text := EscapeMarkdownf("🔄 *Switched to* %s / %s", p.Provider, p.Model)
+
+	return &RenderResult{
+		Text:      text,
+		ParseMode: "MarkdownV2",
+	}
+}
+
+// renderContextCompressed renders a context summarization notice.
+func (r *Renderer) renderContextCompressed(payload interface{}) *RenderResult {
+	p, ok := payload.(gateway.ContextCompressedPayload)
+	if !ok {
+		return nil
+	}
+
+	text := EscapeMarkdownf(
+		"📋 *Context summarized* \\(%d messages, %d → %d tokens\\)",
+		p.MessagesCompressed,
+		p.TokensBefore,
+		p.TokensAfter,
+	)
+
+	return &RenderResult{
+		Text:      text,
+		ParseMode: "MarkdownV2",
+	}
+}
+
+// renderContextCompressionFailed renders a context compression failure warning.
+func (r *Renderer) renderContextCompressionFailed(payload interface{}) *RenderResult {
+	p, ok := payload.(gateway.ContextCompressionFailedPayload)
+	if !ok {
+		return nil
+	}
+
+	text := EscapeMarkdownf(
+		"⚠️ *Context too large* \\(%d / %d tokens\\)\\. Summarization failed\\. Send /new to start a fresh conversation\\.",
+		p.EstimatedTokens,
+		p.ContextLimit,
+	)
 
 	return &RenderResult{
 		Text:      text,
