@@ -116,9 +116,14 @@ Holds stable session attributes, timestamps, and ownership:
 
 ### `messages.json`
 
-Stores full ordered conversation state used to resume:
+Stores ordered conversation state used to resume:
 - system prompt message first (normalized on resume)
 - user/assistant/tool messages after that
+- tool messages larger than 8KB store a preview in `content` and a `blob_ref` field pointing at externalized data
+
+### `blobs/`
+
+Large tool results are content-addressed under `<session_id>/blobs/<sha256>.txt`. On load, messages retain the preview and `blob_ref`; full content is hydrated from disk before each LLM run.
 
 Metadata is persisted in SQLite. Messages are written atomically by writing a temp file and renaming.
 
@@ -127,8 +132,9 @@ Metadata is persisted in SQLite. Messages are written atomically by writing a te
 - `Create(ctx, opts CreateSessionOptions)`: create fresh session (bound to client unless temporary)
 - `Resume(ctx, id, opts CreateSessionOptions)`: load persisted session and rebuild runtime objects (uses Bus and MaxAgentIterations)
 - `GetActiveSessionForClient(ctx, clientType, clientIdentity, opts CreateSessionOptions)`: get the active session for a client
-- `SetSessionActive(sessionID)`: mark a session as active (deactivates others for same client)
-- `List()`: list all sessions sorted by most recently updated
+- `SetSessionActive(ctx, sessionID)`: mark a session as active (deactivates others for same client)
+- `Delete(ctx, id)`: remove session directory and metadata
+- `ListAllMetadata(ctx)`: list all persisted sessions
 - `GetMetadata(ctx, id)`: fetch metadata only
 
 ## Startup behavior (gateway mode)
@@ -138,6 +144,17 @@ In gateway mode:
 - Each client gets their active session (resumed if exists, created if not)
 - Runtime ensures a worker exists for each session
 - Commands are dispatched to the appropriate session worker
+
+## Runtime worker lifecycle
+
+- `Runtime.RegisterSession` creates a worker for an active session
+- `Runtime.UnregisterSession` cancels in-flight runs, closes the session, and removes the worker (called when switching to a new session)
+
+## Context compression events
+
+When conversation context exceeds 85% of the 200K token window, the compressor summarizes older turns. Clients receive:
+- `context_compressed` — summarization succeeded
+- `context_compression_failed` — summarization failed; full history is sent fail-open
 
 ## Notes and constraints
 
