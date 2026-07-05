@@ -58,7 +58,9 @@ func (l *LLM) runGracefulFinalTurn(
 	})
 
 	if req.Compressor != nil {
-		messages, _ = req.Compressor.MaybeCompress(ctx, messages)
+		var compressionResult CompressionResult
+		messages, compressionResult = req.Compressor.MaybeCompress(ctx, messages)
+		publishCompressionResult(publishEvent, compressionResult)
 	}
 
 	result, err := l.provider.Stream(ctx, StreamParams{

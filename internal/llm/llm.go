@@ -78,7 +78,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		}
 
 		if req.Compressor != nil {
-			messages, _ = req.Compressor.MaybeCompress(ctx, messages)
+			var compressionResult CompressionResult
+			messages, compressionResult = req.Compressor.MaybeCompress(ctx, messages)
+			publishCompressionResult(publishEvent, compressionResult)
 		}
 
 		// Convert to provider-agnostic messages
