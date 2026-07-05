@@ -70,6 +70,15 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 	runData := s.agentContext.PrepareRun(message)
 	s.mu.Unlock()
 
+	runMessages := runData.Messages
+	if dirStore, ok := s.store.(interface{ SessionDir() string }); ok {
+		hydrated, err := HydrateMessages(dirStore.SessionDir(), runData.Messages)
+		if err != nil {
+			return llm.RunResult{}, fmt.Errorf("hydrate messages: %w", err)
+		}
+		runMessages = hydrated
+	}
+
 	providerCfg := config.Must().Providers[s.meta.Provider]
 	provider, err := factory.CreateProvider(providerCfg)
 	if err != nil {
@@ -81,7 +90,7 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 	agenttools.BindRunContext(runData.RunContext, s.meta.ID, requestID, opts.EmitEvents)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
-		Messages:   runData.Messages,
+		Messages:   runMessages,
 		Tools:      runData.Tools,
 		SessionID:  s.meta.ID,
 		RequestID:  requestID,
