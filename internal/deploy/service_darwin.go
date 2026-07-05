@@ -32,9 +32,8 @@ func platformUninstall(ctx context.Context, paths Paths) error {
 
 func platformStatus(ctx context.Context, paths Paths) (Status, error) {
 	status := Status{
-		Platform:    platformName(),
-		Service:     "not installed",
-		UpdateTimer: "not installed",
+		Platform: platformName(),
+		Service:  "not installed",
 	}
 
 	agentPlist := filepath.Join(paths.Home, agentsDir, agentLabel+".plist")
@@ -48,12 +47,6 @@ func platformStatus(ctx context.Context, paths Paths) (Status, error) {
 	}
 	status.Service = state
 	status.ServiceDetail = detail
-
-	updatePlist := filepath.Join(paths.Home, agentsDir, updateLabel+".plist")
-	if _, err := os.Stat(updatePlist); err == nil {
-		status.UpdateTimer = "enabled"
-		status.UpdateDetail = fmt.Sprintf("runs `valinor update` every %s", UpdateInterval)
-	}
 	return status, nil
 }
 
@@ -93,11 +86,7 @@ func platformRestartIfInstalled(ctx context.Context, paths Paths) error {
 }
 
 func platformLogs(ctx context.Context, paths Paths, opts LogOptions) error {
-	path := paths.AppLog
-	if opts.Deploy {
-		path = paths.DeployLog
-	}
-	return tailFile(path, opts)
+	return tailFile(paths.AppLog, opts)
 }
 
 func launchdBootout(ctx context.Context, plist string) error {

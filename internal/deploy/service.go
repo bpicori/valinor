@@ -12,15 +12,12 @@ type Status struct {
 	Platform      string
 	Service       string
 	ServiceDetail string
-	UpdateTimer   string
-	UpdateDetail  string
 }
 
 // LogOptions configures log streaming.
 type LogOptions struct {
 	Follow bool
 	Lines  int
-	Deploy bool
 }
 
 // PrintStatus writes deployment status to stdout.
@@ -69,11 +66,6 @@ func PrintStatus(ctx context.Context) error {
 	fmt.Printf("Binary:     %s\n", paths.Binary)
 	fmt.Printf("Config:     %s\n", paths.ConfigFile)
 	fmt.Printf("App log:    %s\n", paths.AppLog)
-	fmt.Printf("Deploy log: %s\n", paths.DeployLog)
-	fmt.Printf("Update:     %s\n", status.UpdateTimer)
-	if status.UpdateDetail != "" {
-		fmt.Printf("              %s\n", status.UpdateDetail)
-	}
 	return nil
 }
 
@@ -119,7 +111,7 @@ func RunUninstall(ctx context.Context) error {
 	return nil
 }
 
-// RunLogs streams deployment or service logs.
+// RunLogs streams service logs.
 func RunLogs(ctx context.Context, opts LogOptions) error {
 	paths, err := defaultPaths()
 	if err != nil {

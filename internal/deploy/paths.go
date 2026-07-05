@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"valinor/internal/config"
 	"valinor/internal/logger"
@@ -13,8 +12,7 @@ import (
 const (
 	DefaultRepo = "bpicori/valinor"
 	BinaryName  = "valinor"
-	ServiceName    = "valinor"
-	UpdateInterval = "30 minutes"
+	ServiceName = "valinor"
 )
 
 // Paths holds canonical deployment paths under the user home directory.
@@ -24,7 +22,6 @@ type Paths struct {
 	PrevBinary string
 	ConfigFile string
 	AppLog     string
-	DeployLog  string
 }
 
 func defaultPaths() (Paths, error) {
@@ -40,7 +37,6 @@ func defaultPaths() (Paths, error) {
 
 	binDir := filepath.Join(home, ".local", "bin")
 	valinorDir := filepath.Dir(configFile)
-	logDir := filepath.Join(valinorDir, logger.LogDirName)
 
 	return Paths{
 		Home:       home,
@@ -48,24 +44,5 @@ func defaultPaths() (Paths, error) {
 		PrevBinary: filepath.Join(binDir, BinaryName+".prev"),
 		ConfigFile: configFile,
 		AppLog:     logger.AppLogPath(valinorDir),
-		DeployLog:  filepath.Join(logDir, "deploy.log"),
 	}, nil
-}
-
-func appendDeployLog(path, message string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("create deploy log directory: %w", err)
-	}
-
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open deploy log: %w", err)
-	}
-	defer file.Close()
-
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	if _, err := fmt.Fprintf(file, "[%s] %s\n", timestamp, message); err != nil {
-		return fmt.Errorf("write deploy log: %w", err)
-	}
-	return nil
 }

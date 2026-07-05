@@ -33,9 +33,8 @@ func platformUninstall(ctx context.Context, paths Paths) error {
 
 func platformStatus(ctx context.Context, paths Paths) (Status, error) {
 	status := Status{
-		Platform:    platformName(),
-		Service:     "not installed",
-		UpdateTimer: "not installed",
+		Platform: platformName(),
+		Service:  "not installed",
 	}
 
 	if !systemdUnitInstalled(paths, serviceUnit) {
@@ -48,15 +47,6 @@ func platformStatus(ctx context.Context, paths Paths) (Status, error) {
 	}
 	status.Service = active
 	status.ServiceDetail = detail
-
-	if systemdUnitInstalled(paths, updateTimer) {
-		timerActive, timerDetail, err := systemdTimerState(ctx)
-		if err != nil {
-			return status, err
-		}
-		status.UpdateTimer = timerActive
-		status.UpdateDetail = timerDetail
-	}
 	return status, nil
 }
 
@@ -79,10 +69,6 @@ func platformRestartIfInstalled(ctx context.Context, paths Paths) error {
 }
 
 func platformLogs(ctx context.Context, paths Paths, opts LogOptions) error {
-	if opts.Deploy {
-		return tailFile(paths.DeployLog, opts)
-	}
-
 	args := []string{"--user", "-u", ServiceName}
 	if opts.Lines > 0 {
 		args = append(args, "-n", fmt.Sprintf("%d", opts.Lines))
@@ -112,22 +98,6 @@ func systemdUnitActiveState(ctx context.Context, unit string) (string, string, e
 		return "inactive", "", nil
 	}
 	return mapSystemdState(lines[0]), strings.Join(lines, " "), nil
-}
-
-func systemdTimerState(ctx context.Context) (string, string, error) {
-	out, err := exec.CommandContext(ctx, "systemctl", "--user", "list-timers", updateTimer, "--no-pager").Output()
-	if err != nil {
-		return "unknown", "", fmt.Errorf("read update timer state: %w", err)
-	}
-	text := strings.TrimSpace(string(out))
-	if !strings.Contains(text, updateTimer) {
-		return "not enabled", "", nil
-	}
-	lines := strings.Split(text, "\n")
-	if len(lines) < 2 {
-		return "enabled", text, nil
-	}
-	return "enabled", strings.TrimSpace(lines[len(lines)-1]), nil
 }
 
 func systemdIsActive(ctx context.Context, unit string) bool {

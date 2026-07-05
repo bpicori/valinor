@@ -196,23 +196,29 @@ enable_systemd_linger() {
 	echo "==> Enabled systemd linger for ${user}"
 }
 
+remove_legacy_systemd_update_units() {
+	for unit in valinor-update.service valinor-update.timer; do
+		systemctl --user disable --now "$unit" 2>/dev/null || true
+		rm -f "${SYSTEMD_USER_DIR}/${unit}"
+	done
+}
+
 install_systemd_service() {
 	local tmp unit
 	tmp="$(mktemp -d)"
 	trap "rm -rf '${tmp}'" RETURN
 
 	mkdir -p "$SYSTEMD_USER_DIR" "$LOG_DIR"
+	remove_legacy_systemd_update_units
 
-	for unit in valinor.service valinor-update.service valinor-update.timer; do
-		fetch_script_file "systemd/${unit}" "${tmp}/${unit}"
-		render_template "${tmp}/${unit}" "${SYSTEMD_USER_DIR}/${unit}"
-		chmod 0644 "${SYSTEMD_USER_DIR}/${unit}"
-	done
+	unit="valinor.service"
+	fetch_script_file "systemd/${unit}" "${tmp}/${unit}"
+	render_template "${tmp}/${unit}" "${SYSTEMD_USER_DIR}/${unit}"
+	chmod 0644 "${SYSTEMD_USER_DIR}/${unit}"
 
 	echo "==> Enabling systemd user service"
 	systemctl --user daemon-reload
 	systemctl --user enable --now valinor.service
-	systemctl --user enable --now valinor-update.timer
 	enable_systemd_linger
 }
 
@@ -234,24 +240,23 @@ launchd_bootstrap() {
 }
 
 install_launchd_service() {
-	local tmp agent_plist update_plist
+	local tmp agent_plist legacy_update_plist
 	tmp="$(mktemp -d)"
 	trap "rm -rf '${tmp}'" RETURN
 
 	mkdir -p "$LAUNCH_AGENTS_DIR" "$LOG_DIR"
 
 	agent_plist="${LAUNCH_AGENTS_DIR}/com.valinor.agent.plist"
-	update_plist="${LAUNCH_AGENTS_DIR}/com.valinor.update.plist"
+	legacy_update_plist="${LAUNCH_AGENTS_DIR}/com.valinor.update.plist"
+	launchd_bootout "$legacy_update_plist"
+	rm -f "$legacy_update_plist"
 
 	fetch_script_file "launchd/com.valinor.agent.plist" "${tmp}/com.valinor.agent.plist"
-	fetch_script_file "launchd/com.valinor.update.plist" "${tmp}/com.valinor.update.plist"
 	render_template "${tmp}/com.valinor.agent.plist" "$agent_plist"
-	render_template "${tmp}/com.valinor.update.plist" "$update_plist"
-	chmod 0644 "$agent_plist" "$update_plist"
+	chmod 0644 "$agent_plist"
 
-	echo "==> Enabling launchd agents"
+	echo "==> Enabling launchd agent"
 	launchd_bootstrap "com.valinor.agent" "$agent_plist"
-	launchd_bootstrap "com.valinor.update" "$update_plist"
 }
 
 install_service() {
@@ -274,9 +279,10 @@ main() {
 	install_service
 
 	echo ""
-	echo "Done. Valinor is running as a user service with auto-updates."
+	echo "Done. Valinor is running as a user service."
 	echo ""
 	echo "  valinor status"
+	echo "  valinor update"
 	echo "  valinor logs -f"
 }
 

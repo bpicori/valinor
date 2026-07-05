@@ -11,12 +11,11 @@ import (
 var (
 	logsFollow bool
 	logsLines  int
-	logsDeploy bool
 )
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Download the latest release and restart the service",
+	Short: "Manually download the latest release and restart the service",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return deploy.RunUpdate(context.Background())
 	},
@@ -32,12 +31,11 @@ var statusCmd = &cobra.Command{
 
 var logsCmd = &cobra.Command{
 	Use:   "logs",
-	Short: "Show service or deploy logs",
+	Short: "Show service logs",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return deploy.RunLogs(context.Background(), deploy.LogOptions{
 			Follow: logsFollow,
 			Lines:  logsLines,
-			Deploy: logsDeploy,
 		})
 	},
 }
@@ -69,5 +67,4 @@ var rollbackCmd = &cobra.Command{
 func init() {
 	logsCmd.Flags().BoolVarP(&logsFollow, "follow", "f", false, "Follow log output")
 	logsCmd.Flags().IntVarP(&logsLines, "lines", "n", 100, "Number of log lines to show")
-	logsCmd.Flags().BoolVar(&logsDeploy, "deploy", false, "Show deploy log instead of service logs")
 }

@@ -140,17 +140,11 @@ func updateRelease(ctx context.Context, paths Paths, restart bool) error {
 		return err
 	}
 	if current == latestTag {
-		msg := fmt.Sprintf("already up to date (%s)", latestTag)
-		_ = appendDeployLog(paths.DeployLog, msg)
-		fmt.Println(msg)
+		fmt.Printf("already up to date (%s)\n", latestTag)
 		return nil
 	}
 
-	msg := fmt.Sprintf("updating %s -> %s (%s)", displayVersion(current), latestTag, assetName)
-	if err := appendDeployLog(paths.DeployLog, msg); err != nil {
-		return err
-	}
-	fmt.Println(msg)
+	fmt.Printf("updating %s -> %s (%s)\n", displayVersion(current), latestTag, assetName)
 
 	tmpDir, err := os.MkdirTemp("", "valinor-update-*")
 	if err != nil {
@@ -160,13 +154,11 @@ func updateRelease(ctx context.Context, paths Paths, restart bool) error {
 
 	archivePath := filepath.Join(tmpDir, assetName)
 	if err := downloadReleaseAsset(ctx, DefaultRepo, assetID, assetName, archivePath); err != nil {
-		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
 		return err
 	}
 
 	newBinary, err := extractBinary(archivePath, tmpDir)
 	if err != nil {
-		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
 		return err
 	}
 
@@ -175,27 +167,19 @@ func updateRelease(ctx context.Context, paths Paths, restart bool) error {
 		return err
 	}
 	if newVersion != latestTag {
-		err := fmt.Errorf("downloaded binary version mismatch: expected %s, got %s", latestTag, displayVersion(newVersion))
-		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
-		return err
+		return fmt.Errorf("downloaded binary version mismatch: expected %s, got %s", latestTag, displayVersion(newVersion))
 	}
 
 	if err := installBinary(paths, newBinary); err != nil {
-		_ = appendDeployLog(paths.DeployLog, "ERROR: "+err.Error())
 		return err
 	}
 
-	installedMsg := fmt.Sprintf("installed %s to %s", latestTag, paths.Binary)
-	_ = appendDeployLog(paths.DeployLog, installedMsg)
-	fmt.Println(installedMsg)
+	fmt.Printf("installed %s to %s\n", latestTag, paths.Binary)
 
 	if restart {
 		if err := platformRestartIfInstalled(ctx, paths); err != nil {
-			warn := fmt.Sprintf("binary updated but service restart failed: %v", err)
-			_ = appendDeployLog(paths.DeployLog, warn)
-			return fmt.Errorf("%s", warn)
+			return fmt.Errorf("binary updated but service restart failed: %w", err)
 		}
-		_ = appendDeployLog(paths.DeployLog, "restarted service")
 	}
 
 	return nil
@@ -216,9 +200,7 @@ func rollbackRelease(ctx context.Context, paths Paths, restart bool) error {
 		return fmt.Errorf("chmod restored binary: %w", err)
 	}
 
-	msg := fmt.Sprintf("restored previous binary to %s", paths.Binary)
-	_ = appendDeployLog(paths.DeployLog, msg)
-	fmt.Println(msg)
+	fmt.Printf("restored previous binary to %s\n", paths.Binary)
 
 	if restart {
 		if err := platformRestartIfInstalled(ctx, paths); err != nil {
