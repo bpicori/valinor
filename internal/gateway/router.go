@@ -150,7 +150,7 @@ func (r *Router) SubscribeClient(ctx context.Context, identity ClientIdentity, c
 
 	if sess == nil {
 		// Deactivate any existing active session for this client before creating new one
-		if err := r.manager.DeactivateClientSessions(identity.Type, identity.Identity); err != nil {
+		if err := r.manager.DeactivateClientSessions(ctx, identity.Type, identity.Identity); err != nil {
 			logger.Warning("failed to deactivate existing sessions",
 				logger.BuildMetadata("client_type", identity.Type, "client_identity", identity.Identity, "error", err))
 		}
@@ -250,8 +250,18 @@ func (r *Router) HandleCommand(ctx context.Context, cmd Command) error {
 			return err
 		}
 
+		if newSessionID != sessionID {
+			if err := r.runtime.UnregisterSession(sessionID); err != nil {
+				logger.Warning("router: failed to unregister old session",
+					logger.BuildMetadata("error", err, "session_id", sessionID))
+			}
+			r.mu.Lock()
+			delete(r.sessionOwners, sessionID)
+			r.mu.Unlock()
+		}
+
 		// Mark the new session as active for this client
-		if err := r.manager.SetSessionActive(newSessionID); err != nil {
+		if err := r.manager.SetSessionActive(ctx, newSessionID); err != nil {
 			logger.Warning("router: failed to activate new session",
 				logger.BuildMetadata("error", err, "session_id", newSessionID))
 		}

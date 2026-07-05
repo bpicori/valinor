@@ -281,9 +281,8 @@ func (m *Manager) GetActiveSessionForClient(ctx context.Context, clientType, cli
 
 // SetSessionActive marks a session as active for its client, deactivating any other
 // active session for the same client.
-func (m *Manager) SetSessionActive(sessionID string) error {
-	// Load the target session to get its client info
-	meta, err := m.GetMetadata(context.Background(), sessionID)
+func (m *Manager) SetSessionActive(ctx context.Context, sessionID string) error {
+	meta, err := m.GetMetadata(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("get session metadata: %w", err)
 	}
@@ -291,7 +290,7 @@ func (m *Manager) SetSessionActive(sessionID string) error {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	if err := m.metadataStore.SetSessionActive(context.Background(), sessionID); err != nil {
+	if err := m.metadataStore.SetSessionActive(ctx, sessionID); err != nil {
 		return fmt.Errorf("set session active: %w", err)
 	}
 
@@ -303,12 +302,12 @@ func (m *Manager) SetSessionActive(sessionID string) error {
 // DeactivateClientSessions deactivates all active sessions for a given client.
 // This should be called by the caller before creating a new non-temporary session
 // to ensure proper hand-off behavior (only one active session per client).
-func (m *Manager) DeactivateClientSessions(clientType, clientIdentity string) error {
+func (m *Manager) DeactivateClientSessions(ctx context.Context, clientType, clientIdentity string) error {
 	if clientType == "" || clientIdentity == "" {
 		return nil // Nothing to deactivate
 	}
 
-	if err := m.metadataStore.DeactivateClientSessions(context.Background(), clientType, clientIdentity); err != nil {
+	if err := m.metadataStore.DeactivateClientSessions(ctx, clientType, clientIdentity); err != nil {
 		return fmt.Errorf("deactivate client sessions: %w", err)
 	}
 
