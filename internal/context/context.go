@@ -58,6 +58,7 @@ type Message struct {
 	Content    string      `json:"content,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	BlobRef    string      `json:"blob_ref,omitempty"`
 }
 
 // CloneMessages returns a shallow copy of a message slice.
