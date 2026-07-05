@@ -107,6 +107,20 @@ type ContextTokensPayload struct {
 	Estimated    bool  `json:"estimated"`
 }
 
+// ContextCompressedPayload reports successful context summarization.
+type ContextCompressedPayload struct {
+	MessagesCompressed int   `json:"messages_compressed"`
+	TokensBefore       int64 `json:"tokens_before"`
+	TokensAfter        int64 `json:"tokens_after"`
+}
+
+// ContextCompressionFailedPayload reports a failed context summarization attempt.
+type ContextCompressionFailedPayload struct {
+	EstimatedTokens int64  `json:"estimated_tokens"`
+	ContextLimit    int64  `json:"context_limit"`
+	Error           string `json:"error"`
+}
+
 // AgentErrorPayload carries an error from the agent.
 type AgentErrorPayload struct {
 	Error error `json:"-"` // Error is not JSON serializable, use custom marshaling.

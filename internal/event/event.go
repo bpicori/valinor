@@ -28,7 +28,9 @@ const (
 	AgentImage           EventType = "agent_image"            // Generated image delivered to the client.
 	AgentThinking        EventType = "agent_thinking"         // Reasoning/thinking step.
 	AgentStepTokens      EventType = "agent_step_tokens"      // Per-step token usage.
-	ContextTokens        EventType = "context_tokens"         // Current context token estimate.
+	ContextTokens            EventType = "context_tokens"             // Current context token estimate.
+	ContextCompressed        EventType = "context_compressed"         // Middle context summarized.
+	ContextCompressionFailed EventType = "context_compression_failed" // Context summarization failed.
 
 	AgentRefusal         EventType = "agent_refusal"          // Model refusal.
 	AgentToolCallStart   EventType = "agent_tool_call_start"  // Tool call initiated.
@@ -72,7 +74,9 @@ var registry = map[EventType]PayloadFactory{
 	AgentImage:           func() any { return &ImagePayload{} },
 	AgentThinking:        func() any { return &ThinkingPayload{} },
 	AgentStepTokens:      func() any { return &StepTokenUsagePayload{} },
-	ContextTokens:        func() any { return &ContextTokensPayload{} },
+	ContextTokens:            func() any { return &ContextTokensPayload{} },
+	ContextCompressed:        func() any { return &ContextCompressedPayload{} },
+	ContextCompressionFailed: func() any { return &ContextCompressionFailedPayload{} },
 
 	AgentRefusal:         func() any { return &RefusalPayload{} },
 	AgentToolCallStart:   func() any { return &ToolCallStartPayload{} },
@@ -148,6 +152,10 @@ func deref(v any) any {
 	case *StepTokenUsagePayload:
 		return *ptr
 	case *ContextTokensPayload:
+		return *ptr
+	case *ContextCompressedPayload:
+		return *ptr
+	case *ContextCompressionFailedPayload:
 		return *ptr
 	case *AgentErrorPayload:
 		return *ptr
