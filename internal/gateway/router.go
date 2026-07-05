@@ -69,6 +69,8 @@ func (r *Router) Start(ctx context.Context) {
 		event.AgentThinking,
 		event.AgentStepTokens,
 		event.ContextTokens,
+		event.ContextCompressed,
+		event.ContextCompressionFailed,
 
 		event.AgentRefusal,
 		event.AgentToolCallStart,

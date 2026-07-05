@@ -64,7 +64,9 @@ const (
 	EventAgentImage           = string(event.AgentImage)
 	EventAgentThinking        = string(event.AgentThinking)
 	EventAgentStepTokens      = string(event.AgentStepTokens)
-	EventContextTokens        = string(event.ContextTokens)
+	EventContextTokens            = string(event.ContextTokens)
+	EventContextCompressed        = string(event.ContextCompressed)
+	EventContextCompressionFailed = string(event.ContextCompressionFailed)
 
 	EventAgentRefusal         = string(event.AgentRefusal)
 	EventAgentToolCallStart   = string(event.AgentToolCallStart)
@@ -119,7 +121,9 @@ type (
 	ImagePayload                = event.ImagePayload
 	ThinkingPayload             = event.ThinkingPayload
 	StepTokenUsagePayload       = event.StepTokenUsagePayload
-	ContextTokensPayload        = event.ContextTokensPayload
+	ContextTokensPayload            = event.ContextTokensPayload
+	ContextCompressedPayload        = event.ContextCompressedPayload
+	ContextCompressionFailedPayload = event.ContextCompressionFailedPayload
 
 	RefusalPayload              = event.RefusalPayload
 	ToolCallStartPayload        = event.ToolCallStartPayload
