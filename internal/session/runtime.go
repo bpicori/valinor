@@ -264,6 +264,26 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model, clientT
 	return newSession.Meta().ID, newSession, nil
 }
 
+// UnregisterSession removes a session worker from the runtime and releases its resources.
+func (r *Runtime) UnregisterSession(sessionID string) error {
+	r.mu.Lock()
+	worker, ok := r.workers[sessionID]
+	if !ok {
+		r.mu.Unlock()
+		return nil
+	}
+	delete(r.workers, sessionID)
+	r.mu.Unlock()
+
+	worker.close()
+	if err := worker.session.Close(); err != nil {
+		return fmt.Errorf("close session %s: %w", sessionID, err)
+	}
+
+	logger.Debug("session unregistered", logger.BuildMetadata("session_id", sessionID))
+	return nil
+}
+
 // CancelSessionRun cancels any in-progress run for a specific session.
 func (r *Runtime) CancelSessionRun(sessionID string) error {
 	worker, err := r.getWorker(sessionID)
