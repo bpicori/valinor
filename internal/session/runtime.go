@@ -235,7 +235,7 @@ func (r *Runtime) HandleCreateSessionRequest(sessionID, provider, model, clientT
 	}
 
 	// Deactivate any existing active session for this client before creating new one
-	if err := r.manager.DeactivateClientSessions(clientType, clientIdentity); err != nil {
+	if err := r.manager.DeactivateClientSessions(r.ctx, clientType, clientIdentity); err != nil {
 		logger.Warning("failed to deactivate existing sessions",
 			logger.BuildMetadata("client_type", clientType, "client_identity", clientIdentity, "error", err))
 	}
