@@ -23,6 +23,11 @@ type FileStore struct {
 	closed       bool
 }
 
+// SessionDir returns the absolute path to this session's storage directory.
+func (s *FileStore) SessionDir() string {
+	return s.dir
+}
+
 // NewFileStore opens or creates a session directory and returns a Store.
 // The directory must already exist. Call Close when done.
 func NewFileStore(dir string, metadataRepo MetadataRepository) (*FileStore, error) {
@@ -46,7 +51,13 @@ func (s *FileStore) SaveMessages(ctx context.Context, messages []agentcontext.Me
 	default:
 	}
 
-	data, err := json.MarshalIndent(messages, "", "  ")
+	persistMessages, err := externalizeMessages(s.dir, messages)
+	if err != nil {
+		logger.Error("store save messages externalize error", logger.BuildMetadata("dir", s.dir, "error", err))
+		return fmt.Errorf("externalize messages: %w", err)
+	}
+
+	data, err := json.MarshalIndent(persistMessages, "", "  ")
 	if err != nil {
 		logger.Error("store save messages marshal error", logger.BuildMetadata("dir", s.dir, "error", err))
 		return fmt.Errorf("marshal messages: %w", err)
