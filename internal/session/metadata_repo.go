@@ -22,6 +22,7 @@ type MetadataRepository interface {
 	GetActiveForClient(ctx context.Context, clientType, clientIdentity string) (*Metadata, error)
 	DeactivateClientSessions(ctx context.Context, clientType, clientIdentity string) error
 	SetSessionActive(ctx context.Context, sessionID string) error
+	Delete(ctx context.Context, id string) error
 }
 
 // SQLiteMetadataRepository stores metadata in a SQLite database.
@@ -275,6 +276,22 @@ func (r *SQLiteMetadataRepository) SetSessionActive(ctx context.Context, session
 		return fmt.Errorf("commit set active tx: %w", err)
 	}
 
+	return nil
+}
+
+// Delete removes session metadata by id.
+func (r *SQLiteMetadataRepository) Delete(ctx context.Context, id string) error {
+	result, err := r.db.ExecContext(ctx, "DELETE FROM sessions WHERE id = ?;", id)
+	if err != nil {
+		return fmt.Errorf("delete session metadata: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("delete session metadata rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("session %s not found", id)
+	}
 	return nil
 }
 
