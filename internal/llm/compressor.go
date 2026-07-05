@@ -25,6 +25,20 @@ Write in third person, past tense. Be concise but complete.
 Max 2000 tokens.`
 )
 
+// CompressionResult reports the outcome of a MaybeCompress call.
+type CompressionResult struct {
+	Applied            bool
+	MessagesCompressed int
+	TokensBefore       int64
+	TokensAfter        int64
+	Err                error
+}
+
+// ContextLimit returns the token threshold at which compression triggers.
+func ContextLimit() int64 {
+	return int64(float64(maxContextWindow) * compressionThreshold)
+}
+
 // Compressor summarizes older conversation turns to stay within model context limits.
 type Compressor struct {
 	provider Provider
@@ -38,29 +52,34 @@ func NewCompressor(provider Provider, model string) *Compressor {
 
 // MaybeCompress replaces the middle of the conversation with a summary when over threshold.
 // Fail-open: returns the original messages on error or when there is nothing to compress.
-func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.Message) []agentcontext.Message {
-	limit := int64(float64(maxContextWindow) * compressionThreshold)
-	if EstimatePromptTokens(messages) <= limit {
-		return messages
+func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.Message) ([]agentcontext.Message, CompressionResult) {
+	limit := ContextLimit()
+	tokensBefore := EstimatePromptTokens(messages)
+	if tokensBefore <= limit {
+		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore}
 	}
 
 	const headEnd = 1 // keep system prompt
 	tailStart := len(messages) - config.Must().Context.PreserveRecentMessages
 	if tailStart < headEnd {
-		return messages
+		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore}
 	}
 	for tailStart > headEnd && messages[tailStart].Role == agentcontext.RoleTool {
 		tailStart--
 	}
 	if tailStart <= headEnd {
-		return messages
+		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore}
 	}
 
 	middle := messages[headEnd:tailStart]
 	summary, err := c.summarize(ctx, middle)
 	if err != nil {
 		logger.Warning("context compression failed", logger.BuildMetadata("error", err))
-		return messages
+		return messages, CompressionResult{
+			TokensBefore: tokensBefore,
+			TokensAfter:  tokensBefore,
+			Err:          err,
+		}
 	}
 
 	out := make([]agentcontext.Message, 0, headEnd+1+len(messages)-tailStart)
@@ -70,7 +89,13 @@ func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.
 		Content: fmt.Sprintf("[Context Summary — %d messages compressed]\n%s", len(middle), summary),
 	})
 	out = append(out, messages[tailStart:]...)
-	return out
+	tokensAfter := EstimatePromptTokens(out)
+	return out, CompressionResult{
+		Applied:            true,
+		MessagesCompressed: len(middle),
+		TokensBefore:       tokensBefore,
+		TokensAfter:        tokensAfter,
+	}
 }
 
 func (c *Compressor) summarize(ctx context.Context, messages []agentcontext.Message) (string, error) {
