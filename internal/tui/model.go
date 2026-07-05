@@ -590,6 +590,28 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		m.contextPrompt = payload.PromptTokens
 		m.contextEstimated = payload.Estimated
 		return m, nil
+	case event.EventType(gateway.EventContextCompressed):
+		payload, ok := ev.Payload.(gateway.ContextCompressedPayload)
+		if !ok {
+			return m, nil
+		}
+		logger.Info("tui context compressed", logger.BuildMetadata(
+			"messages_compressed", payload.MessagesCompressed,
+			"tokens_before", payload.TokensBefore,
+			"tokens_after", payload.TokensAfter,
+		))
+		return m, nil
+	case event.EventType(gateway.EventContextCompressionFailed):
+		payload, ok := ev.Payload.(gateway.ContextCompressionFailedPayload)
+		if !ok {
+			return m, nil
+		}
+		logger.Warning("tui context compression failed", logger.BuildMetadata(
+			"estimated_tokens", payload.EstimatedTokens,
+			"context_limit", payload.ContextLimit,
+			"error", payload.Error,
+		))
+		return m, nil
 	case event.CronJobResult:
 		payload, ok := ev.Payload.(event.CronJobResultPayload)
 		if !ok {
