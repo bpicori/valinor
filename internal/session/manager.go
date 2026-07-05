@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"time"
@@ -223,6 +224,28 @@ func (m *Manager) Resume(ctx context.Context, id string, opts CreateSessionOptio
 	}
 	logger.Info("session resume success", logger.BuildMetadata("session_id", id, "message_count", len(agentCtx.Messages())))
 	return sess, nil
+}
+
+// Delete removes a session's on-disk data and metadata record.
+func (m *Manager) Delete(ctx context.Context, id string) error {
+	meta, err := m.metadataStore.GetByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("get metadata: %w", err)
+	}
+	if meta == nil {
+		return fmt.Errorf("session %s not found", id)
+	}
+
+	dir := filepath.Join(m.sessionDir, id)
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("remove session dir: %w", err)
+	}
+	if err := m.metadataStore.Delete(ctx, id); err != nil {
+		return fmt.Errorf("delete metadata: %w", err)
+	}
+
+	logger.Info("session delete success", logger.BuildMetadata("session_id", id))
+	return nil
 }
 
 // GetMetadata returns metadata for a session by ID.
