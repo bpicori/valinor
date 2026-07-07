@@ -119,6 +119,11 @@ type ProviderConfig struct {
 	TranscriptionEnabled bool `toml:"transcription_enabled"`
 	// TranscriptionModel is the STT model slug (e.g. openai/whisper-1 on OpenRouter).
 	TranscriptionModel string `toml:"transcription_model"`
+
+	// ImageGenerationEnabled enables the generate_image tool for sessions using this provider.
+	ImageGenerationEnabled bool `toml:"image_generation_enabled"`
+	// ImageModel is the image model slug (e.g. openai/gpt-image-1 on OpenRouter).
+	ImageModel string `toml:"image_model"`
 }
 
 // TranscriptionProvider returns the provider configured for voice transcription.

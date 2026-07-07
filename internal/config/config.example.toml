@@ -22,7 +22,7 @@ type = "gemini"
 api_key = "..."
 default_model = "gemini-2.0-flash"
 
-# OpenRouter example with voice transcription for Telegram:
+# OpenRouter example with voice transcription and image generation for Telegram:
 # [providers.openrouter]
 # type = "openai-compatible"
 # api_key = "sk-or-..."
@@ -30,6 +30,8 @@ default_model = "gemini-2.0-flash"
 # default_model = "deepseek/deepseek-v4-pro"
 # transcription_enabled = true
 # transcription_model = "openai/whisper-1"
+# image_generation_enabled = true
+# image_model = "openai/gpt-image-1"
 
 # Gateway (enabled by default; TUI and Telegram connect here)
 gateway_host = "127.0.0.1"

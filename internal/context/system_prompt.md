@@ -133,7 +133,8 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 
 ## Client Tools
 
-- **send_image** — Send an existing workspace image to the current client (e.g. Telegram). Image bytes are not added to conversation history.
+- **generate_image** — Generate an image from a prompt. Saves to workspace. Set `send=true` (default) to deliver to the current client (e.g. Telegram); `send=false` to save only.
+- **send_image** — Send an existing workspace image to the current client (e.g. Telegram). Use for charts, downloads, or re-sending saved images. Image bytes are not added to conversation history.
 
 ## Task Management
 
