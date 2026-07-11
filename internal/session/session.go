@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +69,19 @@ func (s *Session) RunInteraction(ctx context.Context, requestID string, message 
 func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID string, message string, opts RunInteractionOptions) (llm.RunResult, error) {
 	s.mu.Lock()
 	runData := s.agentContext.PrepareRun(message)
+
+	// Auto-promote a descriptive title from the first real user message if we still have
+	// the boring default "Session/Temporary xxxxxxxx" title. This makes long-lived
+	// Telegram (and other) sessions much more usable without extra user work.
+	if isDefaultTitle(s.meta.Title) && len(s.agentContext.Messages()) <= 2 {
+		if candidate := deriveTitle(message); candidate != "" && candidate != s.meta.Title {
+			s.meta.Title = candidate
+			s.meta.UpdatedAt = time.Now()
+			// Persist title outside the hot path; ignore error (non-fatal for the turn)
+			_ = s.store.SaveMetadata(ctx, s.meta)
+			logger.Info("session auto-titled", logger.BuildMetadata("session_id", s.meta.ID, "title", candidate))
+		}
+	}
 	s.mu.Unlock()
 
 	runMessages := runData.Messages
@@ -173,6 +187,66 @@ func (s *Session) SetModel(ctx context.Context, model string) error {
 	}
 	logger.Info("session model switched", logger.BuildMetadata("session_id", s.meta.ID, "model", model))
 	return nil
+}
+
+// SetTitle sets a human-readable title for the session and persists it.
+// Titles improve resume UX and client listings (e.g. Telegram /status).
+func (s *Session) SetTitle(ctx context.Context, title string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return fmt.Errorf("title must not be empty")
+	}
+	if s.meta.Title == title {
+		return nil
+	}
+
+	s.meta.Title = title
+	s.meta.UpdatedAt = time.Now()
+	if err := s.store.SaveMetadata(ctx, s.meta); err != nil {
+		return fmt.Errorf("save metadata: %w", err)
+	}
+	logger.Info("session title updated", logger.BuildMetadata("session_id", s.meta.ID, "title", title))
+	return nil
+}
+
+// isDefaultTitle reports whether the title is still one of the generated placeholders.
+func isDefaultTitle(t string) bool {
+	return strings.HasPrefix(t, "Session ") || strings.HasPrefix(t, "Temporary ")
+}
+
+// deriveTitle produces a short, human-friendly title from a user message.
+// It takes the first line/sentence and truncates sensibly.
+func deriveTitle(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return ""
+	}
+	// Cut at first line break or sentence end within reasonable length.
+	cut := -1
+	for _, sep := range []string{"\n", ".", "!", "?"} {
+		if i := strings.Index(msg, sep); i > 0 && (cut == -1 || i < cut) {
+			cut = i
+		}
+	}
+	if cut > 0 && cut < 70 {
+		msg = msg[:cut]
+	}
+	if len(msg) > 60 {
+		msg = strings.TrimSpace(msg[:57]) + "..."
+	}
+	// Collapse internal whitespace
+	msg = strings.Join(strings.Fields(msg), " ")
+	if msg == "" {
+		return ""
+	}
+	// Title case first word for niceness (very light touch)
+	if len(msg) > 1 {
+		msg = strings.ToUpper(msg[:1]) + msg[1:]
+	}
+	return msg
 }
 
 // Close releases resources. Call when the session is no longer needed.

@@ -198,7 +198,7 @@ func LoadSkillBodies(workspaceDir string, skillNames []string) (string, error) {
 }
 
 // LoadMemory reads MEMORY.md from the workspace for injection into the system prompt.
-// Daily logs are not included; use memory_search to query older daily entries.
+// Daily logs live in memory/daily/ and are not auto-included here.
 // Missing files are silently ignored (empty string returned).
 func LoadMemory(workspaceDir string) (string, error) {
 	mainPath := filepath.Join(workspaceDir, MemoryFile)
@@ -274,9 +274,9 @@ func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory str
 	}
 
 	sb.WriteString("\n## LoadedMemory\n")
-	sb.WriteString("MEMORY.md snapshot from session start (updates via memory_update take effect on the next session). Use memory_search for daily logs.\n\n")
+	sb.WriteString("Current content of MEMORY.md at the start of this session. Edit it directly with read_file + edit_file / write_file whenever you learn durable facts.\n\n")
 	if strings.TrimSpace(memory) == "" {
-		sb.WriteString("MEMORY.md is empty. Use memory_update to add durable sections.\n")
+		sb.WriteString("MEMORY.md is empty. Use edit_file or write_file to add clear ## sections with important facts.\n")
 	} else {
 		sb.WriteString(memory)
 		sb.WriteString("\n")
@@ -292,6 +292,45 @@ func currentDateContext() string {
 		now.Format("Monday, January 2, 2006"),
 		now.Format("2006-01-02"),
 	)
+}
+
+// InjectFreshCurrentDate replaces the "## Current Date" section (if present) with a fresh one
+// based on the current wall clock. This keeps long-lived sessions from having stale "today"
+// values baked into their persisted system prompt. It is intentionally tolerant of the exact
+// previous date text.
+func InjectFreshCurrentDate(prompt string) string {
+	fresh := currentDateContext()
+
+	// Find the start of the current date block.
+	startMarker := "## Current Date"
+	start := strings.Index(prompt, startMarker)
+	if start == -1 {
+		// No existing block — append at the top level after the initial prose (best effort).
+		trimmed := strings.TrimRight(prompt, "\n")
+		return trimmed + "\n\n" + fresh + "\n"
+	}
+
+	// Find the end: next top-level "## " header or end of string.
+	end := len(prompt)
+	searchFrom := start + len(startMarker)
+	if idx := strings.Index(prompt[searchFrom:], "\n## "); idx != -1 {
+		end = searchFrom + idx
+	}
+
+	before := prompt[:start]
+	after := ""
+	if end < len(prompt) {
+		after = prompt[end:]
+	}
+
+	// Ensure nice spacing.
+	before = strings.TrimRight(before, "\n")
+	after = strings.TrimLeft(after, "\n")
+	if after != "" && !strings.HasPrefix(after, "\n") {
+		after = "\n" + after
+	}
+
+	return before + fresh + "\n" + after
 }
 
 func parseSkillHeader(contents string) (name, description string, ok bool) {

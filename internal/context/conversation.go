@@ -114,7 +114,12 @@ type RunData struct {
 }
 
 // PrepareRun appends the user message and returns a snapshot of messages and tools for the LLM.
+// It also refreshes the dynamic "## Current Date" section in the leading system prompt so that
+// long-lived sessions (e.g. Telegram) always see an up-to-date calendar day.
 func (c *Context) PrepareRun(userMessage string) RunData {
+	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
+		c.messages[0].Content = InjectFreshCurrentDate(c.messages[0].Content)
+	}
 	c.messages = append(c.messages, Message{Role: RoleUser, Content: userMessage})
 	return RunData{
 		Messages:   CloneMessages(c.messages),

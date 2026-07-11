@@ -141,13 +141,6 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			})
 			logger.Debug("llm iteration done", logger.BuildMetadata("iteration", iterations, "usage", usage))
 
-			if shouldRunMemoryPass(toolsUsedThisRun) {
-				memoryUsage := l.runSilentMemoryPass(ctx, req, messages)
-				usage.PromptTokens += memoryUsage.PromptTokens
-				usage.CompletionTokens += memoryUsage.CompletionTokens
-				usage.TotalTokens += memoryUsage.TotalTokens
-			}
-
 			return RunResult{Messages: messages, Usage: usage}, nil
 		}
 
