@@ -16,8 +16,8 @@ const workspaceSkillsDir = "skills"
 //go:embed all:*
 var bundled embed.FS
 
-// EnsureRequiredSkills writes embedded required skills into workspaceDir/skills/ when missing.
-// Existing workspace skills are never overwritten.
+// EnsureRequiredSkills writes embedded required skills into workspaceDir/skills/.
+// Files are always written so package updates refresh required skills on startup.
 func EnsureRequiredSkills(workspaceDir string) error {
 	workspaceDir = strings.TrimSpace(workspaceDir)
 	if workspaceDir == "" {
@@ -25,7 +25,7 @@ func EnsureRequiredSkills(workspaceDir string) error {
 	}
 
 	destRoot := filepath.Join(workspaceDir, workspaceSkillsDir)
-	created := 0
+	written := 0
 
 	err := fs.WalkDir(bundled, ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -41,12 +41,6 @@ func EnsureRequiredSkills(workspaceDir string) error {
 		}
 
 		target := filepath.Join(destRoot, filepath.FromSlash(path))
-		if _, err := os.Stat(target); err == nil {
-			return nil
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("stat workspace skill %q: %w", target, err)
-		}
-
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return fmt.Errorf("create skill parent dir %q: %w", filepath.Dir(target), err)
 		}
@@ -54,20 +48,15 @@ func EnsureRequiredSkills(workspaceDir string) error {
 			return fmt.Errorf("write workspace skill %q: %w", target, err)
 		}
 
+		written++
 		rel := filepath.ToSlash(filepath.Join(workspaceSkillsDir, path))
-		created++
-		logger.Info("required skill created", logger.BuildMetadata("path", rel))
+		logger.Debug("required skill written", logger.BuildMetadata("path", rel))
 		return nil
 	})
 	if err != nil {
 		return err
 	}
 
-	if created > 0 {
-		logger.Info("required skills ensured", logger.BuildMetadata("created_count", created, "workspace", workspaceDir))
-	} else {
-		logger.Debug("required skills already present", logger.BuildMetadata("workspace", workspaceDir))
-	}
-
+	logger.Info("required skills ensured", logger.BuildMetadata("written_count", written, "workspace", workspaceDir))
 	return nil
 }
