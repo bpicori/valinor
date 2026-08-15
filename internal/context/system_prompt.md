@@ -108,7 +108,6 @@ Missing a skill's pitfalls costs more than reading it.
 After solving a non-obvious workflow, offer to save it as skills/<name>/SKILL.md.
 
 - For live external facts, read **web-research** before calling `web_search`.
-- For interactive drawings, diagrams, or visual demos, read **canvas** first.
 - Check workspace files and MEMORY.md before searching the web.
 
 ## Python Environment
