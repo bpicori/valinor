@@ -12,17 +12,13 @@ import (
 	"time"
 
 	"valinor/internal/buildinfo"
-	"valinor/internal/config"
 	"valinor/internal/logger"
 )
 
 const (
 	fsToolTimeout           = 30 * time.Second
 	defaultMaxConcurrentOps = 10
-	podmanInstallURL    = "https://podman.io/docs/installation"
-	searxngInternalPort = 8080
-	searxngReadyTimeout     = 45 * time.Second
-	entrypointScriptPath    = "/usr/local/bin/valinor-entrypoint.sh"
+	podmanInstallURL        = "https://podman.io/docs/installation"
 )
 
 // Runtime holds workspace and execution context for tool calls.
@@ -36,7 +32,7 @@ type Runtime struct {
 
 // NewRuntime creates a runtime configured for a workspace root.
 // It starts a long-running Podman container with the workspace bind-mounted.
-func NewRuntime(dir string, searxngCfg config.SearXNGConfig) (*Runtime, error) {
+func NewRuntime(dir string) (*Runtime, error) {
 	image := buildinfo.SandboxImage()
 	logger.Debug("sandbox runtime creation starting", logger.BuildMetadata("workspace", dir, "image", image))
 
@@ -68,11 +64,8 @@ func NewRuntime(dir string, searxngCfg config.SearXNGConfig) (*Runtime, error) {
 	runArgs := []string{"run", "-d", "--rm",
 		"-v", absDir + ":/workspace:Z",
 		"-w", "/workspace",
+		image,
 	}
-	if searxngCfg.PublishPort > 0 {
-		runArgs = append(runArgs, "-p", fmt.Sprintf("127.0.0.1:%d:%d", searxngCfg.PublishPort, searxngInternalPort))
-	}
-	runArgs = append(runArgs, image, entrypointScriptPath)
 
 	cmd := exec.CommandContext(ctx, "podman", runArgs...)
 
@@ -93,12 +86,6 @@ func NewRuntime(dir string, searxngCfg config.SearXNGConfig) (*Runtime, error) {
 		return nil, fmt.Errorf("failed to get container ID from podman run")
 	}
 
-	if err := waitForSearXNG(containerID); err != nil {
-		logger.Error("searxng startup diagnostics", logger.BuildMetadata("container_id", containerID[:12], "detail", searxngStartupDiagnostics(containerID)))
-		_ = exec.Command("podman", "rm", "-f", containerID).Run()
-		return nil, err
-	}
-
 	rt := &Runtime{
 		workspaceDir: absDir,
 		containerID:  containerID,
@@ -110,65 +97,6 @@ func NewRuntime(dir string, searxngCfg config.SearXNGConfig) (*Runtime, error) {
 		logger.BuildMetadata("workspace", dir, "container_id", containerID[:12], "image", image))
 
 	return rt, nil
-}
-
-func waitForSearXNG(containerID string) error {
-	deadline := time.Now().Add(searxngReadyTimeout)
-	probe := fmt.Sprintf(
-		"curl -sf 'http://127.0.0.1:%d/search?q=ping&format=json' >/dev/null",
-		searxngInternalPort,
-	)
-
-	for time.Now().Before(deadline) {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		cmd := exec.CommandContext(ctx, "podman", "exec", containerID, "bash", "-c", probe)
-		err := cmd.Run()
-		cancel()
-		if err == nil {
-			logger.Debug("searxng is ready", logger.BuildMetadata("container_id", containerID[:12]))
-			return nil
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	logger.Error("searxng failed to become ready", logger.BuildMetadata("container_id", containerID[:12]))
-	return fmt.Errorf(
-		"searxng did not become ready within %s; rebuild the sandbox image with: valinor build-docker-image (details: %s)",
-		searxngReadyTimeout,
-		searxngStartupDiagnostics(containerID),
-	)
-}
-
-func searxngStartupDiagnostics(containerID string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	script := fmt.Sprintf(`
-if [ ! -x %q ]; then
-  echo -n "missing entrypoint script; "
-fi
-ps_out=$(ps aux 2>/dev/null | awk 'NR==1 || /granian|searx/ {print}')
-if [ -z "$ps_out" ]; then
-  echo -n "searxng process not running; "
-fi
-if ! curl -sf 'http://127.0.0.1:%d/search?q=ping&format=json' >/dev/null 2>&1; then
-  echo -n "http probe failed"
-fi
-`, entrypointScriptPath, searxngInternalPort)
-
-	cmd := exec.CommandContext(ctx, "podman", "exec", containerID, "bash", "-c", script)
-	out, err := cmd.CombinedOutput()
-	detail := strings.TrimSpace(string(out))
-	if detail == "" {
-		detail = "no diagnostics"
-	}
-	if err != nil {
-		if detail != "" {
-			detail += "; "
-		}
-		detail += err.Error()
-	}
-	return detail
 }
 
 // checkPodmanInstalled verifies that podman is installed and accessible.

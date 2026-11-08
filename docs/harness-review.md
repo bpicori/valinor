@@ -79,7 +79,7 @@ Takeaways:
 | Output limit | `[context] max_output_tokens` (default 8192) is now sent to every provider; Anthropic no longer silently defaults to 16384. |
 | Retries | Transient provider errors (429/5xx/network) retry up to 3 times with jittered backoff; no retry once a delta has been emitted, so tool calls and partial answers are never duplicated. |
 | Scheduled jobs | `no_agent` scripts run in the sandbox container; there is no host execution path. The `workdir` field was removed — it was unvalidated and never reached the tools. |
-| Seeds | Required-skill embedding no longer copies `bundle.go` into `skills/`; a stale `MEMORY.md` that still references removed memory tools logs an actionable warning. |
+| Seeds | A stale `MEMORY.md` that still references removed memory tools logs an actionable warning. The bundled web-research skill was removed; `skills/` is now user-authored only. |
 | Tool catalog | `todo_write`/`todo_read` and their in-memory store removed; 3+ step planning is now a one-line prompt instruction. Session README drift fixed. |
 
 ### Breaking changes
@@ -90,6 +90,20 @@ Takeaways:
   there is no host runtime, and a `scripts_dir` outside the workspace is
   rejected at config load.
 - `edit_file` now requires a prior `read_file` (or `write_file`) of the same path.
+
+## Search providers
+
+Web search is now provider-abstracted, mirroring the LLM provider layout:
+
+- `internal/search` — `Provider` (Search) and optional `Fetcher` (Fetch) interfaces.
+- `internal/search/factory` — selects the implementation from `[search] provider`.
+- `internal/search/providers/deepseek` — DeepSeek Search & Fetch API.
+
+`web_search` takes `query` + `count` and returns ranked results with score and
+authority; `web_fetch` returns a page as Markdown. SearXNG was removed from the
+image, config, and sandbox runtime: no background service, no readiness probe, no
+port mapping, and the image build is a single stage. Adding another provider is
+a new package plus one factory case and one config value.
 
 ## Deliberately not changed
 
@@ -110,8 +124,6 @@ Takeaways:
 - **Transcript:** append-only JSONL with resume/fork and session search.
 - **Environment reminder:** inject cwd/model/date as a tagged reminder instead
   of patching the system prompt with string surgery.
-- **Hosted web search** to replace the in-image SearXNG (smaller image, faster
-  boot). Not a security fix — snippets remain untrusted input.
 - **Subagents / hooks / MCP / plan mode** — only if the product needs them.
 
 ## Verification

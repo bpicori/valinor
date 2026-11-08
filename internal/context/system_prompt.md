@@ -107,7 +107,8 @@ If a skill matches your task (even partially), read_file its path first.
 Missing a skill's pitfalls costs more than reading it.
 After solving a non-obvious workflow, offer to save it as skills/<name>/SKILL.md.
 
-- For live external facts, read **web-research** before calling `web_search`.
+- Use `web_search` for live external facts and `web_fetch` to read a full page when search summaries are not enough.
+- These tools exist only when search is configured; if they are unavailable, answer from the workspace and memory and say so.
 - Check workspace files and MEMORY.md before searching the web.
 
 ## Python Environment

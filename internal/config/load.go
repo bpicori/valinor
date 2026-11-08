@@ -159,6 +159,17 @@ func Validate(cfg Config) error {
 			return fmt.Errorf("scheduler.scripts_dir must be inside the workspace (scripts run in the sandbox)")
 		}
 	}
+	if cfg.Search.Provider != "" {
+		if cfg.Search.Provider != "deepseek" {
+			return fmt.Errorf("search.provider %q is not supported (supported: deepseek)", cfg.Search.Provider)
+		}
+		if strings.TrimSpace(cfg.Search.APIKey) == "" {
+			return fmt.Errorf("search.api_key is required (or set providers.%s.api_key)", cfg.Search.Provider)
+		}
+		if cfg.Search.MaxResults < 1 || cfg.Search.MaxResults > 50 {
+			return fmt.Errorf("search.max_results must be between 1 and 50")
+		}
+	}
 	if cfg.Context.WindowTokens > 0 && cfg.Context.WindowTokens < 8000 {
 		return fmt.Errorf("context.window_tokens must be at least 8000")
 	}
@@ -208,13 +219,23 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 		cfg.Scheduler.ScriptTimeout = DefaultSchedulerScriptTimeout
 	}
 
-	if cfg.SearXNG.PublishPort < 0 {
-		cfg.SearXNG.PublishPort = DefaultSearXNGPublishPort
-	}
-
 	if cfg.Context.PreserveRecentMessages <= 0 {
 		cfg.Context.PreserveRecentMessages = DefaultPreserveRecentMessages
 	}
+	if cfg.Search.Provider != "" {
+		if cfg.Search.APIKey == "" {
+			if provider, ok := cfg.Providers[cfg.Search.Provider]; ok {
+				cfg.Search.APIKey = provider.APIKey
+			}
+		}
+		if cfg.Search.MaxResults <= 0 {
+			cfg.Search.MaxResults = DefaultSearchMaxResults
+		}
+		if cfg.Search.MaxResults > 50 {
+			cfg.Search.MaxResults = 50
+		}
+	}
+
 	if cfg.Context.WindowTokens <= 0 {
 		cfg.Context.WindowTokens = DefaultContextWindowTokens
 	}

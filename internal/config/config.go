@@ -36,10 +36,8 @@ const (
 	DefaultSchedulerScriptTimeout = "120s"
 )
 
-// Default SearXNG configuration.
-const (
-	DefaultSearXNGPublishPort = 0
-)
+// Default search configuration.
+const DefaultSearchMaxResults = 10
 
 // Default context compression configuration.
 const DefaultPreserveRecentMessages = 20
@@ -63,18 +61,25 @@ type Config struct {
 	// Scheduler configuration for Cron.md based scheduled jobs.
 	Scheduler SchedulerConfig `toml:"scheduler"`
 
-	// SearXNG configures the local metasearch instance embedded in the sandbox image.
-	SearXNG SearXNGConfig `toml:"searxng"`
+	// Search configures the web_search and web_fetch tools.
+	Search SearchConfig `toml:"search"`
 
 	// Context holds context-window compression settings.
 	Context ContextConfig `toml:"context"`
 }
 
-// SearXNGConfig holds settings for the sandbox-embedded SearXNG instance.
-// SearXNG is always started in the sandbox; only host exposure is configurable.
-type SearXNGConfig struct {
-	// PublishPort maps SearXNG to the host when > 0 (default: 0, internal only).
-	PublishPort int `toml:"publish_port"`
+// SearchConfig configures the web search provider.
+// An empty provider disables the web_search and web_fetch tools.
+type SearchConfig struct {
+	// Provider selects the search backend (supported: "deepseek").
+	Provider string `toml:"provider"`
+	// APIKey authenticates the provider; falls back to the LLM provider entry
+	// with the same name.
+	APIKey string `toml:"api_key"`
+	// BaseURL overrides the provider default endpoint.
+	BaseURL string `toml:"base_url"`
+	// MaxResults is the default number of results (1-50).
+	MaxResults int `toml:"max_results"`
 }
 
 // Default context window and output settings.

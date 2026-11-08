@@ -10,6 +10,8 @@ import (
 	"valinor/internal/config"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
+	"valinor/internal/search"
+	searchfactory "valinor/internal/search/factory"
 )
 
 // fileSignature returns a size+mtime signature for a workspace file.
@@ -71,7 +73,8 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 	_ = workspaceDir
 	rt := sandbox.MustRuntime()
 
-	providerCfg, ok := config.Must().Providers[providerName]
+	cfg := config.Must()
+	providerCfg, ok := cfg.Providers[providerName]
 	if !ok {
 		return nil, nil, fmt.Errorf("provider %q not found in config", providerName)
 	}
@@ -90,9 +93,17 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 		buildTool(CronjobName,
 			"Manage cron jobs. Parameters: action (add|list|remove|history|pause|resume|run|edit) plus job fields.",
 			cronjobParams(), func(a json.RawMessage) (string, error) { return cronjobExec(run, a) }),
-		buildTool(webSearchName, "Search the web via SearXNG. Parameters: query, categories (optional), time_range (optional).", webSearchParams(), func(a json.RawMessage) (string, error) {
-			return webSearchExec(rt, a)
-		}),
+	}
+
+	searchProvider, err := searchfactory.Create(cfg.Search)
+	if err != nil {
+		return nil, nil, err
+	}
+	if searchProvider != nil {
+		result = append(result, buildWebSearchTool(searchProvider, cfg.Search.MaxResults))
+		if fetcher, ok := searchProvider.(search.Fetcher); ok {
+			result = append(result, buildWebFetchTool(fetcher))
+		}
 	}
 
 	providerTools, err := buildProviderTools(providerCfg, model)

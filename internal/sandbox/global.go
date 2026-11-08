@@ -3,8 +3,6 @@ package sandbox
 import (
 	"fmt"
 	"sync"
-
-	"valinor/internal/config"
 )
 
 var (
@@ -13,8 +11,8 @@ var (
 )
 
 // InitRuntime creates and stores the process-global sandbox runtime.
-func InitRuntime(workspaceDir string, searxng config.SearXNGConfig) error {
-	rt, err := NewRuntime(workspaceDir, searxng)
+func InitRuntime(workspaceDir string) error {
+	rt, err := NewRuntime(workspaceDir)
 	if err != nil {
 		return err
 	}

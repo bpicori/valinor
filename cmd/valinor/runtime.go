@@ -14,7 +14,6 @@ import (
 	"valinor/internal/gateway"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
-	"valinor/internal/requiredskills"
 	"valinor/internal/sandbox"
 	"valinor/internal/scheduler"
 	"valinor/internal/session"
@@ -78,14 +77,10 @@ func runRuntime(mode, gatewayURL, identity string) error {
 }
 
 func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayDeps, error) {
-	cfg := config.Must()
 	paths := config.MustPaths()
 
 	if err := os.MkdirAll(paths.WorkspaceDir, 0755); err != nil {
 		return nil, fmt.Errorf("create workspace directory: %w", err)
-	}
-	if err := requiredskills.EnsureRequiredSkills(paths.WorkspaceDir); err != nil {
-		return nil, fmt.Errorf("ensure required skills: %w", err)
 	}
 	if err := agentcontext.EnsureMemory(paths.WorkspaceDir); err != nil {
 		return nil, fmt.Errorf("ensure memory file: %w", err)
@@ -105,7 +100,7 @@ func initGateway(logPrefix string, transports []logger.TransportType) (*gatewayD
 	logger.SetPrefix(logPrefix)
 	logger.Info("logging initialized", logger.BuildMetadata("log_path", logPath))
 
-	if err := sandbox.InitRuntime(paths.WorkspaceDir, cfg.SearXNG); err != nil {
+	if err := sandbox.InitRuntime(paths.WorkspaceDir); err != nil {
 		closeLogger()
 		return nil, fmt.Errorf("create sandbox runtime: %w", err)
 	}

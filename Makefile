@@ -67,7 +67,7 @@ logs:
 clean:
 	rm -f $(BINARY)
 
-# Required skills are re-created from the binary on the next gateway startup.
+# Workspace state is re-created from the binary on the next gateway startup.
 clean-valinor-dir:
 	rm -rf "$(VALINOR_DIR)"/*
 	rm -rf "$(VALINOR_DIR)"/.[!.]* "$(VALINOR_DIR)"/..?* 2>/dev/null || true

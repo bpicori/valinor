@@ -44,9 +44,12 @@ gateway_path = "/ws"
 # Agent configuration
 max_agent_iterations = 20
 
-# SearXNG metasearch (always embedded in the sandbox image)
-# [searxng]
-# publish_port = 0   # 0 = internal only; set e.g. 8080 to expose UI on host
+# Web search + fetch tools (web_search / web_fetch)
+# [search]
+# provider = "deepseek"   # "" disables both tools; supported: deepseek
+# api_key = ""            # defaults to providers.deepseek.api_key
+# base_url = ""           # defaults to https://api.deepseek.com
+# max_results = 10        # default results per search (1-50)
 
 # Context compression (triggers at 85% of 200K window)
 # [context]
