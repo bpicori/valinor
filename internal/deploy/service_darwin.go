@@ -20,6 +20,10 @@ const (
 
 func platformName() string { return "launchd (darwin)" }
 
+func platformInstall(context.Context, Paths) error {
+	return fmt.Errorf("service install is supported on linux only")
+}
+
 func platformUninstall(ctx context.Context, paths Paths) error {
 	agentDir := filepath.Join(paths.Home, agentsDir)
 	for _, label := range []string{updateLabel, agentLabel} {
@@ -81,6 +85,14 @@ func platformRestartIfInstalled(ctx context.Context, paths Paths) error {
 	if state == "not installed" {
 		fmt.Println("service not loaded; binary updated but service not restarted")
 		return nil
+	}
+	return platformRestart(ctx, paths)
+}
+
+func platformRestartAll(ctx context.Context) error {
+	paths, err := pathsForInstance("default")
+	if err != nil {
+		return err
 	}
 	return platformRestart(ctx, paths)
 }

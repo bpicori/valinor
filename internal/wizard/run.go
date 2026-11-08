@@ -8,9 +8,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Run starts the setup wizard and returns the resulting config.
-func Run(initial config.Config) (config.Config, error) {
-	model := New(initial)
+// Run starts the setup wizard and saves to savePath when non-empty.
+func Run(initial config.Config, savePath string) (config.Config, error) {
+	if savePath == "" {
+		path, err := config.DefaultConfigPath()
+		if err != nil {
+			return config.Config{}, err
+		}
+		savePath = path
+	}
+	model := New(initial, savePath)
 	program := tea.NewProgram(&model, tea.WithAltScreen())
 	final, err := program.Run()
 	if err != nil {

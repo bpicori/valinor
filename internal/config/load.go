@@ -54,14 +54,30 @@ func LoadFromPath(path string) (Config, error) {
 
 // LoadFromFile loads configuration from a TOML file.
 func LoadFromFile(path string) (Config, error) {
+	return loadFromFile(path, "", false)
+}
+
+func loadFromFile(path, defaultDataDir string, enforceDataDir bool) (Config, error) {
 	cfg, md, err := decodeTOML(path)
 	if err != nil {
 		logger.Error("config load failed", logger.BuildMetadata("path", path, "error", err))
 		return Config{}, err
 	}
+	if defaultDataDir != "" && !md.IsDefined("valinor_dir") {
+		cfg.ValinorDir = defaultDataDir
+	}
 	cfg = ApplyDefaults(cfg, md)
 	if err := Validate(cfg); err != nil {
 		return Config{}, err
+	}
+	if enforceDataDir && defaultDataDir != "" {
+		dataDir, err := cfg.ResolveValinorDir()
+		if err != nil {
+			return Config{}, err
+		}
+		if !pathWithin(defaultDataDir, dataDir) {
+			return Config{}, fmt.Errorf("instance data directory %q must stay inside %q; remove valinor_dir or set it to the instance root", dataDir, defaultDataDir)
+		}
 	}
 	return cfg, nil
 }
@@ -203,7 +219,9 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 		cfg.GatewayPath = DefaultGatewayPath
 	}
 	cfg.GatewayEnabled = true
-	cfg.Telegram.Enabled = true
+	if !md.IsDefined("telegram", "enabled") {
+		cfg.Telegram.Enabled = true
+	}
 
 	if cfg.Telegram.PollTimeout <= 0 {
 		cfg.Telegram.PollTimeout = DefaultTelegramPollTimeout
@@ -265,7 +283,9 @@ func Save(cfg Config) error {
 
 // SaveToPath writes config to the given path, creating parent directories as needed.
 func SaveToPath(path string, cfg Config) error {
+	telegramEnabled := cfg.Telegram.Enabled
 	cfg = ApplyDefaults(cfg, toml.MetaData{})
+	cfg.Telegram.Enabled = telegramEnabled
 	if err := Validate(cfg); err != nil {
 		return err
 	}

@@ -32,6 +32,7 @@ const (
 // Model is the Bubble Tea model for the setup wizard.
 type Model struct {
 	cfg        config.Config
+	savePath   string
 	step       step
 	styles     styles
 	width      int
@@ -49,7 +50,7 @@ type Model struct {
 }
 
 // New creates a wizard model seeded with the initial config.
-func New(initial config.Config) Model {
+func New(initial config.Config, savePath string) Model {
 	if initial.Providers == nil {
 		initial.Providers = map[string]config.ProviderConfig{}
 	}
@@ -374,12 +375,12 @@ func (m *Model) handleReviewKey(keyMsg tea.KeyMsg) (bool, tea.Cmd) {
 			m.errMsg = err.Error()
 			return true, nil
 		}
-		if err := config.Save(m.cfg); err != nil {
+		if err := config.SaveToPath(m.savePath, m.cfg); err != nil {
 			m.errMsg = err.Error()
 			return true, nil
 		}
 		m.saved = true
-		m.successMsg = "Configuration saved to ~/.valinor/config.toml"
+		m.successMsg = "Configuration saved to " + m.savePath
 		m.step = stepDone
 		return true, tea.Quit
 	case "esc":
@@ -392,12 +393,12 @@ func (m *Model) handleReviewKey(keyMsg tea.KeyMsg) (bool, tea.Cmd) {
 			m.errMsg = err.Error()
 			return true, nil
 		}
-		if err := config.Save(m.cfg); err != nil {
+		if err := config.SaveToPath(m.savePath, m.cfg); err != nil {
 			m.errMsg = err.Error()
 			return true, nil
 		}
 		m.saved = true
-		m.successMsg = "Configuration saved to ~/.valinor/config.toml"
+		m.successMsg = "Configuration saved to " + m.savePath
 		m.step = stepDone
 		return true, tea.Quit
 	}
@@ -530,7 +531,7 @@ func (m *Model) refreshReview() {
 	b.WriteString(fmt.Sprintf("Preserve recent:   %d messages\n", m.cfg.Context.PreserveRecentMessages))
 	b.WriteString(fmt.Sprintf("Telegram:          enabled (%d allowed users)\n", len(m.cfg.Telegram.AllowedUserIDs)))
 	b.WriteString("\n")
-	b.WriteString(m.styles.hint.Render("Press enter to save to ~/.valinor/config.toml"))
+	b.WriteString(m.styles.hint.Render("Press enter to save to " + m.savePath))
 	m.review.SetContent(b.String())
 }
 

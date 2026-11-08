@@ -12,37 +12,51 @@ import (
 const (
 	DefaultRepo = "bpicori/valinor"
 	BinaryName  = "valinor"
-	ServiceName = "valinor"
 )
 
 // Paths holds canonical deployment paths under the user home directory.
 type Paths struct {
-	Home       string
-	Binary     string
-	PrevBinary string
-	ConfigFile string
-	AppLog     string
+	Instance    string
+	Home        string
+	Binary      string
+	PrevBinary  string
+	ConfigFile  string
+	DataDir     string
+	AppLog      string
+	ServiceUnit string
 }
 
-func defaultPaths() (Paths, error) {
-	home, err := os.UserHomeDir()
+func pathsForInstance(name string) (Paths, error) {
+	instance, err := config.ResolveInstance(name)
 	if err != nil {
-		return Paths{}, fmt.Errorf("resolve home directory: %w", err)
+		return Paths{}, err
 	}
-
-	configFile, err := config.DefaultConfigPath()
+	cfg, err := config.LoadForInstance(instance.Name)
+	if err != nil {
+		return Paths{}, err
+	}
+	dataDir, err := cfg.ResolveValinorDir()
 	if err != nil {
 		return Paths{}, err
 	}
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Paths{}, fmt.Errorf("resolve home directory: %w", err)
+	}
 	binDir := filepath.Join(home, ".local", "bin")
-	valinorDir := filepath.Dir(configFile)
-
 	return Paths{
-		Home:       home,
-		Binary:     filepath.Join(binDir, BinaryName),
-		PrevBinary: filepath.Join(binDir, BinaryName+".prev"),
-		ConfigFile: configFile,
-		AppLog:     logger.AppLogPath(valinorDir),
+		Instance:    instance.Name,
+		Home:        home,
+		Binary:      filepath.Join(binDir, BinaryName),
+		PrevBinary:  filepath.Join(binDir, BinaryName+".prev"),
+		ConfigFile:  instance.ConfigPath,
+		DataDir:     dataDir,
+		AppLog:      logger.AppLogPath(dataDir),
+		ServiceUnit: "valinor@" + instance.Name + ".service",
 	}, nil
+}
+
+func defaultPaths() (Paths, error) {
+	return pathsForInstance(config.DefaultInstanceName)
 }

@@ -64,6 +64,11 @@ func runRuntime(mode, gatewayURL, identity string) error {
 	}()
 
 	switch mode {
+	case "auto":
+		if config.Must().Telegram.Enabled && config.Must().Telegram.BotToken != "" {
+			return runAll(ctx)
+		}
+		return runGateway(ctx)
 	case "gateway":
 		return runGateway(ctx)
 	case "tui":

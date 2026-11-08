@@ -9,6 +9,10 @@ import (
 
 func platformName() string { return "unsupported" }
 
+func platformInstall(context.Context, Paths) error {
+	return unsupportedPlatform()
+}
+
 func platformUninstall(context.Context, Paths) error {
 	return unsupportedPlatform()
 }
@@ -22,6 +26,10 @@ func platformRestart(context.Context, Paths) error {
 }
 
 func platformRestartIfInstalled(context.Context, Paths) error {
+	return unsupportedPlatform()
+}
+
+func platformRestartAll(context.Context) error {
 	return unsupportedPlatform()
 }
 

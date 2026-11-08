@@ -1,8 +1,23 @@
 # Example Valinor configuration file
-# Copy this to ~/.valinor/config.toml and fill in your provider details
+# Default instance: copy this to ~/.valinor/config.toml.
+# Named instance: copy to ~/.valinor/instances/<name>/config.toml and set
+# valinor_dir to the same instance root.
+#
+# Root keys must stay before the first [table].
 
-# Default provider to use for new sessions
 default_provider = "openai"
+
+# Gateway configuration for WebSocket clients and Telegram.
+gateway_enabled = true
+gateway_host = "127.0.0.1"
+gateway_port = 7778
+gateway_path = "/ws"
+
+# Instance data directory (sessions, workspace, cron, logs).
+valinor_dir = "~/.valinor"
+
+# Agent configuration
+max_agent_iterations = 20
 
 # Provider configurations
 [providers.openai]
@@ -41,17 +56,6 @@ default_model = "gemini-2.0-flash"
 # base_url = "https://api.deepseek.com"
 # default_model = "deepseek-flash"
 # thinking = "enabled"
-
-# Gateway (enabled by default; TUI and Telegram connect here)
-gateway_host = "127.0.0.1"
-gateway_port = 7778
-gateway_path = "/ws"
-
-# Base data directory (sessions/ and workspace/ are created inside)
-# valinor_dir = "~/.valinor"
-
-# Agent configuration
-max_agent_iterations = 20
 
 # Web search + fetch tools (web_search / web_fetch)
 # [search]
