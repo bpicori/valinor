@@ -537,6 +537,11 @@ func (b *Bot) processCommand(cmd *Command, tracker *messageTracker) error {
 		return b.sendTelegramMessage(cmd.Identity, tracker, notice)
 	}
 
+	// A typed reply supersedes any pending question buttons.
+	if cmd.Type == gateway.CommandUserMessage {
+		delete(b.pendingQuestions, cmd.Identity.ChatID)
+	}
+
 	// Finalize any existing streaming before starting new conversation
 	if cmd.Type == gateway.CommandNewConversation {
 		tracker.markIdle()
