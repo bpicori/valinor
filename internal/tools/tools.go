@@ -88,11 +88,16 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 		buildTool(grepName, "Search workspace files by regex. Parameters: pattern, path (optional), include (optional).", grepParams(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }),
 		buildTool(pythonExecName, "Run Python in the sandbox. Parameters: code or script_path, cwd (optional).", pythonExecParams(), func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),
 		buildTool(sendImageName, "Send a workspace image to the current client. Parameters: path.", sendImageParams(), func(a json.RawMessage) (string, error) { return sendImageExec(rt, run, a) }),
-		buildTool(generateImageName, "Generate an image from a prompt. Saves to workspace. Parameters: prompt, send (default true), aspect_ratio (optional), size (optional).", generateImageParams(), func(a json.RawMessage) (string, error) { return generateImageExec(rt, run, providerCfg, a) }),
 		buildTool(bashExecName, "Run bash in the sandbox. Parameters: command, cwd (optional).", bashExecParams(), func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
 		buildTool(CronjobName,
 			"Manage cron jobs. Parameters: action (add|list|remove|history|pause|resume|run|edit) plus job fields.",
 			cronjobParams(), func(a json.RawMessage) (string, error) { return cronjobExec(run, a) }),
+	}
+
+	if reason := imageGenerationConfigError(providerCfg); reason == "" {
+		result = append(result, buildTool(generateImageName, "Generate an image from a prompt. Saves to workspace. Parameters: prompt, send (default true), aspect_ratio (optional), size (optional).", generateImageParams(), func(a json.RawMessage) (string, error) { return generateImageExec(rt, run, providerCfg, a) }))
+	} else {
+		logger.Debug("image generation tool disabled", logger.BuildMetadata("provider", providerName, "reason", reason))
 	}
 
 	searchProvider, err := searchfactory.Create(cfg.Search)
@@ -104,25 +109,19 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 		if fetcher, ok := searchProvider.(search.Fetcher); ok {
 			result = append(result, buildWebFetchTool(fetcher))
 		}
-	}
-
-	providerTools, err := buildProviderTools(providerCfg, model)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return append(result, providerTools...), run, nil
-}
-
-func buildProviderTools(providerCfg config.ProviderConfig, model string) ([]Tool, error) {
-	switch providerCfg.Type {
-	case "gemini":
+	} else if providerCfg.Type == "gemini" {
 		searchTool, err := BuildGeminiGoogleSearchTool(providerCfg.APIKey, model)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return []Tool{searchTool}, nil
-	default:
-		return nil, nil
+		result = append(result, searchTool)
 	}
+
+	names := make([]string, len(result))
+	for i, tool := range result {
+		names[i] = tool.Name
+	}
+	logger.Debug("tools built", logger.BuildMetadata("provider", providerName, "model", model, "count", len(result), "tools", strings.Join(names, ",")))
+
+	return result, run, nil
 }

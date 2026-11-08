@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"strings"
 
 	"valinor/internal/config"
@@ -287,13 +288,26 @@ func executeTool(toolset []tools.Tool, name string, args json.RawMessage) (strin
 		if t.Name != name {
 			continue
 		}
-		result, err := t.Exec(args)
-		if err != nil {
-			return fmt.Sprintf("error: %v", err), true
-		}
-		return tools.CapResult(t.Name, result), true
+		return executeOne(t, args), true
 	}
 	return "", false
+}
+
+// executeOne runs one tool and converts a panic into a tool result, so a buggy
+// tool cannot take down the session or the process.
+func executeOne(t tools.Tool, args json.RawMessage) (out string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("tool panicked", logger.BuildMetadata("tool", t.Name, "panic", r, "stack", string(debug.Stack())))
+			out = fmt.Sprintf("error: tool %s panicked: %v", t.Name, r)
+		}
+	}()
+
+	result, err := t.Exec(args)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return tools.CapResult(t.Name, result)
 }
 
 // isContextLengthError reports whether a provider error means the request

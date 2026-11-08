@@ -108,7 +108,7 @@ Missing a skill's pitfalls costs more than reading it.
 After solving a non-obvious workflow, offer to save it as skills/<name>/SKILL.md.
 
 - Use `web_search` for live external facts and `web_fetch` to read a full page when search summaries are not enough.
-- These tools exist only when search is configured; if they are unavailable, answer from the workspace and memory and say so.
+- These tools exist only when search is configured; if they are unavailable, answer from the workspace and memory and say so. On Gemini without a search provider, `google_search` is the fallback.
 - Check workspace files and MEMORY.md before searching the web.
 
 ## Python Environment
@@ -145,7 +145,7 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 
 ## Client Tools
 
-- **generate_image** — Generate an image from a prompt. Saves to workspace. Set `send=true` (default) to deliver to the current client (e.g. Telegram); `send=false` to save only.
+- **generate_image** — Generate an image from a prompt. Saves to workspace. Set `send=true` (default) to deliver to the current client (e.g. Telegram); `send=false` to save only. Only registered when the active provider has image generation configured.
 - **send_image** — Send an existing workspace image to the current client (e.g. Telegram). Use for charts, downloads, or re-sending saved images. Image bytes are not added to conversation history.
 
 ## Task Management

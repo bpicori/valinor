@@ -133,7 +133,7 @@ func (r *Runtime) RunCommand(ctx context.Context, workDir string, shellCommand s
 		targetWorkDir = filepath.Join("/workspace", filepath.FromSlash(workDir))
 	}
 
-	return r.exec(ctx, command, targetWorkDir, nil, nil)
+	return r.exec(ctx, command, targetWorkDir, nil, nil, maxExecCaptureBytes)
 }
 
 // RunCommandOnHost is an alias for RunCommand in the container sandbox.
@@ -148,7 +148,7 @@ func (r *Runtime) ReadFile(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), fsToolTimeout)
 	defer cancel()
 
-	result, err := r.exec(ctx, []string{"cat", fullPath}, "/workspace", nil, nil)
+	result, err := r.exec(ctx, []string{"cat", fullPath}, "/workspace", nil, nil, 0)
 	if err != nil {
 		return "Tool Error: " + err.Error(), nil
 	}
@@ -199,7 +199,7 @@ func (r *Runtime) ReadFileRange(path string, offset, limit int) (FileSlice, erro
 	)
 
 	// argv form: podman exec ... awk <program> <path> (no shell quoting needed).
-	result, err := r.exec(ctx, []string{"awk", program, fullPath}, "/workspace", nil, nil)
+	result, err := r.exec(ctx, []string{"awk", program, fullPath}, "/workspace", nil, nil, 0)
 	if err != nil {
 		return FileSlice{}, err
 	}
@@ -257,7 +257,7 @@ func (r *Runtime) WriteFile(path string, content string) (string, error) {
 
 	// Create parent directory if needed
 	if parentDir != "." {
-		mkdirResult, err := r.exec(ctx, []string{"mkdir", "-p", parentDir}, "/workspace", nil, nil)
+		mkdirResult, err := r.exec(ctx, []string{"mkdir", "-p", parentDir}, "/workspace", nil, nil, 0)
 		if err != nil {
 			return "Tool Error: " + err.Error(), nil
 		}
@@ -267,7 +267,7 @@ func (r *Runtime) WriteFile(path string, content string) (string, error) {
 	}
 
 	// Write file using tee
-	writeResult, err := r.execWithIO(ctx, []string{"tee", relPath}, "/workspace", strings.NewReader(content), nil)
+	writeResult, err := r.execWithIO(ctx, []string{"tee", relPath}, "/workspace", strings.NewReader(content), nil, maxExecCaptureBytes)
 	if err != nil {
 		return "Tool Error: " + err.Error(), nil
 	}
@@ -283,7 +283,7 @@ func (r *Runtime) ListDirectory(path string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), fsToolTimeout)
 	defer cancel()
 
-	result, err := r.exec(ctx, []string{"ls", "-1Ap", fullPath}, "/workspace", nil, nil)
+	result, err := r.exec(ctx, []string{"ls", "-1Ap", fullPath}, "/workspace", nil, nil, maxExecCaptureBytes)
 	if err != nil {
 		return "Tool Error: " + err.Error(), nil
 	}
@@ -306,7 +306,7 @@ func (r *Runtime) Grep(pattern string, path string, include string) (string, err
 	fullPath := r.resolveContainerPath(path)
 	args = append(args, pattern, fullPath)
 
-	result, err := r.exec(ctx, append([]string{"rg"}, args...), "/workspace", nil, nil)
+	result, err := r.exec(ctx, append([]string{"rg"}, args...), "/workspace", nil, nil, maxExecCaptureBytes)
 	if err != nil {
 		return "Tool Error: " + err.Error(), nil
 	}
@@ -351,7 +351,7 @@ func (r *Runtime) RunPython(ctx context.Context, workDir string, mode string, co
 		defer cancel()
 	}
 
-	return r.execWithIO(ctx, command, targetWorkDir, stdin, nil)
+	return r.execWithIO(ctx, command, targetWorkDir, stdin, nil, maxExecCaptureBytes)
 }
 
 // WorkspaceDir returns the runtime workspace root.
@@ -379,17 +379,17 @@ func (r *Runtime) Close() error {
 }
 
 // exec runs a command in the container with concurrency limiting.
-func (r *Runtime) exec(ctx context.Context, command []string, workDir string, stdin io.Reader, env []string) (Result, error) {
+func (r *Runtime) exec(ctx context.Context, command []string, workDir string, stdin io.Reader, env []string, maxCapture int) (Result, error) {
 	r.sem <- struct{}{}
 	defer func() { <-r.sem }()
-	return execInContainer(ctx, r.containerID, command, workDir, stdin, env)
+	return execInContainer(ctx, r.containerID, command, workDir, stdin, env, maxCapture)
 }
 
 // execWithIO runs a command with stdin/env in the container with concurrency limiting.
-func (r *Runtime) execWithIO(ctx context.Context, command []string, workDir string, stdin io.Reader, env []string) (Result, error) {
+func (r *Runtime) execWithIO(ctx context.Context, command []string, workDir string, stdin io.Reader, env []string, maxCapture int) (Result, error) {
 	r.sem <- struct{}{}
 	defer func() { <-r.sem }()
-	return execInContainer(ctx, r.containerID, command, workDir, stdin, env)
+	return execInContainer(ctx, r.containerID, command, workDir, stdin, env, maxCapture)
 }
 
 // resolveContainerPath converts a workspace-relative path to a container path.

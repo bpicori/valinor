@@ -3,12 +3,17 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"valinor/internal/sandbox"
 )
 
-const editFileName = "edit_file"
+const (
+	editFileName         = "edit_file"
+	maxEditableFileBytes = 8 << 20
+)
 
 func editFileParams() map[string]any {
 	return map[string]any{
@@ -66,6 +71,13 @@ func editFileExec(rt *sandbox.Runtime, run *RunContext, args json.RawMessage) (s
 	}
 	if len(p.Edits) == 0 {
 		return "Tool Error: edits must contain at least one edit.", nil
+	}
+
+	hostPath := filepath.Join(rt.WorkspaceDir(), filepath.FromSlash(path))
+	if info, statErr := os.Stat(hostPath); statErr == nil && info.Size() > maxEditableFileBytes {
+		return fmt.Sprintf(
+			"Tool Error: file is %d bytes; edit_file supports up to %d MiB. Use bash_exec or python_exec for larger files.",
+			info.Size(), maxEditableFileBytes/(1<<20)), nil
 	}
 
 	original, err := rt.ReadFile(path)
