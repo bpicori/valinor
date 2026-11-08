@@ -153,9 +153,9 @@ type Model struct {
 	modelPickerErr    string
 	state             appState
 	messages          []chatMessage
-	contextPrompt    int64
-	contextEstimated bool
-	width            int
+	contextPrompt     int64
+	contextEstimated  bool
+	width             int
 	height            int
 	contentWidth      int // width minus sidebar for viewport/chat
 	ready             bool
@@ -620,6 +620,18 @@ func (m Model) handleWSEventMsg(msg wsEventMsg) (tea.Model, tea.Cmd) {
 		logger.Debug("tui: received cron job result",
 			logger.BuildMetadata("content_length", len(payload.Content), "timestamp", payload.Timestamp))
 		return m, m.handleCronJobResult(payload)
+	case event.EventType(gateway.EventAgentQuestion):
+		payload, ok := ev.Payload.(gateway.QuestionPayload)
+		if !ok {
+			return m, nil
+		}
+		return m, m.handleAgentQuestion(payload)
+	case event.EventType(gateway.EventAgentFile):
+		payload, ok := ev.Payload.(gateway.FilePayload)
+		if !ok {
+			return m, nil
+		}
+		return m, m.handleAgentFile(payload)
 	}
 
 	last, ok := m.lastMessage()
@@ -778,6 +790,46 @@ func (m *Model) lastMessage() (*chatMessage, bool) {
 		return nil, false
 	}
 	return &m.messages[len(m.messages)-1], true
+}
+
+func (m *Model) handleAgentQuestion(payload gateway.QuestionPayload) tea.Cmd {
+	content := payload.Question
+	if len(payload.Options) > 0 {
+		content += "\n"
+		for i, option := range payload.Options {
+			content += fmt.Sprintf("\n%d. %s", i+1, option)
+		}
+	}
+	if payload.AllowFreeText {
+		content += "\n\nType your answer."
+	}
+
+	msg := chatMessage{
+		Role:     roleSystem,
+		Content:  content,
+		Rendered: renderMarkdown(content, m.width-4),
+	}
+	m.messages = append(m.messages, msg)
+	m.rebuildViewportContent()
+	m.viewport.GotoBottom()
+	return nil
+}
+
+func (m *Model) handleAgentFile(payload gateway.FilePayload) tea.Cmd {
+	content := fmt.Sprintf("File ready: %s", payload.Path)
+	if payload.Caption != "" {
+		content += "\n\n" + payload.Caption
+	}
+
+	msg := chatMessage{
+		Role:     roleSystem,
+		Content:  content,
+		Rendered: renderMarkdown(content, m.width-4),
+	}
+	m.messages = append(m.messages, msg)
+	m.rebuildViewportContent()
+	m.viewport.GotoBottom()
+	return nil
 }
 
 func (m *Model) handleContentDelta(last *chatMessage, payload gateway.ContentDeltaPayload) tea.Cmd {

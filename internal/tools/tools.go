@@ -96,6 +96,8 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 		buildTool(grepName, "Search workspace files by regex. Parameters: pattern, path (optional), include (optional).", grepParams(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }),
 		buildTool(pythonExecName, "Run Python in the sandbox. Parameters: code or script_path, cwd (optional).", pythonExecParams(), func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),
 		buildTool(sendImageName, "Send a workspace image to the current client. Parameters: path.", sendImageParams(), func(a json.RawMessage) (string, error) { return sendImageExec(rt, run, a) }),
+		buildResultTool(SendFileName, "Send an existing workspace file to the current client as a document attachment. Parameters: path, caption (optional).", sendFileParams(), func(a json.RawMessage) (ToolResult, error) { return sendFileExec(rt, run, a) }),
+		buildResultTool(AskUserName, "Ask the user a structured question when their choice changes what you do next. Parameters: question, options (optional), allow_free_text (optional).", askUserParams(), func(a json.RawMessage) (ToolResult, error) { return askUserExec(run, a) }),
 		buildTool(bashExecName, "Run bash in the sandbox. Parameters: command, cwd (optional).", bashExecParams(), func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
 		buildTool(CronjobName,
 			"Manage cron jobs. Parameters: action (add|list|remove|history|pause|resume|run|edit) plus job fields.",

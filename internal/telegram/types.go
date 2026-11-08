@@ -180,6 +180,17 @@ type SendPhotoRequest struct {
 	ReplyMarkup     *InlineKeyboardMarkup
 }
 
+// SendDocumentRequest represents the parameters for sendDocument.
+type SendDocumentRequest struct {
+	ChatID          int64
+	MessageThreadID *int64
+	DocumentName    string
+	DocumentData    []byte
+	Caption         string
+	ParseMode       string
+	ReplyMarkup     *InlineKeyboardMarkup
+}
+
 // EditMessageTextRequest represents the payload for editMessageText API.
 type EditMessageTextRequest struct {
 	ChatID          int64                 `json:"chat_id,omitempty"`

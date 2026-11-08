@@ -147,6 +147,8 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 
 - **generate_image** — Generate an image from a prompt. Saves to workspace. Set `send=true` (default) to deliver to the current client (e.g. Telegram); `send=false` to save only. Only registered when the active provider has image generation configured.
 - **send_image** — Send an existing workspace image to the current client (e.g. Telegram). Use for charts, downloads, or re-sending saved images. Image bytes are not added to conversation history.
+- **send_file** — Send an existing workspace file to the current client as a document attachment. Use for PDFs, Office files, archives, and original-quality images. Parameters: path, caption (optional). Use send_image when an inline preview is better.
+- **ask_user** — Ask the user a structured question with optional answer buttons when their choice changes what you do next. Call it, then end your turn and wait; the answer arrives as the next user message. Do not guess the answer. Not available in scheduled runs.
 
 ## Images
 

@@ -25,7 +25,9 @@ skills: they are procedures over files, shell, and Python.
 | `grep` | Keep | Bounded capture in Wave 1. |
 | `bash_exec` | Keep | Bounded output in Wave 1. Background execution is a TODO. |
 | `python_exec` | Keep | Bounded output in Wave 1. |
-| `send_image` | Keep | Pair with `send_file` in P1. |
+| `send_image` | Keep | Inline image previews. |
+| `send_file` | Keep | Implemented: sends a workspace file as a document attachment. |
+| `ask_user` | Keep | Implemented: structured question with optional Telegram buttons. |
 | `generate_image` | Keep | Register only when the provider is configured for image generation. |
 | `cronjob` | Keep | Compact schema in P2. |
 | `web_search` | Keep | Single search path when `[search]` is configured. |
@@ -36,8 +38,6 @@ skills: they are procedures over files, shell, and Python.
 
 | Candidate | Verdict | Why |
 |---|---|---|
-| `send_file` | Add, P1 | PDF/Office skills need a way to deliver documents to the client. |
-| `ask_user` | Add, P1 | Structured questions; Telegram already supports inline keyboards and callback queries. |
 | `job` | TODO | Needs completion injection before it is worth building. |
 | `subagent` | TODO | Same mechanism: isolated context plus result injection. |
 | MCP | Defer | Only if external tool servers become a requirement. |
@@ -54,9 +54,9 @@ skills: they are procedures over files, shell, and Python.
 3. Bound subprocess output at the process boundary.
 4. Guard `edit_file` against very large files.
 
-### P1 — in progress
+### P1 — implemented
 
-5. **Vision input (implemented):** `read_image`, image attachments in
+5. **Vision input:** `read_image`, image attachments in
    OpenAI/Anthropic/Gemini messages, persisted image paths with runtime
    hydration, and inbound Telegram photos and image documents. Images are
    injected as a user message after tool results; the transcript stores paths,
@@ -67,10 +67,10 @@ skills: they are procedures over files, shell, and Python.
 7. **`ask_user`:** non-blocking structured questions. The tool publishes an
    `AgentQuestion` event and ends the turn; the answer arrives as the next user
    message. Telegram renders one inline button per option and sends the choice
-   as a normal user message. Exclude the tool from cron agent runs. Blocking
+   as a normal user message. Excluded from scheduled agent runs. Blocking
    answers need the async mechanism below.
-8. **Binary guard (implemented):** `read_file` detects images and PDFs and
-   points at `read_image` or a document skill instead of dumping bytes.
+8. **Binary guard:** `read_file` detects images and PDFs and points at
+   `read_image` or a document skill instead of dumping bytes.
 
 ### TODO — needs design
 

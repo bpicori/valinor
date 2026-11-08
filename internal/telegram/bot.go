@@ -41,6 +41,9 @@ type Bot struct {
 	// Per-chat model picker state (single goroutine access, no mutex needed)
 	modelPickers map[int64]*modelPicker
 
+	// Per-chat pending ask_user questions (single goroutine access, no mutex needed)
+	pendingQuestions map[int64]map[string]pendingQuestion
+
 	bridgesMu sync.RWMutex
 
 	// Lifecycle
@@ -82,12 +85,21 @@ func NewBot(cfg Config) (*Bot, error) {
 	}
 
 	return &Bot{
-		config:       cfg,
-		bridges:      make(map[string]*Bridge),
-		events:       make(chan chatEvent, 100),
-		trackers:     make(map[int64]*messageTracker),
-		modelPickers: make(map[int64]*modelPicker),
+		config:           cfg,
+		bridges:          make(map[string]*Bridge),
+		events:           make(chan chatEvent, 100),
+		trackers:         make(map[int64]*messageTracker),
+		modelPickers:     make(map[int64]*modelPicker),
+		pendingQuestions: make(map[int64]map[string]pendingQuestion),
 	}, nil
+}
+
+const questionTTL = 10 * time.Minute
+
+type pendingQuestion struct {
+	Question  string
+	Options   []string
+	CreatedAt time.Time
 }
 
 // Start initializes and starts all bot components.
@@ -550,6 +562,10 @@ func (b *Bot) processEvent(ev chatEvent, tracker *messageTracker) error {
 		return b.handleContentFull(ev, tracker)
 	case event.AgentImage:
 		return b.handleImage(ev, tracker)
+	case event.AgentFile:
+		return b.handleFile(ev, tracker)
+	case event.AgentQuestion:
+		return b.handleQuestion(ev, tracker)
 	case event.AgentDone:
 		return b.handleAgentDone(ev, tracker)
 	case event.AgentError:
@@ -638,6 +654,195 @@ func (b *Bot) handleImage(ev chatEvent, tracker *messageTracker) error {
 			logger.BuildMetadata("error", err, "chat_id", ev.identity.ChatID))
 	}
 	return nil
+}
+
+// handleFile sends a workspace file as a Telegram document.
+func (b *Bot) handleFile(ev chatEvent, tracker *messageTracker) error {
+	payload, ok := ev.event.Payload.(gateway.FilePayload)
+	if !ok {
+		return nil
+	}
+
+	path, ok := safeWorkspaceFilePath(b.config.WorkspaceDir, payload.Path)
+	if !ok {
+		logger.Warning("telegram bot: rejected file path",
+			logger.BuildMetadata("path", payload.Path, "chat_id", ev.identity.ChatID))
+		return b.sendTelegramMessage(ev.identity, tracker, &RenderResult{Text: "Could not send the file: invalid workspace path."})
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		logger.Warning("telegram bot: read file failed",
+			logger.BuildMetadata("path", path, "error", err, "chat_id", ev.identity.ChatID))
+		return b.sendTelegramMessage(ev.identity, tracker, &RenderResult{Text: "Could not read the file."})
+	}
+	if len(data) > maxSendDocumentBytes {
+		return b.sendTelegramMessage(ev.identity, tracker, &RenderResult{
+			Text: fmt.Sprintf("The file is larger than %d MB.", maxSendDocumentBytes/(1<<20)),
+		})
+	}
+
+	fileName := payload.FileName
+	if fileName == "" {
+		fileName = filepath.Base(path)
+	}
+
+	if _, err := b.client.SendDocument(b.ctx, SendDocumentRequest{
+		ChatID:       ev.identity.ChatID,
+		DocumentName: fileName,
+		DocumentData: data,
+		Caption:      payload.Caption,
+	}); err != nil {
+		logger.Warning("telegram bot: send document failed",
+			logger.BuildMetadata("path", path, "file_name", fileName, "error", err, "chat_id", ev.identity.ChatID))
+		return b.sendTelegramMessage(ev.identity, tracker, &RenderResult{Text: "Could not send the file."})
+	}
+
+	logger.Debug("telegram bot: document sent",
+		logger.BuildMetadata("chat_id", ev.identity.ChatID, "file_name", fileName, "bytes", len(data)))
+	return nil
+}
+
+// handleQuestion sends a structured question with inline option buttons.
+func (b *Bot) handleQuestion(ev chatEvent, tracker *messageTracker) error {
+	payload, ok := ev.event.Payload.(gateway.QuestionPayload)
+	if !ok || payload.QuestionID == "" || strings.TrimSpace(payload.Question) == "" {
+		return nil
+	}
+
+	if len(payload.Options) > 0 {
+		questions := b.pendingQuestions[ev.identity.ChatID]
+		if questions == nil {
+			questions = make(map[string]pendingQuestion)
+			b.pendingQuestions[ev.identity.ChatID] = questions
+		}
+		questions[payload.QuestionID] = pendingQuestion{
+			Question:  payload.Question,
+			Options:   append([]string(nil), payload.Options...),
+			CreatedAt: time.Now(),
+		}
+	}
+
+	text := payload.Question
+	var markup *InlineKeyboardMarkup
+	if len(payload.Options) > 0 {
+		text += "\n\nChoose an answer:"
+		rows := make([][]InlineKeyboardButton, 0, len(payload.Options))
+		for i, option := range payload.Options {
+			rows = append(rows, []InlineKeyboardButton{{
+				Text:         truncateButtonText(option),
+				CallbackData: fmt.Sprintf("ask:%s:%d", payload.QuestionID, i),
+			}})
+		}
+		markup = &InlineKeyboardMarkup{InlineKeyboard: rows}
+	} else if payload.AllowFreeText {
+		text += "\n\nType your answer."
+	}
+
+	return b.sendTelegramMessage(ev.identity, tracker, &RenderResult{
+		Text:        text,
+		ReplyMarkup: markup,
+	})
+}
+
+// handleQuestionCallback resolves an ask_user button click into a user message.
+func (b *Bot) handleQuestionCallback(query *CallbackQuery) (bool, error) {
+	if query == nil || !strings.HasPrefix(query.Data, "ask:") {
+		return false, nil
+	}
+	if query.Message == nil || query.Message.Chat == nil {
+		_ = b.answerCallback(query.ID, "")
+		return true, nil
+	}
+
+	parts := strings.Split(query.Data, ":")
+	if len(parts) != 3 {
+		_ = b.answerCallback(query.ID, "Invalid answer")
+		return true, nil
+	}
+	index, err := strconv.Atoi(parts[2])
+	if err != nil {
+		_ = b.answerCallback(query.ID, "Invalid answer")
+		return true, nil
+	}
+
+	chatID := query.Message.Chat.ID
+	questions := b.pendingQuestions[chatID]
+	pending, ok := questions[parts[1]]
+	if !ok || time.Since(pending.CreatedAt) > questionTTL {
+		delete(questions, parts[1])
+		_ = b.answerCallback(query.ID, "Question expired")
+		return true, nil
+	}
+	if index < 0 || index >= len(pending.Options) {
+		_ = b.answerCallback(query.ID, "Invalid answer")
+		return true, nil
+	}
+
+	identity := FromTelegramUpdate(query.Message.Chat)
+	tracker := b.getOrCreateTracker(chatID)
+	if tracker.isBusy() {
+		_ = b.answerCallback(query.ID, "Please wait for the current response.")
+		return true, nil
+	}
+
+	delete(questions, parts[1])
+	if len(questions) == 0 {
+		delete(b.pendingQuestions, chatID)
+	}
+
+	option := pending.Options[index]
+	_ = b.answerCallback(query.ID, "Answer sent")
+	if query.Message.MessageID != 0 {
+		_, _ = b.client.EditMessageText(b.ctx, EditMessageTextRequest{
+			ChatID:    chatID,
+			MessageID: query.Message.MessageID,
+			Text:      pending.Question + "\n\nAnswer: " + option,
+		})
+	}
+
+	requestID := fmt.Sprintf("tg_ask_%d_%d", chatID, time.Now().UnixNano())
+	cmd := &Command{
+		Identity:  identity,
+		RequestID: requestID,
+		Type:      gateway.CommandUserMessage,
+		Payload: gateway.UserMessagePayload{
+			Content: "Answer: " + option,
+		},
+		RawText: "Answer: " + option,
+	}
+	return true, b.processCommand(cmd, tracker)
+}
+
+const maxSendDocumentBytes = 50 << 20
+
+func safeWorkspaceFilePath(workspaceDir, path string) (string, bool) {
+	if strings.TrimSpace(workspaceDir) == "" {
+		return "", false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	if cleaned == "" || cleaned == "." || filepath.IsAbs(cleaned) ||
+		strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, "/..") {
+		return "", false
+	}
+
+	workspace, err := filepath.Abs(workspaceDir)
+	if err != nil {
+		return "", false
+	}
+	workspace, err = filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(workspace, filepath.FromSlash(cleaned)))
+	if err != nil {
+		return "", false
+	}
+	rel, err := filepath.Rel(workspace, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false
+	}
+	return resolved, true
 }
 
 // handleAgentDone processes the final agent completion.
@@ -810,6 +1015,10 @@ func (b *Bot) applyDirectModelSwitch(cmd *Command, bridge *Bridge) error {
 func (b *Bot) processCallbackQuery(query *CallbackQuery) error {
 	if query == nil || query.Message == nil || query.Message.Chat == nil {
 		return nil
+	}
+
+	if handled, err := b.handleQuestionCallback(query); handled {
+		return err
 	}
 
 	action, arg, ok := parsePickerCallback(query.Data)

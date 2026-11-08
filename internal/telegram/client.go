@@ -17,6 +17,8 @@ const (
 	DefaultAPIEndpoint = "https://api.telegram.org/bot"
 	// DefaultRequestTimeout is the default timeout for API requests (except long-polling).
 	DefaultRequestTimeout = 30 * time.Second
+	// DefaultFileTimeout is the timeout for file uploads and downloads.
+	DefaultFileTimeout = 5 * time.Minute
 	// DefaultLongPollTimeout is the default timeout for getUpdates long polling.
 	DefaultLongPollTimeout = 30
 )
@@ -25,6 +27,7 @@ const (
 type Client struct {
 	token          string
 	httpClient     *http.Client
+	fileClient     *http.Client
 	longPollClient *http.Client
 	endpoint       string
 }
@@ -34,6 +37,7 @@ func NewClient(token string) *Client {
 	return &Client{
 		token:          token,
 		httpClient:     &http.Client{Timeout: DefaultRequestTimeout},
+		fileClient:     &http.Client{Timeout: DefaultFileTimeout},
 		longPollClient: &http.Client{Timeout: 100 * time.Second}, // Max 90s poll + buffer
 		endpoint:       DefaultAPIEndpoint + token + "/",
 	}
@@ -97,7 +101,7 @@ func (c *Client) apiCallMultipart(ctx context.Context, method string, build func
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.fileClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("execute request: %w", err)
 	}
@@ -248,6 +252,68 @@ func (c *Client) SendPhoto(ctx context.Context, req SendPhotoRequest) (*Message,
 	return &msg, nil
 }
 
+// SendDocument uploads and sends a document to a chat.
+func (c *Client) SendDocument(ctx context.Context, req SendDocumentRequest) (*Message, error) {
+	resp, err := c.apiCallMultipart(ctx, "sendDocument", func(writer *multipart.Writer) error {
+		if err := writer.WriteField("chat_id", fmt.Sprintf("%d", req.ChatID)); err != nil {
+			return fmt.Errorf("write chat_id: %w", err)
+		}
+		if req.MessageThreadID != nil {
+			if err := writer.WriteField("message_thread_id", fmt.Sprintf("%d", *req.MessageThreadID)); err != nil {
+				return fmt.Errorf("write message_thread_id: %w", err)
+			}
+		}
+		if req.Caption != "" {
+			if err := writer.WriteField("caption", req.Caption); err != nil {
+				return fmt.Errorf("write caption: %w", err)
+			}
+		}
+		if req.ParseMode != "" {
+			if err := writer.WriteField("parse_mode", req.ParseMode); err != nil {
+				return fmt.Errorf("write parse_mode: %w", err)
+			}
+		}
+		if req.ReplyMarkup != nil {
+			data, err := json.Marshal(req.ReplyMarkup)
+			if err != nil {
+				return fmt.Errorf("marshal reply_markup: %w", err)
+			}
+			if err := writer.WriteField("reply_markup", string(data)); err != nil {
+				return fmt.Errorf("write reply_markup: %w", err)
+			}
+		}
+		if len(req.DocumentData) == 0 {
+			return fmt.Errorf("document data is required")
+		}
+
+		fileName := req.DocumentName
+		if fileName == "" {
+			fileName = "file"
+		}
+
+		part, err := writer.CreateFormFile("document", fileName)
+		if err != nil {
+			return fmt.Errorf("create document form file: %w", err)
+		}
+		if _, err := part.Write(req.DocumentData); err != nil {
+			return fmt.Errorf("write document: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, resp
+	}
+
+	var msg Message
+	if err := json.Unmarshal(resp.Result, &msg); err != nil {
+		return nil, fmt.Errorf("unmarshal message: %w", err)
+	}
+	return &msg, nil
+}
+
 // EditMessageText edits a message text.
 func (c *Client) EditMessageText(ctx context.Context, req EditMessageTextRequest) (*Message, error) {
 	resp, err := c.apiCall(ctx, "editMessageText", req)
@@ -321,7 +387,7 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 		return nil, fmt.Errorf("create download request: %w", err)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.fileClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download file: %w", err)
 	}

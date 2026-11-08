@@ -59,11 +59,13 @@ const (
 
 // Event types (gateway -> client) - re-exported from event package.
 const (
-	EventAgentContentDelta    = string(event.AgentContentDelta)
-	EventAgentContentFull     = string(event.AgentContentFull)
-	EventAgentImage           = string(event.AgentImage)
-	EventAgentThinking        = string(event.AgentThinking)
-	EventAgentStepTokens      = string(event.AgentStepTokens)
+	EventAgentContentDelta        = string(event.AgentContentDelta)
+	EventAgentContentFull         = string(event.AgentContentFull)
+	EventAgentImage               = string(event.AgentImage)
+	EventAgentFile                = string(event.AgentFile)
+	EventAgentQuestion            = string(event.AgentQuestion)
+	EventAgentThinking            = string(event.AgentThinking)
+	EventAgentStepTokens          = string(event.AgentStepTokens)
 	EventContextTokens            = string(event.ContextTokens)
 	EventContextCompressed        = string(event.ContextCompressed)
 	EventContextCompressionFailed = string(event.ContextCompressionFailed)
@@ -116,11 +118,13 @@ type (
 
 // Event payloads - re-exported from event package.
 type (
-	ContentDeltaPayload         = event.ContentDeltaPayload
-	ContentFullPayload          = event.ContentFullPayload
-	ImagePayload                = event.ImagePayload
-	ThinkingPayload             = event.ThinkingPayload
-	StepTokenUsagePayload       = event.StepTokenUsagePayload
+	ContentDeltaPayload             = event.ContentDeltaPayload
+	ContentFullPayload              = event.ContentFullPayload
+	ImagePayload                    = event.ImagePayload
+	FilePayload                     = event.FilePayload
+	QuestionPayload                 = event.QuestionPayload
+	ThinkingPayload                 = event.ThinkingPayload
+	StepTokenUsagePayload           = event.StepTokenUsagePayload
 	ContextTokensPayload            = event.ContextTokensPayload
 	ContextCompressedPayload        = event.ContextCompressedPayload
 	ContextCompressionFailedPayload = event.ContextCompressionFailedPayload

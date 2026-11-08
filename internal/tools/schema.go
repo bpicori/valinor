@@ -9,10 +9,11 @@ import (
 
 // ToolResult is the outcome of one tool call. Images are attached to the
 // conversation after the tool result; Text is the only part the model reads
-// directly.
+// directly. EndTurn stops the run after all tool results are recorded.
 type ToolResult struct {
-	Text   string
-	Images []media.Image
+	Text    string
+	Images  []media.Image
+	EndTurn bool
 }
 
 // Tool represents a tool with its schema definition and execution function.

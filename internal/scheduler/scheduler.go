@@ -34,7 +34,7 @@ const (
 )
 
 // cronAgentExcludedTools lists tools withheld from agents during scheduled job runs.
-var cronAgentExcludedTools = []string{agenttools.CronjobName}
+var cronAgentExcludedTools = []string{agenttools.CronjobName, agenttools.AskUserName, agenttools.SendFileName}
 
 // Scheduler runs scheduled jobs from the jobs store.
 type Scheduler struct {

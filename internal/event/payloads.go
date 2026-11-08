@@ -61,6 +61,24 @@ type ImagePayload struct {
 	Base64   string `json:"base64"`
 }
 
+// FilePayload carries one workspace file for client-side delivery. The client
+// reads the file from the workspace; bytes are not serialized into the event.
+type FilePayload struct {
+	Path     string `json:"path"`
+	FileName string `json:"file_name"`
+	MIMEType string `json:"mime_type,omitempty"`
+	Size     int64  `json:"size,omitempty"`
+	Caption  string `json:"caption,omitempty"`
+}
+
+// QuestionPayload carries a structured question for an interactive client.
+type QuestionPayload struct {
+	QuestionID    string   `json:"question_id"`
+	Question      string   `json:"question"`
+	Options       []string `json:"options,omitempty"`
+	AllowFreeText bool     `json:"allow_free_text"`
+}
+
 // ThinkingPayload carries a reasoning/thinking update.
 type ThinkingPayload struct {
 	Step    int    `json:"step"`

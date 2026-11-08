@@ -22,22 +22,24 @@ const (
 	CancelAgentRun        EventType = "cancel_agent_run"        // User requested cancellation of in-flight agent run.
 
 	// Agent streaming events (published by Agent).
-	ProviderModelsResult EventType = "provider_models_result" // Runtime returns available models.
-	AgentContentDelta    EventType = "agent_content_delta"    // Streamed content chunk.
-	AgentContentFull     EventType = "agent_content_full"     // Full assistant content for response.
-	AgentImage           EventType = "agent_image"            // Generated image delivered to the client.
-	AgentThinking        EventType = "agent_thinking"         // Reasoning/thinking step.
-	AgentStepTokens      EventType = "agent_step_tokens"      // Per-step token usage.
+	ProviderModelsResult     EventType = "provider_models_result"     // Runtime returns available models.
+	AgentContentDelta        EventType = "agent_content_delta"        // Streamed content chunk.
+	AgentContentFull         EventType = "agent_content_full"         // Full assistant content for response.
+	AgentImage               EventType = "agent_image"                // Generated image delivered to the client.
+	AgentFile                EventType = "agent_file"                 // Workspace file delivered to the client.
+	AgentQuestion            EventType = "agent_question"             // Structured question for the client.
+	AgentThinking            EventType = "agent_thinking"             // Reasoning/thinking step.
+	AgentStepTokens          EventType = "agent_step_tokens"          // Per-step token usage.
 	ContextTokens            EventType = "context_tokens"             // Current context token estimate.
 	ContextCompressed        EventType = "context_compressed"         // Middle context summarized.
 	ContextCompressionFailed EventType = "context_compression_failed" // Context summarization failed.
 
-	AgentRefusal         EventType = "agent_refusal"          // Model refusal.
-	AgentToolCallStart   EventType = "agent_tool_call_start"  // Tool call initiated.
-	AgentToolCallDone    EventType = "agent_tool_call_done"   // Tool call completed.
-	AgentDone            EventType = "agent_done"             // Agent turn finished.
-	AgentError           EventType = "agent_error"            // Agent error.
-	AgentCancelled       EventType = "agent_cancelled"        // Agent run was cancelled.
+	AgentRefusal       EventType = "agent_refusal"         // Model refusal.
+	AgentToolCallStart EventType = "agent_tool_call_start" // Tool call initiated.
+	AgentToolCallDone  EventType = "agent_tool_call_done"  // Tool call completed.
+	AgentDone          EventType = "agent_done"            // Agent turn finished.
+	AgentError         EventType = "agent_error"           // Agent error.
+	AgentCancelled     EventType = "agent_cancelled"       // Agent run was cancelled.
 
 	// Session lifecycle events.
 	SessionAttached  EventType = "session_attached" // Session attached to identity.
@@ -68,22 +70,24 @@ var registry = map[EventType]PayloadFactory{
 	RequestProviderModels: func() any { return &RequestProviderModelsPayload{} },
 	CancelAgentRun:        func() any { return nil },
 
-	ProviderModelsResult: func() any { return &ProviderModelsResultPayload{} },
-	AgentContentDelta:    func() any { return &ContentDeltaPayload{} },
-	AgentContentFull:     func() any { return &ContentFullPayload{} },
-	AgentImage:           func() any { return &ImagePayload{} },
-	AgentThinking:        func() any { return &ThinkingPayload{} },
-	AgentStepTokens:      func() any { return &StepTokenUsagePayload{} },
+	ProviderModelsResult:     func() any { return &ProviderModelsResultPayload{} },
+	AgentContentDelta:        func() any { return &ContentDeltaPayload{} },
+	AgentContentFull:         func() any { return &ContentFullPayload{} },
+	AgentImage:               func() any { return &ImagePayload{} },
+	AgentFile:                func() any { return &FilePayload{} },
+	AgentQuestion:            func() any { return &QuestionPayload{} },
+	AgentThinking:            func() any { return &ThinkingPayload{} },
+	AgentStepTokens:          func() any { return &StepTokenUsagePayload{} },
 	ContextTokens:            func() any { return &ContextTokensPayload{} },
 	ContextCompressed:        func() any { return &ContextCompressedPayload{} },
 	ContextCompressionFailed: func() any { return &ContextCompressionFailedPayload{} },
 
-	AgentRefusal:         func() any { return &RefusalPayload{} },
-	AgentToolCallStart:   func() any { return &ToolCallStartPayload{} },
-	AgentToolCallDone:    func() any { return &ToolCallDonePayload{} },
-	AgentDone:            func() any { return &AgentDonePayload{} },
-	AgentError:           func() any { return &AgentErrorPayload{} },
-	AgentCancelled:       func() any { return &AgentCancelledPayload{} },
+	AgentRefusal:       func() any { return &RefusalPayload{} },
+	AgentToolCallStart: func() any { return &ToolCallStartPayload{} },
+	AgentToolCallDone:  func() any { return &ToolCallDonePayload{} },
+	AgentDone:          func() any { return &AgentDonePayload{} },
+	AgentError:         func() any { return &AgentErrorPayload{} },
+	AgentCancelled:     func() any { return &AgentCancelledPayload{} },
 
 	SessionAttached:  func() any { return &SessionAttachedPayload{} },
 	ChangeModelEvent: func() any { return &ChangeProviderModelPayload{} },
@@ -138,6 +142,10 @@ func deref(v any) any {
 	case *ContentFullPayload:
 		return *ptr
 	case *ImagePayload:
+		return *ptr
+	case *FilePayload:
+		return *ptr
+	case *QuestionPayload:
 		return *ptr
 	case *ThinkingPayload:
 		return *ptr

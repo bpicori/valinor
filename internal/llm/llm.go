@@ -192,6 +192,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		})
 
 		var toolImages []media.Image
+		endTurn := false
 		for _, tc := range result.Message.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -235,6 +236,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Content:    toolResult.Text,
 			})
 			toolImages = append(toolImages, toolResult.Images...)
+			if toolResult.EndTurn {
+				endTurn = true
+			}
 		}
 
 		if len(toolImages) > 0 {
@@ -243,6 +247,16 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 				Content: imageAttachmentMessage(toolImages),
 				Images:  toolImages,
 			})
+		}
+
+		if endTurn {
+			publishEvent(event.AgentDone, event.AgentDonePayload{
+				PromptTokens:     usage.PromptTokens,
+				CompletionTokens: usage.CompletionTokens,
+				TotalTokens:      usage.TotalTokens,
+			})
+			logger.Debug("llm iteration done", logger.BuildMetadata("iteration", iterations, "usage", usage, "reason", "tool ended turn"))
+			return RunResult{Messages: messages, Usage: usage}, nil
 		}
 	}
 }
