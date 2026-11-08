@@ -130,6 +130,9 @@ type ProviderConfig struct {
 	APIKey       string `toml:"api_key"`       // API key for the provider
 	BaseURL      string `toml:"base_url"`      // Base URL (for openai-compatible providers)
 	DefaultModel string `toml:"default_model"` // Default model for new sessions (bootstrap fallback)
+	// Thinking enables or disables provider-side reasoning when supported.
+	// Values: "", "enabled", "disabled". Empty leaves the provider default.
+	Thinking string `toml:"thinking"`
 
 	// TranscriptionEnabled enables Telegram voice message transcription via this provider.
 	TranscriptionEnabled bool `toml:"transcription_enabled"`

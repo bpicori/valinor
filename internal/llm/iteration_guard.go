@@ -100,8 +100,9 @@ func (l *LLM) runGracefulFinalTurn(
 	}
 
 	messages = append(messages, agentcontext.Message{
-		Role:    agentcontext.RoleAssistant,
-		Content: content,
+		Role:             agentcontext.RoleAssistant,
+		Content:          content,
+		ReasoningContent: result.Message.ReasoningContent,
 	})
 
 	if content != "" {

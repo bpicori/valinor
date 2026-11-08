@@ -159,8 +159,9 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		// Handle result message
 		if len(result.Message.ToolCalls) == 0 {
 			messages = append(messages, agentcontext.Message{
-				Role:    agentcontext.RoleAssistant,
-				Content: result.Message.Content,
+				Role:             agentcontext.RoleAssistant,
+				Content:          result.Message.Content,
+				ReasoningContent: result.Message.ReasoningContent,
 			})
 			publishEvent(event.AgentDone, event.AgentDonePayload{
 				PromptTokens:     usage.PromptTokens,
@@ -182,8 +183,10 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			})
 		}
 		messages = append(messages, agentcontext.Message{
-			Role:      agentcontext.RoleAssistantToolCalls,
-			ToolCalls: toolCalls,
+			Role:             agentcontext.RoleAssistantToolCalls,
+			Content:          result.Message.Content,
+			ReasoningContent: result.Message.ReasoningContent,
+			ToolCalls:        toolCalls,
 		})
 
 		for _, tc := range result.Message.ToolCalls {
@@ -249,8 +252,9 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 			})
 		case agentcontext.RoleAssistant:
 			out = append(out, Message{
-				Role:    RoleAssistant,
-				Content: m.Content,
+				Role:             RoleAssistant,
+				Content:          m.Content,
+				ReasoningContent: m.ReasoningContent,
 			})
 		case agentcontext.RoleAssistantToolCalls:
 			toolCalls := make([]ToolCall, 0, len(m.ToolCalls))
@@ -262,8 +266,10 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 				})
 			}
 			out = append(out, Message{
-				Role:      RoleAssistant,
-				ToolCalls: toolCalls,
+				Role:             RoleAssistant,
+				Content:          m.Content,
+				ReasoningContent: m.ReasoningContent,
+				ToolCalls:        toolCalls,
 			})
 		case agentcontext.RoleTool:
 			out = append(out, Message{

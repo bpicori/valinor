@@ -15,7 +15,7 @@ func CreateAudioTranscriber(cfg config.ProviderConfig) (llm.AudioTranscriber, er
 	if cfg.Type != "openai" && cfg.Type != "openai-compatible" {
 		return nil, fmt.Errorf("audio transcription requires openai or openai-compatible provider, got %s", cfg.Type)
 	}
-	provider, err := openai.New(cfg.APIKey, cfg.BaseURL, httpClient())
+	provider, err := openai.New(cfg.APIKey, cfg.BaseURL, httpClient(), "")
 	if err != nil {
 		return nil, err
 	}
@@ -34,13 +34,13 @@ func CreateProvider(cfg config.ProviderConfig) (llm.Provider, error) {
 	var err error
 	switch cfg.Type {
 	case "openai":
-		provider, err = openai.New(cfg.APIKey, "", client)
+		provider, err = openai.New(cfg.APIKey, "", client, cfg.Thinking)
 	case "anthropic":
 		provider, err = anthropic.New(cfg.APIKey, client)
 	case "gemini":
 		provider, err = gemini.New(cfg.APIKey, client)
 	case "openai-compatible":
-		provider, err = openai.New(cfg.APIKey, cfg.BaseURL, client)
+		provider, err = openai.New(cfg.APIKey, cfg.BaseURL, client, cfg.Thinking)
 	default:
 		return nil, fmt.Errorf("unknown provider type: %s", cfg.Type)
 	}

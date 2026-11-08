@@ -33,6 +33,15 @@ default_model = "gemini-2.0-flash"
 # image_generation_enabled = true
 # image_model = "openai/gpt-image-1"
 
+# DeepSeek example. Thinking is optional at the API level; set it explicitly
+# when you want reasoning content.
+# [providers.deepseek]
+# type = "openai-compatible"
+# api_key = "sk-..."
+# base_url = "https://api.deepseek.com"
+# default_model = "deepseek-flash"
+# thinking = "enabled"
+
 # Gateway (enabled by default; TUI and Telegram connect here)
 gateway_host = "127.0.0.1"
 gateway_port = 7778
@@ -55,7 +64,7 @@ max_agent_iterations = 20
 # [context]
 # preserve_recent_messages = 20  # messages kept verbatim at the tail
 # window_tokens = 200000         # model context window used for compression thresholds
-# max_output_tokens = 8192       # cap on the model's response length per call
+# max_output_tokens = 8192       # raise to 65536 for DeepSeek thinking mode
 
 # Telegram Bot configuration
 # enabled defaults to true; the setup wizard only asks for bot_token

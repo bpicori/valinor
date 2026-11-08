@@ -22,6 +22,7 @@ func EstimatePromptTokens(messages []agentcontext.Message) int64 {
 	for _, msg := range messages {
 		total += baseMessageOverheadTokens
 		total += estimateTextTokens(msg.Content)
+		total += estimateTextTokens(msg.ReasoningContent)
 		total += estimateTextTokens(string(msg.Role))
 
 		if msg.ToolCallID != "" {

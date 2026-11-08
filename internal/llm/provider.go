@@ -27,10 +27,11 @@ const (
 
 // Message represents a conversation message in a provider-agnostic format.
 type Message struct {
-	Role       MessageRole
-	Content    string
-	ToolCalls  []ToolCall
-	ToolCallID string
+	Role             MessageRole
+	Content          string
+	ReasoningContent string
+	ToolCalls        []ToolCall
+	ToolCallID       string
 }
 
 // ToolCall represents a request from the model to execute a tool.

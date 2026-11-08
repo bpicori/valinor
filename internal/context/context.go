@@ -54,11 +54,12 @@ type ToolCall struct {
 
 // Message is a provider-agnostic conversation message.
 type Message struct {
-	Role       MessageRole `json:"role"`
-	Content    string      `json:"content,omitempty"`
-	ToolCallID string      `json:"tool_call_id,omitempty"`
-	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
-	BlobRef    string      `json:"blob_ref,omitempty"`
+	Role             MessageRole `json:"role"`
+	Content          string      `json:"content,omitempty"`
+	ReasoningContent string      `json:"reasoning_content,omitempty"`
+	ToolCallID       string      `json:"tool_call_id,omitempty"`
+	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
+	BlobRef          string      `json:"blob_ref,omitempty"`
 }
 
 // CloneMessages returns a shallow copy of a message slice.

@@ -8,6 +8,7 @@ import (
 	"valinor/internal/tools"
 
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/shared"
 	"github.com/openai/openai-go/v3/shared/constant"
 )
@@ -37,15 +38,28 @@ func ToOpenAIMessages(messages []llm.Message) []openai.ChatCompletionMessagePara
 						},
 					})
 				}
-				out = append(out, openai.ChatCompletionMessageParamUnion{
-					OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-						Role:      constant.Assistant("assistant"),
-						ToolCalls: toolCalls,
-					},
-				})
+				assistant := &openai.ChatCompletionAssistantMessageParam{
+					Role:      constant.Assistant("assistant"),
+					ToolCalls: toolCalls,
+				}
+				if m.Content != "" {
+					assistant.Content.OfString = param.NewOpt(m.Content)
+				}
+				if m.ReasoningContent != "" {
+					assistant.SetExtraFields(map[string]any{
+						"reasoning_content": m.ReasoningContent,
+					})
+				}
+				out = append(out, openai.ChatCompletionMessageParamUnion{OfAssistant: assistant})
 			} else {
 				// Regular assistant message
-				out = append(out, openai.AssistantMessage(m.Content))
+				assistant := openai.AssistantMessage(m.Content)
+				if m.ReasoningContent != "" {
+					assistant.OfAssistant.SetExtraFields(map[string]any{
+						"reasoning_content": m.ReasoningContent,
+					})
+				}
+				out = append(out, assistant)
 			}
 		case llm.RoleTool:
 			out = append(out, openai.ToolMessage(m.Content, m.ToolCallID))

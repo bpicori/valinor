@@ -2,7 +2,9 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 
 	"valinor/internal/llm"
 	"valinor/internal/logger"
@@ -17,10 +19,11 @@ type Provider struct {
 	apiKey     string
 	baseURL    string
 	httpClient *http.Client
+	thinking   string
 }
 
 // New creates a new OpenAI provider instance.
-func New(apiKey, baseURL string, httpClient *http.Client) (*Provider, error) {
+func New(apiKey, baseURL string, httpClient *http.Client, thinking string) (*Provider, error) {
 	opts := []option.RequestOption{
 		option.WithHTTPClient(httpClient),
 	}
@@ -39,6 +42,7 @@ func New(apiKey, baseURL string, httpClient *http.Client) (*Provider, error) {
 		apiKey:     apiKey,
 		baseURL:    baseURL,
 		httpClient: httpClient,
+		thinking:   thinking,
 	}, nil
 }
 
@@ -90,11 +94,19 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	}
 
 	// Start streaming
-	stream := p.client.Chat.Completions.NewStreaming(ctx, oaiParams)
+	var opts []option.RequestOption
+	switch p.thinking {
+	case "enabled":
+		opts = append(opts, option.WithJSONSet("thinking.type", "enabled"))
+	case "disabled":
+		opts = append(opts, option.WithJSONSet("thinking.type", "disabled"))
+	}
+	stream := p.client.Chat.Completions.NewStreaming(ctx, oaiParams, opts...)
 	acc := openai.ChatCompletionAccumulator{}
 
 	var usage llm.Usage
-	var assistantContent string
+	var assistantContent strings.Builder
+	var reasoningContent strings.Builder
 
 	for stream.Next() {
 		chunk := stream.Current()
@@ -109,14 +121,17 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 			}
 		}
 
-		// Handle content deltas
+		// Handle content and reasoning deltas
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
 			if delta.Content != "" {
-				assistantContent += delta.Content
+				assistantContent.WriteString(delta.Content)
 				if params.OnDelta != nil {
 					params.OnDelta(llm.StreamDelta{Content: delta.Content})
 				}
+			}
+			if piece := reasoningDelta(delta); piece != "" {
+				reasoningContent.WriteString(piece)
 			}
 			if delta.Refusal != "" {
 				if params.OnDelta != nil {
@@ -132,7 +147,11 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 	}
 
 	// Build result message
-	var resultMsg llm.Message
+	resultMsg := llm.Message{
+		Role:             llm.RoleAssistant,
+		Content:          assistantContent.String(),
+		ReasoningContent: reasoningContent.String(),
+	}
 	if len(acc.Choices) > 0 {
 		msg := acc.Choices[0].Message
 		if len(msg.ToolCalls) > 0 {
@@ -145,16 +164,7 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 					Arguments: tc.Function.Arguments,
 				})
 			}
-			resultMsg = llm.Message{
-				Role:      llm.RoleAssistant,
-				ToolCalls: toolCalls,
-			}
-		} else {
-			// Regular assistant message
-			resultMsg = llm.Message{
-				Role:    llm.RoleAssistant,
-				Content: assistantContent,
-			}
+			resultMsg.ToolCalls = toolCalls
 		}
 	}
 
@@ -162,4 +172,24 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 		Message: resultMsg,
 		Usage:   usage,
 	}, nil
+}
+
+// reasoningDelta returns the reasoning_content fragment carried by a stream delta.
+// DeepSeek returns this as an extension field that the OpenAI SDK does not model.
+func reasoningDelta(delta openai.ChatCompletionChunkChoiceDelta) string {
+	if raw := delta.RawJSON(); raw != "" {
+		var payload struct {
+			ReasoningContent string `json:"reasoning_content"`
+		}
+		if err := json.Unmarshal([]byte(raw), &payload); err == nil && payload.ReasoningContent != "" {
+			return payload.ReasoningContent
+		}
+	}
+	if field, ok := delta.JSON.ExtraFields["reasoning_content"]; ok && field.Valid() {
+		var piece string
+		if err := json.Unmarshal([]byte(field.Raw()), &piece); err == nil {
+			return piece
+		}
+	}
+	return ""
 }

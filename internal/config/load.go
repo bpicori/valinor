@@ -132,6 +132,11 @@ func Validate(cfg Config) error {
 		if provider.Type == "openai-compatible" && provider.BaseURL == "" {
 			return fmt.Errorf("provider '%s' of type 'openai-compatible' requires base_url field", name)
 		}
+		switch provider.Thinking {
+		case "", "enabled", "disabled":
+		default:
+			return fmt.Errorf("provider '%s' thinking must be enabled, disabled, or empty", name)
+		}
 		if provider.TranscriptionEnabled {
 			if provider.TranscriptionModel == "" {
 				return fmt.Errorf("provider '%s' has transcription_enabled but missing transcription_model", name)
