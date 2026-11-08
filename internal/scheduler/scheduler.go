@@ -163,7 +163,7 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 		wg.Add(1)
 		go func(job *cron.CronJob) {
 			defer wg.Done()
-			s.runJobWithWorkdirLock(ctx, job, now)
+			s.runJob(ctx, job, now)
 		}(job)
 	}
 	wg.Wait()
@@ -171,16 +171,11 @@ func (s *Scheduler) executeTick(ctx context.Context) {
 	logger.Info("scheduler tick completed", logger.BuildMetadata("jobs_executed", len(dueJobs)))
 }
 
-func (s *Scheduler) runJobWithWorkdirLock(ctx context.Context, job *cron.CronJob, at time.Time) {
+func (s *Scheduler) runJob(ctx context.Context, job *cron.CronJob, at time.Time) {
 	jobMu := s.execMutex("job:" + job.ID)
 	jobMu.Lock()
 	defer jobMu.Unlock()
 
-	if job.Workdir != "" {
-		wdMu := s.execMutex("workdir:" + job.Workdir)
-		wdMu.Lock()
-		defer wdMu.Unlock()
-	}
 	s.executeJob(ctx, job, at)
 }
 
@@ -270,22 +265,12 @@ func (s *Scheduler) executeJob(ctx context.Context, job *cron.CronJob, at time.T
 }
 
 func (s *Scheduler) executeScriptJob(ctx context.Context, job *cron.CronJob) (string, error) {
-	output, err := runScript(ctx, s.scriptsDir, job.Script, s.scriptTimeout)
-	if err != nil {
-		return "", err
-	}
-	return output, nil
+	return runScript(ctx, s.workspaceDir, s.scriptsDir, job.Script, s.scriptTimeout)
 }
 
 func (s *Scheduler) executeAgentJob(ctx context.Context, job *cron.CronJob) (string, error) {
-	workspaceDir := ""
-	if job.Workdir != "" {
-		workspaceDir = job.Workdir
-	}
-
 	sess, err := s.manager.Create(ctx, session.CreateSessionOptions{
-		Temporary:    true,
-		WorkspaceDir: workspaceDir,
+		Temporary: true,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
@@ -316,9 +301,6 @@ func (s *Scheduler) executeAgentJob(ctx context.Context, job *cron.CronJob) (str
 
 func (s *Scheduler) buildJobMessage(ctx context.Context, job *cron.CronJob) (string, error) {
 	workspaceDir := s.workspaceDir
-	if job.Workdir != "" {
-		workspaceDir = job.Workdir
-	}
 
 	var sections []string
 

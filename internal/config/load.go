@@ -146,6 +146,20 @@ func Validate(cfg Config) error {
 		return fmt.Errorf("telegram bot_token is required when telegram is enabled")
 	}
 
+	if cfg.Scheduler.ScriptsDir != "" {
+		scriptsDir, err := cfg.ResolveScriptsDir()
+		if err != nil {
+			return err
+		}
+		workspaceDir, err := cfg.ResolveWorkspaceDir()
+		if err != nil {
+			return err
+		}
+		if !pathWithin(workspaceDir, scriptsDir) {
+			return fmt.Errorf("scheduler.scripts_dir must be inside the workspace (scripts run in the sandbox)")
+		}
+	}
+
 	return nil
 }
 
@@ -257,6 +271,15 @@ func decodeTOMLString(content string) (Config, toml.MetaData, error) {
 // ValidateProviderAPIKey rejects values that look like Telegram bot tokens.
 func ValidateProviderAPIKey(apiKey string) error {
 	return validateProviderAPIKey("provider", apiKey)
+}
+
+// pathWithin reports whether target is base or lives under base.
+func pathWithin(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
 func validateProviderAPIKey(name, apiKey string) error {

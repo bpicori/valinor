@@ -130,7 +130,6 @@ type CronJob struct {
 	DeliverTo          DeliveryTarget `json:"deliver_to,omitempty"`
 	CreatedInSessionID string         `json:"created_in_session_id,omitempty"`
 	Skills             []string       `json:"skills,omitempty"`
-	Workdir            string         `json:"workdir,omitempty"`
 	NoAgent            bool           `json:"no_agent,omitempty"`
 	Script             string         `json:"script,omitempty"`
 	ContextFrom        string         `json:"context_from,omitempty"`
@@ -166,9 +165,6 @@ func validateJobContent(j *CronJob) error {
 	}
 	if j.NoAgent && j.Script == "" {
 		return fmt.Errorf("script is required when no_agent is true")
-	}
-	if j.Workdir != "" && !filepath.IsAbs(j.Workdir) {
-		return fmt.Errorf("workdir must be an absolute path")
 	}
 	return nil
 }
@@ -243,7 +239,6 @@ type CreateJobInput struct {
 	CreatedInSessionID string
 	DeliverTo          DeliveryTarget
 	Skills             []string
-	Workdir            string
 	NoAgent            bool
 	Script             string
 	ContextFrom        string
@@ -256,7 +251,6 @@ type JobPatch struct {
 	Schedule    *Schedule
 	DeliverTo   *DeliveryTarget
 	Skills      *[]string
-	Workdir     *string
 	NoAgent     *bool
 	Script      *string
 	ContextFrom *string
@@ -285,9 +279,6 @@ func (p JobPatch) Apply(job *CronJob) error {
 	}
 	if p.Skills != nil {
 		job.Skills = *p.Skills
-	}
-	if p.Workdir != nil {
-		job.Workdir = *p.Workdir
 	}
 	if p.NoAgent != nil {
 		job.NoAgent = *p.NoAgent
@@ -352,7 +343,6 @@ func (j *Jobs) Create(in CreateJobInput) (*CronJob, error) {
 		DeliverTo:   deliverTo,
 		NoAgent:     in.NoAgent,
 		Script:      in.Script,
-		Workdir:     in.Workdir,
 		Skills:      in.Skills,
 		ContextFrom: in.ContextFrom,
 	}
@@ -400,7 +390,6 @@ func (j *Jobs) Create(in CreateJobInput) (*CronJob, error) {
 		DeliverTo:          deliverTo,
 		CreatedInSessionID: in.CreatedInSessionID,
 		Skills:             in.Skills,
-		Workdir:            in.Workdir,
 		NoAgent:            in.NoAgent,
 		Script:             in.Script,
 		ContextFrom:        in.ContextFrom,

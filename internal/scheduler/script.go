@@ -1,51 +1,47 @@
 package scheduler
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"valinor/internal/sandbox"
 )
 
-// runScript executes a script from scriptsDir with the given timeout.
-func runScript(ctx context.Context, scriptsDir, scriptName string, timeout time.Duration) (string, error) {
-	if scriptName == "" {
+// runScript executes a workspace script inside the sandbox container.
+// Scripts must live under the workspace so the container can see them;
+// there is no host execution path.
+func runScript(ctx context.Context, workspaceDir, scriptsDir, scriptName string, timeout time.Duration) (string, error) {
+	if strings.TrimSpace(scriptName) == "" {
 		return "", fmt.Errorf("script name is required")
 	}
-	if strings.Contains(scriptName, "..") || filepath.IsAbs(scriptName) {
-		return "", fmt.Errorf("invalid script name")
+	if !strings.HasSuffix(strings.ToLower(scriptName), ".sh") {
+		return "", fmt.Errorf("scripts must end with .sh")
 	}
 
-	scriptPath := filepath.Join(scriptsDir, scriptName)
-	if _, err := os.Stat(scriptPath); err != nil {
-		return "", fmt.Errorf("script not found: %s", scriptName)
+	rel, err := filepath.Rel(workspaceDir, filepath.Join(scriptsDir, scriptName))
+	if err != nil || strings.HasPrefix(filepath.ToSlash(rel), "..") {
+		return "", fmt.Errorf("scripts_dir must be inside the workspace to run in the sandbox")
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	var cmd *exec.Cmd
-	if strings.HasSuffix(strings.ToLower(scriptName), ".sh") {
-		cmd = exec.CommandContext(runCtx, "bash", scriptPath)
-	} else {
-		cmd = exec.CommandContext(runCtx, scriptPath)
+	result, err := sandbox.MustRuntime().RunCommand(runCtx, ".", fmt.Sprintf("bash %q", filepath.ToSlash(rel)), timeout)
+	if err != nil {
+		return "", err
 	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
+	if result.ExitCode != 0 {
+		errMsg := strings.TrimSpace(result.Stderr)
 		if errMsg == "" {
-			errMsg = err.Error()
+			errMsg = strings.TrimSpace(result.Stdout)
+		}
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("exit code %d", result.ExitCode)
 		}
 		return "", fmt.Errorf("script exited with error: %s", errMsg)
 	}
-
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimSpace(result.Stdout), nil
 }

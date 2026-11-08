@@ -63,17 +63,13 @@ func cronjobParams() map[string]any {
 				"description": "For add/edit: skill names to inject when the job runs",
 				"items":       map[string]any{"type": "string"},
 			},
-			"workdir": map[string]any{
-				"type":        "string",
-				"description": "For add/edit: absolute workspace override for job execution",
-			},
 			"no_agent": map[string]any{
 				"type":        "boolean",
-				"description": "For add/edit: run a host script instead of the LLM. Use for monitoring, price alerts, health checks.",
+				"description": "For add/edit: run a workspace script instead of the LLM. Use for monitoring, price alerts, health checks.",
 			},
 			"script": map[string]any{
 				"type":        "string",
-				"description": "For add/edit: script filename only (e.g. btc-alert.sh), not scripts/btc-alert.sh. File must already exist in workspace scripts/. Required when no_agent=true.",
+				"description": "For add/edit: script filename only, ending in .sh (e.g. btc-alert.sh), not scripts/btc-alert.sh. File must already exist in workspace scripts/. Required when no_agent=true.",
 			},
 			"context_from": map[string]any{
 				"type":        "string",
@@ -110,7 +106,6 @@ type cronjobArgs struct {
 		ClientIdentity string `json:"client_identity,omitempty"`
 	} `json:"deliver_to,omitempty"`
 	Skills       []string `json:"skills,omitempty"`
-	Workdir      string   `json:"workdir,omitempty"`
 	NoAgent      *bool    `json:"no_agent,omitempty"`
 	Script       string   `json:"script,omitempty"`
 	ContextFrom string `json:"context_from,omitempty"`
@@ -186,7 +181,6 @@ func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 		CreatedInSessionID: createdInSessionID,
 		DeliverTo:          deliverTo,
 		Skills:             p.Skills,
-		Workdir:            p.Workdir,
 		NoAgent:            noAgent,
 		Script:             script,
 		ContextFrom:        p.ContextFrom,
@@ -235,10 +229,6 @@ func cronjobEdit(p cronjobArgs) (string, error) {
 	}
 	if p.Skills != nil {
 		patch.Skills = &p.Skills
-		hasPatch = true
-	}
-	if p.Workdir != "" {
-		patch.Workdir = &p.Workdir
 		hasPatch = true
 	}
 	if p.NoAgent != nil {
@@ -412,6 +402,9 @@ func validateCronScript(filename string) error {
 	}
 	if strings.Contains(filename, "..") || strings.Contains(filename, "/") || strings.Contains(filename, "\\") || filepath.IsAbs(filename) {
 		return fmt.Errorf("script must be a filename only (e.g. btc-alert.sh), not a path")
+	}
+	if !strings.HasSuffix(strings.ToLower(filename), ".sh") {
+		return fmt.Errorf("script must end with .sh (e.g. btc-alert.sh)")
 	}
 
 	paths := config.MustPaths()

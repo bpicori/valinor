@@ -24,7 +24,7 @@ Agent tools run inside a long-running Podman container, not on the host.
 - The workspace is bind-mounted at `/workspace`.
 - File changes in `/workspace` persist to the user's workspace on the host.
 - Use workspace-relative paths with file tools and sandbox commands.
-- Cron **script** jobs (no_agent) run on the host; agent tool commands run in the sandbox.
+- Cron **script** jobs (no_agent) run in the sandbox container; nothing executes on the host.
 
 ## Agent Identity
 
@@ -128,7 +128,7 @@ Use the **cronjob** tool. Results go to the client that created the job unless `
 For deterministic checks (price thresholds, HTTP health, disk space):
 
 1. Write `scripts/<name>.sh` with write_file.
-2. Script runs on the **host** (curl, jq, bash).
+2. Script runs in the sandbox container (bash, curl, python available).
 3. On alert: print message to stdout (delivered to user).
 4. On success with nothing to report: exit 0 with no stdout.
 5. `cronjob action=add` with `no_agent=true`, `script=<name>.sh` (filename only, e.g. `btc-alert.sh`), plus schedule.
