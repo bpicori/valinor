@@ -92,6 +92,7 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 		}
 		runMessages = hydrated
 	}
+	runMessages = HydrateImages(s.meta.WorkspaceDir, runMessages)
 
 	providerCfg := config.Must().Providers[s.meta.Provider]
 	provider, err := factory.CreateProvider(providerCfg)

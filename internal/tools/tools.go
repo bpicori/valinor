@@ -47,6 +47,13 @@ func validateRelativePath(path string) (string, string) {
 }
 
 func buildTool(name, description string, parameters map[string]any, exec func(json.RawMessage) (string, error)) Tool {
+	return buildResultTool(name, description, parameters, func(args json.RawMessage) (ToolResult, error) {
+		text, err := exec(args)
+		return ToolResult{Text: text}, err
+	})
+}
+
+func buildResultTool(name, description string, parameters map[string]any, exec func(json.RawMessage) (ToolResult, error)) Tool {
 	paramsJSON, err := json.Marshal(parameters)
 	if err != nil {
 		logger.Error("tool definition marshal error", logger.BuildMetadata("tool", name, "error", err))
@@ -82,6 +89,7 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 	run := &RunContext{}
 	result := []Tool{
 		buildTool(readFileName, "Read a workspace file. Parameters: path, offset (optional), limit (optional).", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, run, a) }),
+		buildResultTool(readImageName, "Read a workspace image and attach it to the conversation so you can see it. Parameters: path.", readImageParams(), func(a json.RawMessage) (ToolResult, error) { return readImageExec(rt, a) }),
 		buildTool(writeFileName, "Write a workspace file (overwrites). Parameters: path, content.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, run, a) }),
 		buildTool(editFileName, "Apply ordered text edits to a workspace file. Parameters: path, edits.", editFileParams(), func(a json.RawMessage) (string, error) { return editFileExec(rt, run, a) }),
 		buildTool(listFilesName, "List workspace entries. Parameters: path (default \".\").", listFilesParams(), func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }),

@@ -3,14 +3,24 @@ package tools
 import (
 	"encoding/json"
 	"sync"
+
+	"valinor/internal/media"
 )
+
+// ToolResult is the outcome of one tool call. Images are attached to the
+// conversation after the tool result; Text is the only part the model reads
+// directly.
+type ToolResult struct {
+	Text   string
+	Images []media.Image
+}
 
 // Tool represents a tool with its schema definition and execution function.
 type Tool struct {
 	Name        string
 	Description string
 	Parameters  json.RawMessage
-	Exec        func(json.RawMessage) (string, error)
+	Exec        func(json.RawMessage) (ToolResult, error)
 }
 
 // RunContext carries per-run metadata needed by tools that emit client events.

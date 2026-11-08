@@ -26,9 +26,32 @@ type Message struct {
 	Date            int64           `json:"date"`
 	Chat            *Chat           `json:"chat"`
 	Text            string          `json:"text,omitempty"`
+	Caption         string          `json:"caption,omitempty"`
 	Voice           *Voice          `json:"voice,omitempty"`
+	Photo           []PhotoSize     `json:"photo,omitempty"`
+	Document        *Document       `json:"document,omitempty"`
 	Entities        []MessageEntity `json:"entities,omitempty"`
 	ReplyToMessage  *Message        `json:"reply_to_message,omitempty"`
+}
+
+// PhotoSize represents one size variant of a Telegram photo.
+// See: https://core.telegram.org/bots/api#photosize
+type PhotoSize struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int64  `json:"file_size,omitempty"`
+}
+
+// Document represents a Telegram document attachment.
+// See: https://core.telegram.org/bots/api#document
+type Document struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	FileName     string `json:"file_name,omitempty"`
+	MimeType     string `json:"mime_type,omitempty"`
+	FileSize     int64  `json:"file_size,omitempty"`
 }
 
 // Voice represents a Telegram voice message.

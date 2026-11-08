@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 
+	"valinor/internal/media"
 	"valinor/internal/tools"
 )
 
@@ -32,6 +33,7 @@ type Message struct {
 	ReasoningContent string
 	ToolCalls        []ToolCall
 	ToolCallID       string
+	Images           []media.Image
 }
 
 // ToolCall represents a request from the model to execute a tool.

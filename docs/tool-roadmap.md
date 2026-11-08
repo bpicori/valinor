@@ -17,7 +17,8 @@ skills: they are procedures over files, shell, and Python.
 
 | Tool | Verdict | Work |
 |---|---|---|
-| `read_file` | Keep | Add a binary-file guard in P1. |
+| `read_file` | Keep | Binary guard implemented: images and PDFs get an actionable hint. |
+| `read_image` | Keep | Implemented: reads a workspace image and attaches it to the conversation. |
 | `write_file` | Keep | Atomic temp+rename in P2. |
 | `edit_file` | Keep | 8 MiB size guard in Wave 1. |
 | `list_directory` | Keep | Bounded capture in Wave 1. |
@@ -35,7 +36,6 @@ skills: they are procedures over files, shell, and Python.
 
 | Candidate | Verdict | Why |
 |---|---|---|
-| `read_image` | Add, P1 | Vision input is the biggest gap; a skill cannot feed image bytes to the model. |
 | `send_file` | Add, P1 | PDF/Office skills need a way to deliver documents to the client. |
 | `ask_user` | Add, P1 | Structured questions; Telegram already supports inline keyboards and callback queries. |
 | `job` | TODO | Needs completion injection before it is worth building. |
@@ -54,12 +54,13 @@ skills: they are procedures over files, shell, and Python.
 3. Bound subprocess output at the process boundary.
 4. Guard `edit_file` against very large files.
 
-### P1 — next
+### P1 — in progress
 
-5. **Vision input:** `read_image`, multimodal messages, inbound Telegram photos
-   and documents. Inject images as a user message after the tool result;
-   OpenAI's tool role cannot carry images, and a user message works across
-   providers. Persist workspace paths, not base64.
+5. **Vision input (implemented):** `read_image`, image attachments in
+   OpenAI/Anthropic/Gemini messages, persisted image paths with runtime
+   hydration, and inbound Telegram photos and image documents. Images are
+   injected as a user message after tool results; the transcript stores paths,
+   not base64. PDFs and Office files still belong to skills.
 6. **Skill delivery:** `send_file` with an `AgentFile` event and Telegram
    `sendDocument`; embedded, updatable required skills; sandbox image with
    `pandoc`, `poppler-utils`, `tesseract-ocr`, `pypdf`, `python-docx`,
@@ -70,8 +71,8 @@ skills: they are procedures over files, shell, and Python.
    message. Telegram renders one inline button per option and sends the choice
    as a normal user message. Exclude the tool from cron agent runs. Blocking
    answers need the async mechanism below.
-8. **Binary guard:** `read_file` detects images and PDFs and points at
-   `send_image` or a document skill instead of dumping bytes.
+8. **Binary guard (implemented):** `read_file` detects images and PDFs and
+   points at `read_image` or a document skill instead of dumping bytes.
 
 ### TODO — needs design
 

@@ -21,7 +21,28 @@ func ToOpenAIMessages(messages []llm.Message) []openai.ChatCompletionMessagePara
 		case llm.RoleSystem:
 			out = append(out, openai.SystemMessage(m.Content))
 		case llm.RoleUser:
-			out = append(out, openai.UserMessage(m.Content))
+			if len(m.Images) == 0 {
+				out = append(out, openai.UserMessage(m.Content))
+				continue
+			}
+
+			parts := make([]openai.ChatCompletionContentPartUnionParam, 0, len(m.Images)+1)
+			if m.Content != "" {
+				parts = append(parts, openai.TextContentPart(m.Content))
+			}
+			for _, image := range m.Images {
+				if len(image.Data) == 0 {
+					continue
+				}
+				parts = append(parts, openai.ImageContentPart(openai.ChatCompletionContentPartImageImageURLParam{
+					URL: image.DataURI(),
+				}))
+			}
+			if len(parts) == 0 {
+				out = append(out, openai.UserMessage(m.Content))
+				continue
+			}
+			out = append(out, openai.UserMessage(parts))
 		case llm.RoleAssistant:
 			if len(m.ToolCalls) > 0 {
 				// Assistant message with tool calls

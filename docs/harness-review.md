@@ -114,9 +114,10 @@ a new package plus one factory case and one config value.
 
 ## Next (not implemented)
 
-- **Tool roadmap:** see [docs/tool-roadmap.md](tool-roadmap.md). The next priorities are vision
-  input, skill delivery (`send_file` plus bundled skills), and non-blocking
-  `ask_user`. Async jobs and subagents wait on a completion-injection design.
+- **Tool roadmap:** see [docs/tool-roadmap.md](tool-roadmap.md). Vision input is
+  implemented; next are skill delivery (`send_file` plus bundled skills) and
+  non-blocking `ask_user`. Async jobs and subagents wait on a
+  completion-injection design.
 - **Prompt caching:** deliberately removed. The primary provider (OpenRouter/DeepSeek)
   caches automatically, while Anthropic requires explicit `cache_control`
   breakpoints. Revisit only when Anthropic or Gemini becomes a primary provider.

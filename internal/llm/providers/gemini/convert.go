@@ -22,7 +22,25 @@ func ToGeminiContents(messages []llm.Message, thoughtSignatures map[string][]byt
 			contents = append(contents, genai.NewContentFromText(m.Content, genai.RoleUser))
 
 		case llm.RoleUser:
-			contents = append(contents, genai.NewContentFromText(m.Content, genai.RoleUser))
+			if len(m.Images) == 0 {
+				contents = append(contents, genai.NewContentFromText(m.Content, genai.RoleUser))
+				continue
+			}
+
+			parts := []*genai.Part{}
+			if m.Content != "" {
+				parts = append(parts, genai.NewPartFromText(m.Content))
+			}
+			for _, image := range m.Images {
+				if len(image.Data) == 0 {
+					continue
+				}
+				parts = append(parts, genai.NewPartFromBytes(image.Data, image.MimeType))
+			}
+			if len(parts) == 0 {
+				parts = append(parts, genai.NewPartFromText(m.Content))
+			}
+			contents = append(contents, genai.NewContentFromParts(parts, genai.RoleUser))
 
 		case llm.RoleAssistant:
 			if len(m.ToolCalls) > 0 {

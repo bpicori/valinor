@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	agentcontext "valinor/internal/context"
 	"valinor/internal/buildinfo"
 	"valinor/internal/config"
+	agentcontext "valinor/internal/context"
 	"valinor/internal/cron"
 	"valinor/internal/gateway"
 	"valinor/internal/llm/factory"
@@ -355,12 +355,17 @@ func runAll(ctx context.Context) error {
 }
 
 func newTelegramBotConfig(cfg config.Config, storageDir, gatewayURL string) (telegram.Config, error) {
+	workspaceDir, err := cfg.ResolveWorkspaceDir()
+	if err != nil {
+		return telegram.Config{}, fmt.Errorf("resolve workspace dir: %w", err)
+	}
 	botCfg := telegram.Config{
-		BotToken:    cfg.Telegram.BotToken,
-		GatewayURL:  gatewayURL,
-		StorageDir:  storageDir,
-		PollTimeout: cfg.Telegram.PollTimeout,
-		Providers:   cfg.Providers,
+		BotToken:     cfg.Telegram.BotToken,
+		GatewayURL:   gatewayURL,
+		StorageDir:   storageDir,
+		WorkspaceDir: workspaceDir,
+		PollTimeout:  cfg.Telegram.PollTimeout,
+		Providers:    cfg.Providers,
 	}
 
 	if name, providerCfg, ok := cfg.TranscriptionProvider(); ok {

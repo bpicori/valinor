@@ -12,6 +12,7 @@ import (
 	agentcontext "valinor/internal/context"
 	"valinor/internal/event"
 	"valinor/internal/logger"
+	"valinor/internal/media"
 	"valinor/internal/tools"
 )
 
@@ -190,6 +191,7 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 			ToolCalls:        toolCalls,
 		})
 
+		var toolImages []media.Image
 		for _, tc := range result.Message.ToolCalls {
 			if err := ctx.Err(); err != nil {
 				if errors.Is(err, context.Canceled) {
@@ -219,21 +221,46 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 
 			toolResult, ok := executeTool(req.Tools, tc.Name, args)
 			if !ok {
-				toolResult = "error: tool not found"
+				toolResult = tools.ToolResult{Text: "error: tool not found"}
 			}
-			logger.Debug("llm tool call done", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult))
+			logger.Debug("llm tool call done", logger.BuildMetadata("step", iterations, "tool_call_id", tc.ID, "tool", tc.Name, "found", ok, "result", toolResult.Text))
 			publishEvent(event.AgentToolCallDone, event.ToolCallDonePayload{
 				ToolCallID: tc.ID,
 				ToolName:   tc.Name,
-				ToolResult: toolResult,
+				ToolResult: toolResult.Text,
 			})
 			messages = append(messages, agentcontext.Message{
 				Role:       agentcontext.RoleTool,
 				ToolCallID: tc.ID,
-				Content:    toolResult,
+				Content:    toolResult.Text,
+			})
+			toolImages = append(toolImages, toolResult.Images...)
+		}
+
+		if len(toolImages) > 0 {
+			messages = append(messages, agentcontext.Message{
+				Role:    agentcontext.RoleUser,
+				Content: imageAttachmentMessage(toolImages),
+				Images:  toolImages,
 			})
 		}
 	}
+}
+
+// imageAttachmentMessage describes images that were attached after tool results.
+// The image bytes reach the model through Message.Images; this text only gives
+// the model the workspace paths.
+func imageAttachmentMessage(images []media.Image) string {
+	paths := make([]string, 0, len(images))
+	for _, image := range images {
+		if image.Path != "" {
+			paths = append(paths, image.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return "Attached image(s) are available for inspection."
+	}
+	return "Images attached for inspection: " + strings.Join(paths, ", ") + "."
 }
 
 // toProviderMessages converts internal context messages to provider-agnostic format.
@@ -250,6 +277,7 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 			out = append(out, Message{
 				Role:    RoleUser,
 				Content: m.Content,
+				Images:  m.Images,
 			})
 		case agentcontext.RoleAssistant:
 			out = append(out, Message{
@@ -283,31 +311,32 @@ func (l *LLM) toProviderMessages(messages []agentcontext.Message) []Message {
 	return out
 }
 
-func executeTool(toolset []tools.Tool, name string, args json.RawMessage) (string, bool) {
+func executeTool(toolset []tools.Tool, name string, args json.RawMessage) (tools.ToolResult, bool) {
 	for _, t := range toolset {
 		if t.Name != name {
 			continue
 		}
 		return executeOne(t, args), true
 	}
-	return "", false
+	return tools.ToolResult{}, false
 }
 
 // executeOne runs one tool and converts a panic into a tool result, so a buggy
 // tool cannot take down the session or the process.
-func executeOne(t tools.Tool, args json.RawMessage) (out string) {
+func executeOne(t tools.Tool, args json.RawMessage) (out tools.ToolResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			logger.Error("tool panicked", logger.BuildMetadata("tool", t.Name, "panic", r, "stack", string(debug.Stack())))
-			out = fmt.Sprintf("error: tool %s panicked: %v", t.Name, r)
+			out = tools.ToolResult{Text: fmt.Sprintf("error: tool %s panicked: %v", t.Name, r)}
 		}
 	}()
 
 	result, err := t.Exec(args)
 	if err != nil {
-		return fmt.Sprintf("error: %v", err)
+		return tools.ToolResult{Text: fmt.Sprintf("error: %v", err)}
 	}
-	return tools.CapResult(t.Name, result)
+	result.Text = tools.CapResult(t.Name, result.Text)
+	return result
 }
 
 // isContextLengthError reports whether a provider error means the request

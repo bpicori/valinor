@@ -4,7 +4,10 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -55,6 +58,8 @@ type Config struct {
 	GatewayURL string
 	// StorageDir is the directory for persisting offset (optional, defaults to ~/.valinor)
 	StorageDir string
+	// WorkspaceDir is where downloaded attachments are saved.
+	WorkspaceDir string
 	// PollTimeout is the long-polling timeout in seconds (default: 30)
 	PollTimeout int
 	// Providers is the configured LLM providers for model selection.
@@ -204,12 +209,21 @@ func (b *Bot) onUpdate(update Update) {
 		return
 	}
 
-	if msg := extractMessage(update); msg != nil && msg.Voice != nil {
-		if err := b.processVoiceMessage(msg, update.UpdateID); err != nil {
-			logger.Error("telegram bot: failed to process voice message",
-				logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+	if msg := extractMessage(update); msg != nil {
+		if msg.Voice != nil {
+			if err := b.processVoiceMessage(msg, update.UpdateID); err != nil {
+				logger.Error("telegram bot: failed to process voice message",
+					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+			}
+			return
 		}
-		return
+		if len(msg.Photo) > 0 || msg.Document != nil {
+			if err := b.processAttachmentMessage(msg, update.UpdateID); err != nil {
+				logger.Error("telegram bot: failed to process attachment",
+					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
+			}
+			return
+		}
 	}
 
 	cmd, err := parseUpdate(update, b.config.Providers)
@@ -311,6 +325,157 @@ func (b *Bot) processVoiceMessage(msg *Message, updateID int64) error {
 	}
 
 	return b.processCommand(cmd, tracker)
+}
+
+const maxTelegramAttachmentBytes = 20 << 20
+
+// processAttachmentMessage downloads a photo or document into the workspace and
+// sends the model a user message pointing at it.
+func (b *Bot) processAttachmentMessage(msg *Message, updateID int64) error {
+	if msg == nil || msg.Chat == nil {
+		return nil
+	}
+
+	identity := FromTelegramUpdate(msg.Chat)
+	tracker := b.getOrCreateTracker(identity.ChatID)
+
+	if tracker.isBusy() {
+		notice := &RenderResult{
+			Text:      "\u23f3 Please wait for the current response to complete\\.",
+			ParseMode: "MarkdownV2",
+		}
+		return b.sendTelegramMessage(identity, tracker, notice)
+	}
+	if strings.TrimSpace(b.config.WorkspaceDir) == "" {
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{
+			Text: "Attachment uploads are not configured.",
+		})
+	}
+
+	fileID, fileName, mimeType, isImage := attachmentFromMessage(msg)
+	if fileID == "" {
+		return nil
+	}
+
+	if err := b.sendTypingAction(identity, tracker); err != nil {
+		logger.Warning("telegram bot: failed to send typing action for attachment",
+			logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
+	}
+
+	file, err := b.client.GetFile(b.ctx, fileID)
+	if err != nil {
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{
+			Text: "Could not fetch the attachment. Please try again.",
+		})
+	}
+
+	data, err := b.client.DownloadFile(b.ctx, file.FilePath)
+	if err != nil {
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{
+			Text: "Could not download the attachment. Please try again.",
+		})
+	}
+	if len(data) > maxTelegramAttachmentBytes {
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{
+			Text: fmt.Sprintf("The attachment is larger than %d MB.", maxTelegramAttachmentBytes/(1<<20)),
+		})
+	}
+
+	ext := attachmentExtension(file.FilePath, fileName, mimeType)
+	base := sanitizeAttachmentName(file.FileUniqueID)
+	if base == "" {
+		base = "file"
+	}
+	relPath := filepath.ToSlash(filepath.Join("uploads", fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext)))
+	fullPath := filepath.Join(b.config.WorkspaceDir, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return fmt.Errorf("create uploads directory: %w", err)
+	}
+	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
+		return fmt.Errorf("save attachment: %w", err)
+	}
+
+	var content string
+	if isImage {
+		content = fmt.Sprintf("The user sent an image saved at %q. Use read_image with that path to view it.", relPath)
+	} else {
+		content = fmt.Sprintf("The user sent a file saved at %q (%d bytes).", relPath, len(data))
+	}
+	if caption := strings.TrimSpace(msg.Caption); caption != "" {
+		content += "\nCaption: " + caption
+	}
+
+	requestID := fmt.Sprintf("tg_%d_%d", msg.Chat.ID, updateID)
+	cmd := &Command{
+		Identity:  identity,
+		RequestID: requestID,
+		Type:      gateway.CommandUserMessage,
+		Payload: gateway.UserMessagePayload{
+			Content: content,
+		},
+		RawText: content,
+	}
+	return b.processCommand(cmd, tracker)
+}
+
+// attachmentFromMessage selects the file to download. Telegram sends several
+// photo sizes; the last entry is the largest.
+func attachmentFromMessage(msg *Message) (fileID, fileName, mimeType string, isImage bool) {
+	if len(msg.Photo) > 0 {
+		largest := msg.Photo[len(msg.Photo)-1]
+		return largest.FileID, "", "", true
+	}
+	if msg.Document != nil {
+		doc := msg.Document
+		mimeType = strings.ToLower(doc.MimeType)
+		isImage = strings.HasPrefix(mimeType, "image/") || isImageExtension(doc.FileName)
+		return doc.FileID, doc.FileName, mimeType, isImage
+	}
+	return "", "", "", false
+}
+
+func attachmentExtension(filePath, fileName, mimeType string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if ext == "" {
+		ext = strings.ToLower(filepath.Ext(fileName))
+	}
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".zip":
+		return ext
+	}
+	switch strings.ToLower(mimeType) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "application/pdf":
+		return ".pdf"
+	}
+	return ".bin"
+}
+
+func isImageExtension(name string) bool {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeAttachmentName(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // processCommand handles a user command.

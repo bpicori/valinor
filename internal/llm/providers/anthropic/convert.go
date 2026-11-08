@@ -37,9 +37,27 @@ func ToAnthropicMessages(messages []llm.Message) []anthropic.MessageParam {
 			continue
 
 		case llm.RoleUser:
-			out = append(out, anthropic.NewUserMessage(
-				anthropic.NewTextBlock(m.Content),
-			))
+			if len(m.Images) == 0 {
+				out = append(out, anthropic.NewUserMessage(
+					anthropic.NewTextBlock(m.Content),
+				))
+				continue
+			}
+
+			blocks := []anthropic.ContentBlockParamUnion{}
+			if m.Content != "" {
+				blocks = append(blocks, anthropic.NewTextBlock(m.Content))
+			}
+			for _, image := range m.Images {
+				if len(image.Data) == 0 {
+					continue
+				}
+				blocks = append(blocks, anthropic.NewImageBlockBase64(image.MimeType, image.Base64()))
+			}
+			if len(blocks) == 0 {
+				blocks = append(blocks, anthropic.NewTextBlock(m.Content))
+			}
+			out = append(out, anthropic.NewUserMessage(blocks...))
 
 		case llm.RoleAssistant:
 			if len(m.ToolCalls) > 0 {

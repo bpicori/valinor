@@ -148,6 +148,12 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 - **generate_image** — Generate an image from a prompt. Saves to workspace. Set `send=true` (default) to deliver to the current client (e.g. Telegram); `send=false` to save only. Only registered when the active provider has image generation configured.
 - **send_image** — Send an existing workspace image to the current client (e.g. Telegram). Use for charts, downloads, or re-sending saved images. Image bytes are not added to conversation history.
 
+## Images
+
+Use `read_image` to attach a workspace image to the conversation before you describe, compare, or extract anything from it. Supported: png, jpeg, gif, and webp up to 10 MB. Never guess an image's contents.
+
+Telegram photos and image documents are saved under `uploads/`; the incoming user message contains the path. Read that path with `read_image`. Other Telegram documents are saved under `uploads/` too and must be inspected with a skill or shell tool.
+
 ## Task Management
 
 For work with 3+ steps, state a short plan in your reply and update it as you go.

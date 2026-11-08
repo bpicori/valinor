@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"valinor/internal/sandbox"
@@ -50,6 +51,9 @@ func readFileExec(rt *sandbox.Runtime, run *RunContext, args json.RawMessage) (s
 	if err != nil {
 		return "Tool Error: " + err.Error(), nil
 	}
+	if hint := binaryReadHint(path, slice.Content); hint != "" {
+		return hint, nil
+	}
 	if sig, sigErr := fileSignature(rt, path); sigErr == nil {
 		run.RecordFileSignature(path, sig)
 	}
@@ -65,4 +69,21 @@ func readFileExec(rt *sandbox.Runtime, run *RunContext, args json.RawMessage) (s
 			slice.StartLine, slice.EndLine, slice.TotalLines, slice.EndLine+1)
 	}
 	return b.String(), nil
+}
+
+// binaryReadHint points the model at the right tool when read_file hits an
+// image or another binary format.
+func binaryReadHint(path, content string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+		return "Tool Error: this is an image; use read_image to attach it to the conversation."
+	case ".pdf":
+		return "Tool Error: PDFs are binary; use a PDF skill or bash/python to extract text."
+	case ".docx", ".xlsx", ".pptx", ".zip":
+		return "Tool Error: this is a binary document; use a skill or bash/python to inspect it."
+	}
+	if strings.IndexByte(content, 0) >= 0 {
+		return "Tool Error: file looks binary; use read_image for images or bash/python for other formats."
+	}
+	return ""
 }
