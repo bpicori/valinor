@@ -11,7 +11,6 @@ import (
 )
 
 const (
-	maxContextWindow      = 200_000
 	compressionThreshold  = 0.85
 	compressionPrompt = `Summarize the following conversation excerpt. Preserve:
 - Key decisions and their rationale
@@ -31,44 +30,63 @@ type CompressionResult struct {
 	MessagesCompressed int
 	TokensBefore       int64
 	TokensAfter        int64
+	Limit              int64
 	Err                error
-}
-
-// ContextLimit returns the token threshold at which compression triggers.
-func ContextLimit() int64 {
-	return int64(float64(maxContextWindow) * compressionThreshold)
 }
 
 // Compressor summarizes older conversation turns to stay within model context limits.
 type Compressor struct {
-	provider Provider
-	model    string
+	provider     Provider
+	model        string
+	windowTokens int
 }
 
-// NewCompressor creates a compressor that uses the given provider for summarization.
-func NewCompressor(provider Provider, model string) *Compressor {
-	return &Compressor{provider: provider, model: model}
+// NewCompressor creates a compressor for a model context window.
+func NewCompressor(provider Provider, model string, windowTokens int) *Compressor {
+	if windowTokens <= 0 {
+		windowTokens = config.Must().Context.WindowTokens
+	}
+	return &Compressor{provider: provider, model: model, windowTokens: windowTokens}
+}
+
+// Limit returns the token threshold at which compression triggers.
+func (c *Compressor) Limit() int64 {
+	return int64(float64(c.windowTokens) * compressionThreshold)
 }
 
 // MaybeCompress replaces the middle of the conversation with a summary when over threshold.
 // Fail-open: returns the original messages on error or when there is nothing to compress.
-func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.Message) ([]agentcontext.Message, CompressionResult) {
-	limit := ContextLimit()
+// priorTokens is the provider-reported prompt size of the previous turn, which is
+// more accurate than the local estimate for long sessions.
+func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.Message, priorTokens int64) ([]agentcontext.Message, CompressionResult) {
+	return c.compress(ctx, messages, priorTokens, c.Limit(), false)
+}
+
+// ForceCompress summarizes regardless of the current size. It is used after the
+// provider rejects a request for exceeding the context window.
+func (c *Compressor) ForceCompress(ctx context.Context, messages []agentcontext.Message, priorTokens int64) ([]agentcontext.Message, CompressionResult) {
+	return c.compress(ctx, messages, priorTokens, c.Limit(), true)
+}
+
+func (c *Compressor) compress(ctx context.Context, messages []agentcontext.Message, priorTokens, limit int64, force bool) ([]agentcontext.Message, CompressionResult) {
 	tokensBefore := EstimatePromptTokens(messages)
-	if tokensBefore <= limit {
-		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore}
+	if priorTokens > tokensBefore {
+		tokensBefore = priorTokens
+	}
+	if !force && tokensBefore <= limit {
+		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore, Limit: limit}
 	}
 
 	const headEnd = 1 // keep system prompt
 	tailStart := len(messages) - config.Must().Context.PreserveRecentMessages
 	if tailStart < headEnd {
-		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore}
+		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore, Limit: limit}
 	}
 	for tailStart > headEnd && messages[tailStart].Role == agentcontext.RoleTool {
 		tailStart--
 	}
 	if tailStart <= headEnd {
-		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore}
+		return messages, CompressionResult{TokensBefore: tokensBefore, TokensAfter: tokensBefore, Limit: limit}
 	}
 
 	middle := messages[headEnd:tailStart]
@@ -78,6 +96,7 @@ func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.
 		return messages, CompressionResult{
 			TokensBefore: tokensBefore,
 			TokensAfter:  tokensBefore,
+			Limit:        limit,
 			Err:          err,
 		}
 	}
@@ -95,6 +114,7 @@ func (c *Compressor) MaybeCompress(ctx context.Context, messages []agentcontext.
 		MessagesCompressed: len(middle),
 		TokensBefore:       tokensBefore,
 		TokensAfter:        tokensAfter,
+		Limit:              limit,
 	}
 }
 

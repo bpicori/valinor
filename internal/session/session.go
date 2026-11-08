@@ -99,17 +99,19 @@ func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID strin
 		return llm.RunResult{}, fmt.Errorf("create provider: %w", err)
 	}
 
-	agent := llm.New(provider, s.meta.Model, config.Must().MaxAgentIterations)
-	compressor := llm.NewCompressor(provider, s.meta.Model)
+	cfg := config.Must()
+	agent := llm.New(provider, s.meta.Model, cfg.MaxAgentIterations, cfg.Context.MaxOutputTokens)
+	compressor := llm.NewCompressor(provider, s.meta.Model, cfg.Context.WindowTokens)
 	agenttools.BindRunContext(runData.RunContext, s.meta.ID, requestID, opts.EmitEvents)
 
 	result, err := agent.Run(ctx, llm.RunRequest{
-		Messages:   runMessages,
-		Tools:      runData.Tools,
-		SessionID:  s.meta.ID,
-		RequestID:  requestID,
-		EmitEvents: opts.EmitEvents,
-		Compressor: compressor,
+		Messages:          runMessages,
+		Tools:             runData.Tools,
+		SessionID:         s.meta.ID,
+		RequestID:         requestID,
+		EmitEvents:        opts.EmitEvents,
+		Compressor:        compressor,
+		PriorPromptTokens: s.lastPromptTokens(),
 	})
 	if err != nil {
 		return llm.RunResult{}, fmt.Errorf("agent run: %w", err)
@@ -270,6 +272,13 @@ func (s *Session) Close() error {
 // Meta returns the session metadata.
 func (s *Session) Meta() Metadata {
 	return s.meta
+}
+
+// lastPromptTokens returns the provider-reported prompt size of the previous turn.
+func (s *Session) lastPromptTokens() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastUsage.PromptTokens
 }
 
 // ContextTokenCount returns the token count of the current conversation context.

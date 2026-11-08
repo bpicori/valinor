@@ -51,6 +51,8 @@ max_agent_iterations = 20
 # Context compression (triggers at 85% of 200K window)
 # [context]
 # preserve_recent_messages = 20  # messages kept verbatim at the tail
+# window_tokens = 200000         # model context window used for compression thresholds
+# max_output_tokens = 8192       # cap on the model's response length per call
 
 # Telegram Bot configuration
 # enabled defaults to true; the setup wizard only asks for bot_token

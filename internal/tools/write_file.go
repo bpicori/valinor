@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 
 	"valinor/internal/sandbox"
 )
@@ -26,7 +27,7 @@ func writeFileParams() map[string]any {
 	}
 }
 
-func writeFileExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {
+func writeFileExec(rt *sandbox.Runtime, run *RunContext, args json.RawMessage) (string, error) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -38,5 +39,14 @@ func writeFileExec(rt *sandbox.Runtime, args json.RawMessage) (string, error) {
 	if msg != "" {
 		return msg, nil
 	}
-	return rt.WriteFile(path, p.Content)
+	result, err := rt.WriteFile(path, p.Content)
+	if err != nil {
+		return result, err
+	}
+	if !strings.HasPrefix(result, "Tool Error: ") {
+		if sig, sigErr := fileSignature(rt, path); sigErr == nil {
+			run.RecordFileSignature(path, sig)
+		}
+	}
+	return result, nil
 }

@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -10,6 +11,17 @@ import (
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
 )
+
+// fileSignature returns a size+mtime signature for a workspace file.
+// Tools run on the host and the workspace is bind-mounted into the sandbox,
+// so a host stat reflects container writes.
+func fileSignature(rt *sandbox.Runtime, path string) (string, error) {
+	info, err := os.Stat(filepath.Join(rt.WorkspaceDir(), filepath.FromSlash(path)))
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano()), nil
+}
 
 // normalizePath converts path separators for LLM-provided paths that may mix
 // Windows and Unix separators, and cleans the path.
@@ -66,9 +78,9 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 
 	run := &RunContext{}
 	result := []Tool{
-		buildTool(readFileName, "Read a workspace file. Parameters: path.", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, a) }),
-		buildTool(writeFileName, "Write a workspace file (overwrites). Parameters: path, content.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, a) }),
-		buildTool(editFileName, "Apply ordered text edits to a workspace file. Parameters: path, edits.", editFileParams(), func(a json.RawMessage) (string, error) { return editFileExec(rt, a) }),
+		buildTool(readFileName, "Read a workspace file. Parameters: path, offset (optional), limit (optional).", readFileParams(), func(a json.RawMessage) (string, error) { return readFileExec(rt, run, a) }),
+		buildTool(writeFileName, "Write a workspace file (overwrites). Parameters: path, content.", writeFileParams(), func(a json.RawMessage) (string, error) { return writeFileExec(rt, run, a) }),
+		buildTool(editFileName, "Apply ordered text edits to a workspace file. Parameters: path, edits.", editFileParams(), func(a json.RawMessage) (string, error) { return editFileExec(rt, run, a) }),
 		buildTool(listFilesName, "List workspace entries. Parameters: path (default \".\").", listFilesParams(), func(a json.RawMessage) (string, error) { return listFilesExec(rt, a) }),
 		buildTool(grepName, "Search workspace files by regex. Parameters: pattern, path (optional), include (optional).", grepParams(), func(a json.RawMessage) (string, error) { return grepExec(rt, a) }),
 		buildTool(pythonExecName, "Run Python in the sandbox. Parameters: code or script_path, cwd (optional).", pythonExecParams(), func(a json.RawMessage) (string, error) { return pythonExec(rt, a) }),

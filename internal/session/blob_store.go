@@ -10,6 +10,7 @@ import (
 
 	agentcontext "valinor/internal/context"
 	"valinor/internal/logger"
+	agenttools "valinor/internal/tools"
 )
 
 const (
@@ -74,7 +75,7 @@ func HydrateMessages(sessionDir string, messages []agentcontext.Message) ([]agen
 				logger.BuildMetadata("blob_ref", out[i].BlobRef, "path", blobPath, "error", err))
 			continue
 		}
-		out[i].Content = string(data)
+		out[i].Content = agenttools.CapResult("tool", string(data))
 	}
 
 	return out, nil

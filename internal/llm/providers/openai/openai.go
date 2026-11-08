@@ -76,6 +76,9 @@ func (p *Provider) Stream(ctx context.Context, params llm.StreamParams) (*llm.St
 			IncludeUsage: openai.Bool(true),
 		},
 	}
+	if params.MaxTokens > 0 {
+		oaiParams.MaxTokens = openai.Int(int64(params.MaxTokens))
+	}
 
 	// Add tools if provided
 	if len(params.Tools) > 0 {

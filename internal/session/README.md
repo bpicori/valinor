@@ -54,8 +54,6 @@ Active session semantics:
 8. Writes initial messages containing the system prompt
 
 CreateSessionOptions fields:
-- `Bus`: event bus for publishing session events (required)
-- `MaxAgentIterations`: limits the number of agent turns per request
 - `Provider`, `Model`: LLM configuration (overrides defaults when set)
 - `ClientType`, `ClientIdentity`: required for non-temporary sessions
 - `Temporary`: creates in-memory-only session (no client binding required)
@@ -123,14 +121,14 @@ Stores ordered conversation state used to resume:
 
 ### `blobs/`
 
-Large tool results are content-addressed under `<session_id>/blobs/<sha256>.txt`. On load, messages retain the preview and `blob_ref`; full content is hydrated from disk before each LLM run.
+Large tool results are content-addressed under `<session_id>/blobs/<sha256>.txt`. On load, messages retain the preview and `blob_ref`; before each LLM run the content is hydrated from disk and capped at the tool-result limit (24k characters), so the on-disk copy never inflates the prompt.
 
 Metadata is persisted in SQLite. Messages are written atomically by writing a temp file and renaming.
 
 ## Public manager operations
 
 - `Create(ctx, opts CreateSessionOptions)`: create fresh session (bound to client unless temporary)
-- `Resume(ctx, id, opts CreateSessionOptions)`: load persisted session and rebuild runtime objects (uses Bus and MaxAgentIterations)
+- `Resume(ctx, id, opts CreateSessionOptions)`: load persisted session and rebuild runtime objects
 - `GetActiveSessionForClient(ctx, clientType, clientIdentity, opts CreateSessionOptions)`: get the active session for a client
 - `SetSessionActive(ctx, sessionID)`: mark a session as active (deactivates others for same client)
 - `Delete(ctx, id)`: remove session directory and metadata

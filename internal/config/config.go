@@ -77,9 +77,20 @@ type SearXNGConfig struct {
 	PublishPort int `toml:"publish_port"`
 }
 
-// ContextConfig holds context compression settings.
+// Default context window and output settings.
+const (
+	DefaultContextWindowTokens = 200_000
+	DefaultMaxOutputTokens     = 8192
+)
+
+// ContextConfig holds context window and compression settings.
 type ContextConfig struct {
+	// PreserveRecentMessages is the number of tail messages kept verbatim during compression.
 	PreserveRecentMessages int `toml:"preserve_recent_messages"`
+	// WindowTokens is the model context window used for compression thresholds.
+	WindowTokens int `toml:"window_tokens"`
+	// MaxOutputTokens caps the model's response length per call.
+	MaxOutputTokens int `toml:"max_output_tokens"`
 }
 
 // TelegramConfig holds Telegram Bot API configuration.

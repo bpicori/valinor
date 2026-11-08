@@ -59,7 +59,7 @@ func (l *LLM) runGracefulFinalTurn(
 
 	if req.Compressor != nil {
 		var compressionResult CompressionResult
-		messages, compressionResult = req.Compressor.MaybeCompress(ctx, messages)
+		messages, compressionResult = req.Compressor.MaybeCompress(ctx, messages, req.PriorPromptTokens)
 		publishCompressionResult(publishEvent, compressionResult)
 	}
 

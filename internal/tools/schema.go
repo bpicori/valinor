@@ -19,6 +19,10 @@ type RunContext struct {
 	SessionID  string
 	RequestID  string
 	EmitEvents bool
+
+	// fileSignatures tracks (size, mtime) per path for files the model has read,
+	// so edit_file can refuse to rewrite a file that changed underneath it.
+	fileSignatures map[string]string
 }
 
 // RunSnapshot is a point-in-time view of run metadata.
@@ -52,6 +56,30 @@ func (rc *RunContext) Bind(sessionID, requestID string, emitEvents bool) {
 	rc.RequestID = requestID
 	rc.EmitEvents = emitEvents
 	rc.mu.Unlock()
+}
+
+// RecordFileSignature remembers the signature of a file after read/write.
+func (rc *RunContext) RecordFileSignature(path, signature string) {
+	if rc == nil || path == "" || signature == "" {
+		return
+	}
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	if rc.fileSignatures == nil {
+		rc.fileSignatures = make(map[string]string)
+	}
+	rc.fileSignatures[path] = signature
+}
+
+// FileSignature returns the last recorded signature for a path.
+func (rc *RunContext) FileSignature(path string) (string, bool) {
+	if rc == nil {
+		return "", false
+	}
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	sig, ok := rc.fileSignatures[path]
+	return sig, ok
 }
 
 // Exclude returns tools whose names are not in exclude.

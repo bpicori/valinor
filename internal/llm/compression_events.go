@@ -17,7 +17,7 @@ func publishCompressionResult(
 	if result.Err != nil {
 		publish(event.ContextCompressionFailed, event.ContextCompressionFailedPayload{
 			EstimatedTokens: result.TokensBefore,
-			ContextLimit:    ContextLimit(),
+			ContextLimit:    result.Limit,
 			Error:           result.Err.Error(),
 		})
 	}

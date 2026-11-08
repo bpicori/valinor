@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -227,6 +228,95 @@ func (r *Runtime) ReadFile(path string) (string, error) {
 		return "Tool Error: " + commandFailureMessage(result, "read file failed"), nil
 	}
 	return result.Stdout, nil
+}
+
+// FileSlice is a ranged read of a workspace file inside the container.
+type FileSlice struct {
+	Content    string
+	StartLine  int
+	EndLine    int
+	TotalLines int
+	Truncated  bool // content was cut by the byte cap
+}
+
+// ReadRangeMaxLines and ReadRangeMaxBytes bound one ranged read.
+// The byte cap stays below the tool-result cap so the continuation hint remains accurate.
+const (
+	ReadRangeMaxLines = 2000
+	ReadRangeMaxBytes = 20_000
+)
+
+// ReadFileRange reads a 1-based line range from a workspace file inside the container.
+// It reports the file's total line count so callers can paginate.
+func (r *Runtime) ReadFileRange(path string, offset, limit int) (FileSlice, error) {
+	if offset < 1 {
+		offset = 1
+	}
+	if limit < 1 {
+		limit = ReadRangeMaxLines
+	}
+	if limit > ReadRangeMaxLines {
+		limit = ReadRangeMaxLines
+	}
+	end := offset + limit - 1
+
+	fullPath := r.resolveContainerPath(path)
+	ctx, cancel := context.WithTimeout(context.Background(), fsToolTimeout)
+	defer cancel()
+
+	const totalMarker = "__VALINOR_TOTAL_LINES__="
+	program := fmt.Sprintf(
+		`NR>=%d && NR<=%d { print } END { printf "\n%s%%d\n", NR }`,
+		offset, end, totalMarker,
+	)
+
+	// argv form: podman exec ... awk <program> <path> (no shell quoting needed).
+	result, err := r.exec(ctx, []string{"awk", program, fullPath}, "/workspace", nil, nil)
+	if err != nil {
+		return FileSlice{}, err
+	}
+	if result.ExitCode != 0 {
+		return FileSlice{}, fmt.Errorf("%s", commandFailureMessage(result, "read file failed"))
+	}
+
+	content := result.Stdout
+	total := 0
+	if idx := strings.LastIndex(content, totalMarker); idx >= 0 {
+		if n, convErr := strconv.Atoi(strings.TrimSpace(content[idx+len(totalMarker):])); convErr == nil {
+			total = n
+		}
+		content = strings.TrimSuffix(content[:idx], "\n")
+	}
+
+	truncated := false
+	if len(content) > ReadRangeMaxBytes {
+		cut := ReadRangeMaxBytes
+		if idx := strings.LastIndex(content[:cut], "\n"); idx > cut/2 {
+			cut = idx
+		}
+		content = content[:cut]
+		truncated = true
+	}
+
+	endLine := end
+	if truncated {
+		if lines := strings.Count(content, "\n"); lines > 0 {
+			endLine = offset + lines - 1
+		} else {
+			endLine = offset
+		}
+	}
+	if total > 0 && endLine > total {
+		endLine = total
+	}
+
+	return FileSlice{
+		Content:    content,
+		StartLine:  offset,
+		EndLine:    endLine,
+		TotalLines: total,
+		Truncated:  truncated,
+	}, nil
 }
 
 // WriteFile writes content to a file relative to workspace inside the container.

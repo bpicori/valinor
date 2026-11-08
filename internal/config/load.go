@@ -159,6 +159,12 @@ func Validate(cfg Config) error {
 			return fmt.Errorf("scheduler.scripts_dir must be inside the workspace (scripts run in the sandbox)")
 		}
 	}
+	if cfg.Context.WindowTokens > 0 && cfg.Context.WindowTokens < 8000 {
+		return fmt.Errorf("context.window_tokens must be at least 8000")
+	}
+	if cfg.Context.MaxOutputTokens > 0 && cfg.Context.MaxOutputTokens < 256 {
+		return fmt.Errorf("context.max_output_tokens must be at least 256")
+	}
 
 	return nil
 }
@@ -208,6 +214,12 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 
 	if cfg.Context.PreserveRecentMessages <= 0 {
 		cfg.Context.PreserveRecentMessages = DefaultPreserveRecentMessages
+	}
+	if cfg.Context.WindowTokens <= 0 {
+		cfg.Context.WindowTokens = DefaultContextWindowTokens
+	}
+	if cfg.Context.MaxOutputTokens <= 0 {
+		cfg.Context.MaxOutputTokens = DefaultMaxOutputTokens
 	}
 
 	return cfg

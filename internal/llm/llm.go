@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
+	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/event"
 	"valinor/internal/logger"
@@ -13,15 +15,19 @@ import (
 )
 
 // New creates an LLM runtime with the given provider.
-func New(provider Provider, model string, maxIterations int) *LLM {
+func New(provider Provider, model string, maxIterations, maxOutputTokens int) *LLM {
 	if maxIterations <= 0 {
 		maxIterations = 20
 	}
+	if maxOutputTokens <= 0 {
+		maxOutputTokens = config.Must().Context.MaxOutputTokens
+	}
 
 	return &LLM{
-		provider:      provider,
-		model:         model,
-		maxIterations: maxIterations,
+		provider:        provider,
+		model:           model,
+		maxIterations:   maxIterations,
+		maxOutputTokens: maxOutputTokens,
 	}
 }
 
@@ -52,6 +58,25 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 		event.Publish(newEvent(eventType, payload))
 	}
 
+	callStream := func(msgs []agentcontext.Message, defs []tools.Tool) (*StreamResult, error) {
+		return l.provider.Stream(ctx, StreamParams{
+			Messages:  l.toProviderMessages(msgs),
+			Tools:     defs,
+			Model:     l.model,
+			MaxTokens: l.maxOutputTokens,
+			OnDelta: func(delta StreamDelta) {
+				if delta.Content != "" {
+					publishEvent(event.AgentContentDelta, event.ContentDeltaPayload{Content: delta.Content})
+				}
+				if delta.Refusal != "" {
+					publishEvent(event.AgentRefusal, event.RefusalPayload{Content: delta.Refusal})
+				}
+			},
+		})
+	}
+
+	priorTokens := req.PriorPromptTokens
+
 	for {
 		// Check for cancellation before each iteration
 		if err := ctx.Err(); err != nil {
@@ -79,30 +104,33 @@ func (l *LLM) Run(ctx context.Context, req RunRequest) (RunResult, error) {
 
 		if req.Compressor != nil {
 			var compressionResult CompressionResult
-			messages, compressionResult = req.Compressor.MaybeCompress(ctx, messages)
+			messages, compressionResult = req.Compressor.MaybeCompress(ctx, messages, priorTokens)
+			if compressionResult.Applied {
+				priorTokens = compressionResult.TokensAfter
+			}
 			publishCompressionResult(publishEvent, compressionResult)
 		}
-
-		// Convert to provider-agnostic messages
-		providerMessages := l.toProviderMessages(messages)
 
 		// Build tool definitions from request tools
 		toolDefs := req.Tools
 
 		// Call provider stream with callback to publish deltas to the bus
-		result, err := l.provider.Stream(ctx, StreamParams{
-			Messages: providerMessages,
-			Tools:    toolDefs,
-			Model:    l.model,
-			OnDelta: func(delta StreamDelta) {
-				if delta.Content != "" {
-					publishEvent(event.AgentContentDelta, event.ContentDeltaPayload{Content: delta.Content})
-				}
-				if delta.Refusal != "" {
-					publishEvent(event.AgentRefusal, event.RefusalPayload{Content: delta.Refusal})
-				}
-			},
-		})
+		result, err := callStream(messages, toolDefs)
+
+		// A provider rejecting the request for size means the local estimate was
+		// low or the model window is smaller than configured: compress once and retry.
+		if err != nil && req.Compressor != nil && isContextLengthError(err) {
+			var forced CompressionResult
+			messages, forced = req.Compressor.ForceCompress(ctx, messages, priorTokens)
+			publishCompressionResult(publishEvent, forced)
+			if forced.Applied {
+				priorTokens = forced.TokensAfter
+				logger.Warning("provider rejected context length; retrying after forced compression",
+					logger.BuildMetadata("tokens_before", forced.TokensBefore, "tokens_after", forced.TokensAfter))
+				result, err = callStream(messages, toolDefs)
+			}
+		}
+
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				logger.Info("llm stream cancelled by user", nil)
@@ -257,9 +285,31 @@ func executeTool(toolset []tools.Tool, name string, args json.RawMessage) (strin
 		if err != nil {
 			return fmt.Sprintf("error: %v", err), true
 		}
-		return result, true
+		return tools.CapResult(t.Name, result), true
 	}
 	return "", false
 }
 
-
+// isContextLengthError reports whether a provider error means the request
+// exceeded the model context window.
+func isContextLengthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"context length",
+		"context_length",
+		"maximum context",
+		"context window",
+		"too many tokens",
+		"input is too long",
+		"prompt is too long",
+		"reduce the length",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}

@@ -13,7 +13,7 @@ import (
 
 const workspaceSkillsDir = "skills"
 
-//go:embed all:*
+//go:embed all:web-research
 var bundled embed.FS
 
 // EnsureRequiredSkills writes embedded required skills into workspaceDir/skills/.
