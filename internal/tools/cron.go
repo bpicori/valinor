@@ -13,8 +13,6 @@ import (
 	"valinor/internal/logger"
 )
 
-
-
 // CronjobName is the tool name for the cronjob tool.
 const CronjobName = "cronjob"
 
@@ -93,25 +91,112 @@ func cronjobParams() map[string]any {
 	}
 }
 
+// scheduledCronjobParams exposes only the one-time add operation available
+// inside a scheduled job run.
+func scheduledCronjobParams() map[string]any {
+	deliverTo := map[string]any{
+		"type":        "object",
+		"description": "Optional delivery target; defaults to the parent job's target",
+		"properties": map[string]any{
+			"kind":            map[string]any{"type": "string", "enum": []string{"origin", "client", "broadcast", "silent"}},
+			"client_type":     map[string]any{"type": "string"},
+			"client_identity": map[string]any{"type": "string"},
+		},
+		"required": []string{"kind"},
+	}
+
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"action": map[string]any{
+				"type":        "string",
+				"description": "Only 'add' is available inside a scheduled run",
+				"enum":        []string{"add"},
+			},
+			"name": map[string]any{
+				"type":        "string",
+				"description": "Short descriptive job name",
+			},
+			"message": map[string]any{
+				"type":        "string",
+				"description": "Instruction for the LLM on the one-time run (omit when using no_agent)",
+			},
+			"run_at": map[string]any{
+				"type":        "string",
+				"description": "RFC3339 timestamp for the one-time run",
+			},
+			"deliver_to": deliverTo,
+			"skills": map[string]any{
+				"type":        "array",
+				"description": "Skill names to inject when the job runs",
+				"items":       map[string]any{"type": "string"},
+			},
+			"no_agent": map[string]any{
+				"type":        "boolean",
+				"description": "Run a workspace script instead of the LLM",
+			},
+			"script": map[string]any{
+				"type":        "string",
+				"description": "Script filename ending in .sh in workspace scripts/ (required when no_agent=true)",
+			},
+			"context_from": map[string]any{
+				"type":        "string",
+				"description": "Job ID whose last output is prepended to this job's prompt",
+			},
+		},
+		"required":             []string{"action", "name", "run_at"},
+		"additionalProperties": false,
+	}
+}
+
+// BuildScheduledCronTool returns the restricted cron tool available to a
+// top-level scheduled agent run. It can create only one-time child jobs.
+func BuildScheduledCronTool(runCtx *RunContext, parentJobID, parentSessionID string, parentDelivery cron.DeliveryTarget, parentDepth int) Tool {
+	return buildTool(
+		CronjobName,
+		"Schedule a one-time follow-up job. Only action=add is available inside a scheduled run; nested jobs cannot create more jobs.",
+		scheduledCronjobParams(),
+		func(a json.RawMessage) (string, error) {
+			return cronjobScheduledExec(runCtx, parentJobID, parentSessionID, parentDelivery, parentDepth, a)
+		},
+	)
+}
+
+func cronjobScheduledExec(runCtx *RunContext, parentJobID, parentSessionID string, parentDelivery cron.DeliveryTarget, parentDepth int, args json.RawMessage) (string, error) {
+	var p cronjobArgs
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+	if p.Action != "add" {
+		return "Error: only action=add is available inside a scheduled run.", nil
+	}
+	if parentDepth >= cron.MaxNestedJobDepth {
+		return fmt.Sprintf("Error: nested job depth limit reached (max %d).", cron.MaxNestedJobDepth), nil
+	}
+	p.ScheduleKind = string(cron.ScheduleOnce)
+	p.Cron = ""
+	return cronjobCreate(runCtx, p, parentJobID, parentSessionID, parentDelivery, parentDepth+1)
+}
+
 type cronjobArgs struct {
-	Action       string   `json:"action"`
-	Name         string   `json:"name,omitempty"`
-	Message      string   `json:"message,omitempty"`
-	ScheduleKind string   `json:"schedule_kind,omitempty"`
-	Cron         string   `json:"cron,omitempty"`
-	RunAt        string   `json:"run_at,omitempty"`
+	Action       string `json:"action"`
+	Name         string `json:"name,omitempty"`
+	Message      string `json:"message,omitempty"`
+	ScheduleKind string `json:"schedule_kind,omitempty"`
+	Cron         string `json:"cron,omitempty"`
+	RunAt        string `json:"run_at,omitempty"`
 	DeliverTo    *struct {
 		Kind           string `json:"kind"`
 		ClientType     string `json:"client_type,omitempty"`
 		ClientIdentity string `json:"client_identity,omitempty"`
 	} `json:"deliver_to,omitempty"`
-	Skills       []string `json:"skills,omitempty"`
-	NoAgent      *bool    `json:"no_agent,omitempty"`
-	Script       string   `json:"script,omitempty"`
-	ContextFrom string `json:"context_from,omitempty"`
-	JobID       string `json:"job_id,omitempty"`
-	EnabledOnly  *bool    `json:"enabled_only,omitempty"`
-	Limit        int      `json:"limit,omitempty"`
+	Skills      []string `json:"skills,omitempty"`
+	NoAgent     *bool    `json:"no_agent,omitempty"`
+	Script      string   `json:"script,omitempty"`
+	ContextFrom string   `json:"context_from,omitempty"`
+	JobID       string   `json:"job_id,omitempty"`
+	EnabledOnly *bool    `json:"enabled_only,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
 }
 
 func cronjobExec(runCtx *RunContext, args json.RawMessage) (string, error) {
@@ -143,16 +228,32 @@ func cronjobExec(runCtx *RunContext, args json.RawMessage) (string, error) {
 }
 
 func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
+	return cronjobCreate(runCtx, p, "", "", cron.DeliveryTarget{}, 0)
+}
+
+func cronjobCreate(runCtx *RunContext, p cronjobArgs, parentJobID, parentSessionID string, parentDelivery cron.DeliveryTarget, depth int) (string, error) {
 	if p.Name == "" {
 		return "Error: name is required for add", nil
+	}
+	if depth < 0 || depth > cron.MaxNestedJobDepth {
+		return fmt.Sprintf("Error: nested job depth limit reached (max %d).", cron.MaxNestedJobDepth), nil
 	}
 
 	schedule, err := parseSchedule(p)
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), nil
 	}
+	if parentJobID != "" && schedule.Kind != cron.ScheduleOnce {
+		return "Error: scheduled runs may only create one-time jobs.", nil
+	}
 
 	deliverTo := cron.DefaultDeliveryTarget()
+	if parentJobID != "" {
+		deliverTo = parentDelivery
+		if deliverTo.Kind == "" {
+			deliverTo = cron.DefaultDeliveryTarget()
+		}
+	}
 	if p.DeliverTo != nil {
 		deliverTo = cron.DeliveryTarget{
 			Kind:           p.DeliverTo.Kind,
@@ -164,6 +265,11 @@ func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 	var createdInSessionID string
 	if snap, ok := runCtx.Snapshot(); ok {
 		createdInSessionID = snap.SessionID
+	}
+	if parentJobID != "" && parentSessionID != "" {
+		// Preserve the parent's origin so deliver_to=origin resolves to the
+		// client that originally created the parent job.
+		createdInSessionID = parentSessionID
 	}
 
 	noAgent := p.NoAgent != nil && *p.NoAgent
@@ -179,6 +285,8 @@ func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 		Message:            p.Message,
 		Schedule:           schedule,
 		CreatedInSessionID: createdInSessionID,
+		ParentJobID:        parentJobID,
+		Depth:              depth,
 		DeliverTo:          deliverTo,
 		Skills:             p.Skills,
 		NoAgent:            noAgent,
@@ -190,8 +298,12 @@ func cronjobAdd(runCtx *RunContext, p cronjobArgs) (string, error) {
 		return fmt.Sprintf("Error creating cron job: %v", err), nil
 	}
 
-	return fmt.Sprintf("Created cron job '%s' (ID: %s), schedule: %s, next run: %s",
-		job.Name, job.ID, formatSchedule(job.Schedule), formatNextRun(job.NextRunAt)), nil
+	created := fmt.Sprintf("Created cron job '%s' (ID: %s), schedule: %s, next run: %s",
+		job.Name, job.ID, formatSchedule(job.Schedule), formatNextRun(job.NextRunAt))
+	if parentJobID != "" {
+		created += fmt.Sprintf(" [child of %s, depth %d]", parentJobID, depth)
+	}
+	return created, nil
 }
 
 func cronjobEdit(p cronjobArgs) (string, error) {
@@ -289,6 +401,9 @@ func cronjobList(p cronjobArgs) (string, error) {
 		}
 		sb.WriteString(fmt.Sprintf("• %s (ID: %s)\n", j.Name, j.ID))
 		sb.WriteString(fmt.Sprintf("  Status: %s | Schedule: %s\n", status, formatSchedule(j.Schedule)))
+		if j.ParentJobID != "" {
+			sb.WriteString(fmt.Sprintf("  Parent: %s | Depth: %d\n", j.ParentJobID, j.Depth))
+		}
 		sb.WriteString(fmt.Sprintf("  Next run: %s | Message: %.60s...\n\n", formatNextRun(j.NextRunAt), j.Message))
 	}
 	return sb.String(), nil

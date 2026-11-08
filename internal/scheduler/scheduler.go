@@ -45,11 +45,11 @@ type Scheduler struct {
 	scriptTimeout time.Duration
 	interval      time.Duration
 
-	mu           sync.Mutex
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	running      bool
-	execLocks    sync.Map // lock key -> *sync.Mutex
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	running   bool
+	execLocks sync.Map // lock key -> *sync.Mutex
 }
 
 // New creates a new scheduler with the given jobs store.
@@ -275,7 +275,17 @@ func (s *Scheduler) executeAgentJob(ctx context.Context, job *cron.CronJob) (str
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
-	sess.SetTools(agenttools.Exclude(sess.Tools(), cronAgentExcludedTools...), sess.RunContext())
+	tools := agenttools.Exclude(sess.Tools(), cronAgentExcludedTools...)
+	if job.Depth < cron.MaxNestedJobDepth {
+		tools = append(tools, agenttools.BuildScheduledCronTool(
+			sess.RunContext(),
+			job.ID,
+			job.CreatedInSessionID,
+			job.DeliverTo,
+			job.Depth,
+		))
+	}
+	sess.SetTools(tools, sess.RunContext())
 	defer func() {
 		if err := sess.Close(); err != nil {
 			logger.Warning("scheduler: failed to close session",

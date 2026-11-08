@@ -48,6 +48,10 @@ const (
 	ScheduleOnce ScheduleKind = "once"
 )
 
+// MaxNestedJobDepth caps how many parent links a scheduled job may have.
+// Depth 0 is a top-level job; depth 1 is a one-time child created by a job.
+const MaxNestedJobDepth = 1
+
 // Schedule defines when a job should run.
 type Schedule struct {
 	Kind  ScheduleKind `json:"kind"`
@@ -129,6 +133,8 @@ type CronJob struct {
 	UpdatedAt          time.Time      `json:"updated_at"`
 	DeliverTo          DeliveryTarget `json:"deliver_to,omitempty"`
 	CreatedInSessionID string         `json:"created_in_session_id,omitempty"`
+	ParentJobID        string         `json:"parent_job_id,omitempty"`
+	Depth              int            `json:"depth,omitempty"`
 	Skills             []string       `json:"skills,omitempty"`
 	NoAgent            bool           `json:"no_agent,omitempty"`
 	Script             string         `json:"script,omitempty"`
@@ -165,6 +171,15 @@ func validateJobContent(j *CronJob) error {
 	}
 	if j.NoAgent && j.Script == "" {
 		return fmt.Errorf("script is required when no_agent is true")
+	}
+	if j.Depth < 0 || j.Depth > MaxNestedJobDepth {
+		return fmt.Errorf("cron job depth must be between 0 and %d", MaxNestedJobDepth)
+	}
+	if j.Depth > 0 && j.ParentJobID == "" {
+		return fmt.Errorf("parent_job_id is required when depth is greater than 0")
+	}
+	if j.Depth == 0 && j.ParentJobID != "" {
+		return fmt.Errorf("parent_job_id requires depth greater than 0")
 	}
 	return nil
 }
@@ -237,6 +252,8 @@ type CreateJobInput struct {
 	Message            string
 	Schedule           Schedule
 	CreatedInSessionID string
+	ParentJobID        string
+	Depth              int
 	DeliverTo          DeliveryTarget
 	Skills             []string
 	NoAgent            bool
@@ -341,6 +358,8 @@ func (j *Jobs) Create(in CreateJobInput) (*CronJob, error) {
 		Message:     in.Message,
 		Schedule:    in.Schedule,
 		DeliverTo:   deliverTo,
+		ParentJobID: in.ParentJobID,
+		Depth:       in.Depth,
 		NoAgent:     in.NoAgent,
 		Script:      in.Script,
 		Skills:      in.Skills,
@@ -389,6 +408,8 @@ func (j *Jobs) Create(in CreateJobInput) (*CronJob, error) {
 		UpdatedAt:          now,
 		DeliverTo:          deliverTo,
 		CreatedInSessionID: in.CreatedInSessionID,
+		ParentJobID:        in.ParentJobID,
+		Depth:              in.Depth,
 		Skills:             in.Skills,
 		NoAgent:            in.NoAgent,
 		Script:             in.Script,
