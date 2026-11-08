@@ -22,6 +22,7 @@ type Update struct {
 type Message struct {
 	MessageID       int64           `json:"message_id"`
 	MessageThreadID *int64          `json:"message_thread_id,omitempty"`
+	MediaGroupID    string          `json:"media_group_id,omitempty"`
 	From            *User           `json:"from,omitempty"`
 	Date            int64           `json:"date"`
 	Chat            *Chat           `json:"chat"`

@@ -3,6 +3,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -52,6 +53,10 @@ type Bot struct {
 
 	// Per-chat pending ask_user questions (single goroutine access, no mutex needed)
 	pendingQuestions map[int64]map[string]pendingQuestion
+
+	// Per-chat album buffers (single goroutine access, no mutex needed)
+	albums       map[albumKey]*pendingAlbum
+	albumFlushes chan albumKey
 
 	bridgesMu sync.RWMutex
 
@@ -109,6 +114,8 @@ func NewBot(cfg Config) (*Bot, error) {
 		trackers:            make(map[int64]*messageTracker),
 		modelPickers:        make(map[int64]*modelPicker),
 		pendingQuestions:    make(map[int64]map[string]pendingQuestion),
+		albums:              make(map[albumKey]*pendingAlbum),
+		albumFlushes:        make(chan albumKey, 100),
 		allowedUsers:        idSet(cfg.AllowedUserIDs),
 		allowedChats:        idSet(cfg.AllowedChatIDs),
 		unauthorizedNotices: make(map[int64]time.Time),
@@ -126,6 +133,18 @@ func idSet(ids []int64) map[int64]struct{} {
 }
 
 const questionTTL = 10 * time.Minute
+const albumDebounce = 800 * time.Millisecond
+
+type albumKey struct {
+	chatID       int64
+	mediaGroupID string
+}
+
+type pendingAlbum struct {
+	identity ChatIdentity
+	messages []*Message
+	timer    *time.Timer
+}
 
 type pendingQuestion struct {
 	Question  string
@@ -239,6 +258,8 @@ func (b *Bot) run() {
 				return
 			}
 			b.onEvent(ev)
+		case key := <-b.albumFlushes:
+			b.flushAlbum(key)
 		}
 	}
 }
@@ -275,6 +296,13 @@ func (b *Bot) onUpdate(update Update) {
 	}
 
 	if msg := extractMessage(update); msg != nil {
+		if isAlbumAttachment(msg) {
+			if !b.authorizeSender(msg) {
+				return
+			}
+			b.bufferAlbum(msg)
+			return
+		}
 		if !b.authorizeMessage(msg) {
 			return
 		}
@@ -314,9 +342,9 @@ func (b *Bot) onUpdate(update Update) {
 	}
 }
 
-// authorizeMessage reports whether a message may reach the agent.
+// authorizeSender reports whether a chat and sender may reach the agent.
 // It also sends a rate-limited setup hint for unauthorized DMs.
-func (b *Bot) authorizeMessage(msg *Message) bool {
+func (b *Bot) authorizeSender(msg *Message) bool {
 	if msg == nil || msg.Chat == nil || msg.From == nil || msg.From.IsBot {
 		return false
 	}
@@ -326,6 +354,14 @@ func (b *Bot) authorizeMessage(msg *Message) bool {
 	}
 	if !b.allowedChat(msg.Chat) {
 		b.handleUnauthorizedMessage(msg)
+		return false
+	}
+	return true
+}
+
+// authorizeMessage reports whether a message may reach the agent.
+func (b *Bot) authorizeMessage(msg *Message) bool {
+	if !b.authorizeSender(msg) {
 		return false
 	}
 	if b.isGroupChat(msg.Chat) && b.config.RequireMention && !b.isBotMentioned(msg) {
@@ -546,6 +582,8 @@ func (b *Bot) processVoiceMessage(msg *Message, updateID int64) error {
 
 const maxTelegramAttachmentBytes = 20 << 20
 
+var errAttachmentTooLarge = errors.New("attachment too large")
+
 // processAttachmentMessage downloads a photo or document into the workspace and
 // sends the model a user message pointing at it.
 func (b *Bot) processAttachmentMessage(msg *Message, updateID int64) error {
@@ -557,11 +595,7 @@ func (b *Bot) processAttachmentMessage(msg *Message, updateID int64) error {
 	tracker := b.getOrCreateTracker(identity.ChatID)
 
 	if tracker.isBusy() {
-		notice := &RenderResult{
-			Text:      "\u23f3 Please wait for the current response to complete\\.",
-			ParseMode: "MarkdownV2",
-		}
-		return b.sendTelegramMessage(identity, tracker, notice)
+		return b.sendBusyMessage(identity, tracker)
 	}
 	if strings.TrimSpace(b.config.WorkspaceDir) == "" {
 		return b.sendTelegramMessage(identity, tracker, &RenderResult{
@@ -569,59 +603,22 @@ func (b *Bot) processAttachmentMessage(msg *Message, updateID int64) error {
 		})
 	}
 
-	fileID, fileName, mimeType, isImage := attachmentFromMessage(msg)
-	if fileID == "" {
-		return nil
-	}
-
 	if err := b.sendTypingAction(identity, tracker); err != nil {
 		logger.Warning("telegram bot: failed to send typing action for attachment",
 			logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
 	}
 
-	file, err := b.client.GetFile(b.ctx, fileID)
+	attachment, err := b.saveAttachment(msg)
 	if err != nil {
-		return b.sendTelegramMessage(identity, tracker, &RenderResult{
-			Text: "Could not fetch the attachment. Please try again.",
-		})
+		logger.Warning("telegram bot: attachment save failed",
+			logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
+		return b.sendTelegramMessage(identity, tracker, &RenderResult{Text: attachmentErrorMessage(err)})
+	}
+	if attachment.RelativePath == "" {
+		return nil
 	}
 
-	data, err := b.client.DownloadFile(b.ctx, file.FilePath)
-	if err != nil {
-		return b.sendTelegramMessage(identity, tracker, &RenderResult{
-			Text: "Could not download the attachment. Please try again.",
-		})
-	}
-	if len(data) > maxTelegramAttachmentBytes {
-		return b.sendTelegramMessage(identity, tracker, &RenderResult{
-			Text: fmt.Sprintf("The attachment is larger than %d MB.", maxTelegramAttachmentBytes/(1<<20)),
-		})
-	}
-
-	ext := attachmentExtension(file.FilePath, fileName, mimeType)
-	base := sanitizeAttachmentName(file.FileUniqueID)
-	if base == "" {
-		base = "file"
-	}
-	relPath := filepath.ToSlash(filepath.Join("uploads", fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext)))
-	fullPath := filepath.Join(b.config.WorkspaceDir, filepath.FromSlash(relPath))
-	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-		return fmt.Errorf("create uploads directory: %w", err)
-	}
-	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
-		return fmt.Errorf("save attachment: %w", err)
-	}
-
-	var content string
-	if isImage {
-		content = fmt.Sprintf("The user sent an image saved at %q. Use read_image with that path to view it.", relPath)
-	} else {
-		content = fmt.Sprintf("The user sent a file saved at %q (%d bytes).", relPath, len(data))
-	}
-	if caption := strings.TrimSpace(msg.Caption); caption != "" {
-		content += "\nCaption: " + caption
-	}
-
+	content := attachmentContent([]savedAttachment{attachment}, strings.TrimSpace(msg.Caption))
 	requestID := fmt.Sprintf("tg_%d_%d", msg.Chat.ID, updateID)
 	cmd := &Command{
 		Identity:  identity,
@@ -633,6 +630,198 @@ func (b *Bot) processAttachmentMessage(msg *Message, updateID int64) error {
 		RawText: content,
 	}
 	return b.processCommand(cmd, tracker)
+}
+
+// savedAttachment describes one attachment written into the workspace.
+type savedAttachment struct {
+	RelativePath string
+	IsImage      bool
+	Size         int
+}
+
+// saveAttachment downloads a Telegram photo or document into the workspace.
+func (b *Bot) saveAttachment(msg *Message) (savedAttachment, error) {
+	fileID, fileName, mimeType, isImage := attachmentFromMessage(msg)
+	if fileID == "" {
+		return savedAttachment{}, nil
+	}
+
+	file, err := b.client.GetFile(b.ctx, fileID)
+	if err != nil {
+		return savedAttachment{}, fmt.Errorf("get file: %w", err)
+	}
+	data, err := b.client.DownloadFile(b.ctx, file.FilePath)
+	if err != nil {
+		return savedAttachment{}, fmt.Errorf("download file: %w", err)
+	}
+	if len(data) > maxTelegramAttachmentBytes {
+		return savedAttachment{}, errAttachmentTooLarge
+	}
+
+	ext := attachmentExtension(file.FilePath, fileName, mimeType)
+	base := sanitizeAttachmentName(file.FileUniqueID)
+	if base == "" {
+		base = "file"
+	}
+	relPath := filepath.ToSlash(filepath.Join("uploads", fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext)))
+	fullPath := filepath.Join(b.config.WorkspaceDir, filepath.FromSlash(relPath))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return savedAttachment{}, fmt.Errorf("create uploads directory: %w", err)
+	}
+	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
+		return savedAttachment{}, fmt.Errorf("save attachment: %w", err)
+	}
+
+	return savedAttachment{
+		RelativePath: relPath,
+		IsImage:      isImage,
+		Size:         len(data),
+	}, nil
+}
+
+// attachmentContent describes saved attachments in one user message.
+func attachmentContent(attachments []savedAttachment, caption string) string {
+	var sb strings.Builder
+	if len(attachments) == 1 {
+		attachment := attachments[0]
+		if attachment.IsImage {
+			fmt.Fprintf(&sb, "The user sent an image saved at %q. Use read_image with that path to view it.", attachment.RelativePath)
+		} else {
+			fmt.Fprintf(&sb, "The user sent a file saved at %q (%d bytes).", attachment.RelativePath, attachment.Size)
+		}
+	} else {
+		fmt.Fprintf(&sb, "The user sent %d attachments in one album:\n", len(attachments))
+		for _, attachment := range attachments {
+			if attachment.IsImage {
+				fmt.Fprintf(&sb, "- image saved at %q. Use read_image with that path to view it.\n", attachment.RelativePath)
+			} else {
+				fmt.Fprintf(&sb, "- file saved at %q (%d bytes).\n", attachment.RelativePath, attachment.Size)
+			}
+		}
+	}
+	if caption != "" {
+		sb.WriteString("\nCaption: ")
+		sb.WriteString(caption)
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+func attachmentErrorMessage(err error) string {
+	if errors.Is(err, errAttachmentTooLarge) {
+		return fmt.Sprintf("The attachment is larger than %d MB.", maxTelegramAttachmentBytes/(1<<20))
+	}
+	return "Could not download the attachment. Please try again."
+}
+
+// isAlbumAttachment reports whether a message belongs to a Telegram media group.
+func isAlbumAttachment(msg *Message) bool {
+	return msg != nil && msg.MediaGroupID != "" && (len(msg.Photo) > 0 || msg.Document != nil)
+}
+
+// bufferAlbum collects media-group messages until Telegram has sent all of them.
+func (b *Bot) bufferAlbum(msg *Message) {
+	key := albumKey{chatID: msg.Chat.ID, mediaGroupID: msg.MediaGroupID}
+	album := b.albums[key]
+	if album == nil {
+		album = &pendingAlbum{identity: FromTelegramUpdate(msg.Chat)}
+		b.albums[key] = album
+	}
+	album.messages = append(album.messages, msg)
+	if album.timer != nil {
+		album.timer.Stop()
+	}
+	album.timer = time.AfterFunc(albumDebounce, func() {
+		select {
+		case b.albumFlushes <- key:
+		case <-b.ctx.Done():
+		}
+	})
+}
+
+// flushAlbum processes a complete media group as one user message.
+func (b *Bot) flushAlbum(key albumKey) {
+	album := b.albums[key]
+	if album == nil {
+		return
+	}
+	delete(b.albums, key)
+	if album.timer != nil {
+		album.timer.Stop()
+	}
+	if len(album.messages) == 0 {
+		return
+	}
+
+	chat := album.messages[0].Chat
+	if b.isGroupChat(chat) && b.config.RequireMention {
+		addressed := false
+		for _, msg := range album.messages {
+			if b.isBotMentioned(msg) {
+				addressed = true
+				break
+			}
+		}
+		if !addressed {
+			logger.Debug("telegram bot: ignoring unmentioned group album",
+				logger.BuildMetadata("chat_id", key.chatID, "media_group_id", key.mediaGroupID))
+			return
+		}
+	}
+
+	tracker := b.getOrCreateTracker(key.chatID)
+	if tracker.isBusy() {
+		b.sendBusyMessage(album.identity, tracker)
+		return
+	}
+	if strings.TrimSpace(b.config.WorkspaceDir) == "" {
+		b.sendTelegramMessage(album.identity, tracker, &RenderResult{Text: "Attachment uploads are not configured."})
+		return
+	}
+
+	if err := b.sendTypingAction(album.identity, tracker); err != nil {
+		logger.Warning("telegram bot: failed to send typing action for album",
+			logger.BuildMetadata("error", err, "chat_id", key.chatID))
+	}
+
+	attachments := make([]savedAttachment, 0, len(album.messages))
+	for _, msg := range album.messages {
+		attachment, err := b.saveAttachment(msg)
+		if err != nil {
+			logger.Warning("telegram bot: album attachment save failed",
+				logger.BuildMetadata("error", err, "chat_id", key.chatID, "media_group_id", key.mediaGroupID))
+			b.sendTelegramMessage(album.identity, tracker, &RenderResult{Text: attachmentErrorMessage(err)})
+			return
+		}
+		if attachment.RelativePath != "" {
+			attachments = append(attachments, attachment)
+		}
+	}
+	if len(attachments) == 0 {
+		return
+	}
+
+	caption := ""
+	for _, msg := range album.messages {
+		if strings.TrimSpace(msg.Caption) != "" {
+			caption = b.stripBotMention(msg.Caption)
+			break
+		}
+	}
+	content := attachmentContent(attachments, strings.TrimSpace(caption))
+	requestID := fmt.Sprintf("tg_%d_album_%s", key.chatID, key.mediaGroupID)
+	cmd := &Command{
+		Identity:  album.identity,
+		RequestID: requestID,
+		Type:      gateway.CommandUserMessage,
+		Payload: gateway.UserMessagePayload{
+			Content: content,
+		},
+		RawText: content,
+	}
+	if err := b.processCommand(cmd, tracker); err != nil {
+		logger.Error("telegram bot: album processing failed",
+			logger.BuildMetadata("error", err, "chat_id", key.chatID, "media_group_id", key.mediaGroupID))
+	}
 }
 
 // attachmentFromMessage selects the file to download. Telegram sends several
@@ -845,11 +1034,16 @@ func (b *Bot) notifyGatewayUnavailable(identity ChatIdentity, err error) {
 	}
 }
 
-// sendBusyNotice tells the user that a run is already active.
-func (b *Bot) sendBusyNotice(cmd *Command, tracker *messageTracker) error {
-	return b.sendTelegramMessage(cmd.Identity, tracker, &RenderResult{
+// sendBusyMessage tells the user that a run is already active.
+func (b *Bot) sendBusyMessage(identity ChatIdentity, tracker *messageTracker) error {
+	return b.sendTelegramMessage(identity, tracker, &RenderResult{
 		Text: "⏳ Still working. Send /cancel to stop, or wait for the current response.",
 	})
+}
+
+// sendBusyNotice tells the user that a command cannot run while a run is active.
+func (b *Bot) sendBusyNotice(cmd *Command, tracker *messageTracker) error {
+	return b.sendBusyMessage(cmd.Identity, tracker)
 }
 
 // isAgentRunEvent reports whether an event belongs to one agent run.
