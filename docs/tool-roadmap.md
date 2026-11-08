@@ -61,11 +61,9 @@ skills: they are procedures over files, shell, and Python.
    hydration, and inbound Telegram photos and image documents. Images are
    injected as a user message after tool results; the transcript stores paths,
    not base64. PDFs and Office files still belong to skills.
-6. **Skill delivery:** `send_file` with an `AgentFile` event and Telegram
-   `sendDocument`; embedded, updatable required skills; sandbox image with
-   `pandoc`, `poppler-utils`, `tesseract-ocr`, `pypdf`, `python-docx`,
-   `python-pptx`, `openpyxl`, and `Pillow`. Keep LibreOffice and Playwright
-   optional because of image size.
+6. **File delivery:** `send_file` with an `AgentFile` event and Telegram
+   `sendDocument`; TUI shows the workspace path. No bundled skills and no
+   sandbox dependency changes: skills remain user-authored.
 7. **`ask_user`:** non-blocking structured questions. The tool publishes an
    `AgentQuestion` event and ends the turn; the answer arrives as the next user
    message. Telegram renders one inline button per option and sends the choice
