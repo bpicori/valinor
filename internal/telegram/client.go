@@ -21,6 +21,10 @@ const (
 	DefaultFileTimeout = 5 * time.Minute
 	// DefaultLongPollTimeout is the default timeout for getUpdates long polling.
 	DefaultLongPollTimeout = 30
+	// maxAPIRetries is the number of retries after a 429 response.
+	maxAPIRetries = 2
+	// maxRetryWait caps how long the bot waits for Telegram flood control.
+	maxRetryWait = 10 * time.Second
 )
 
 // Client is a minimal Telegram Bot API HTTP client.
@@ -30,94 +34,160 @@ type Client struct {
 	fileClient     *http.Client
 	longPollClient *http.Client
 	endpoint       string
+	retryBase      time.Duration
+	retryMax       time.Duration
 }
 
-// NewClient creates a new Telegram Bot API client.
+// NewClient creates a new Telegram Bot API client with default retry settings.
 func NewClient(token string) *Client {
+	return NewClientWithRetry(token, time.Second, maxRetryWait)
+}
+
+// NewClientWithRetry creates a client with configurable retry backoff.
+// Retry waits are capped at maxRetryWait so one chat cannot stall the bot for long.
+func NewClientWithRetry(token string, retryBase, retryMax time.Duration) *Client {
+	if retryBase <= 0 {
+		retryBase = time.Second
+	}
+	if retryMax <= 0 || retryMax > maxRetryWait {
+		retryMax = maxRetryWait
+	}
 	return &Client{
 		token:          token,
 		httpClient:     &http.Client{Timeout: DefaultRequestTimeout},
 		fileClient:     &http.Client{Timeout: DefaultFileTimeout},
 		longPollClient: &http.Client{Timeout: 100 * time.Second}, // Max 90s poll + buffer
 		endpoint:       DefaultAPIEndpoint + token + "/",
+		retryBase:      retryBase,
+		retryMax:       retryMax,
 	}
+}
+
+// retryWait returns how long to wait before retrying a 429 response.
+func (c *Client) retryWait(resp *APIResponse, attempt int) (time.Duration, bool) {
+	if resp == nil || resp.ErrorCode != 429 {
+		return 0, false
+	}
+	if resp.Parameters != nil && resp.Parameters.RetryAfter > 0 {
+		wait := time.Duration(resp.Parameters.RetryAfter) * time.Second
+		if wait > maxRetryWait {
+			return 0, false
+		}
+		return wait, true
+	}
+	wait := c.retryBase << attempt
+	if wait <= 0 || wait > c.retryMax {
+		wait = c.retryMax
+	}
+	if wait <= 0 || wait > maxRetryWait {
+		return 0, false
+	}
+	return wait, true
 }
 
 // apiCall performs a request to the Telegram Bot API.
 func (c *Client) apiCall(ctx context.Context, method string, payload interface{}) (*APIResponse, error) {
 	url := c.endpoint + method
 
-	var body io.Reader
+	var data []byte
 	if payload != nil {
-		data, err := json.Marshal(payload)
+		var err error
+		data, err = json.Marshal(payload)
 		if err != nil {
 			return nil, fmt.Errorf("marshal request: %w", err)
 		}
-		body = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
+	for attempt := 0; ; attempt++ {
+		var body io.Reader
+		if data != nil {
+			body = bytes.NewReader(data)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, body)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("execute request: %w", err)
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read response: %w", readErr)
+		}
+
+		var apiResp APIResponse
+		if err := json.Unmarshal(respBody, &apiResp); err != nil {
+			return nil, fmt.Errorf("parse response: %w", err)
+		}
+
+		if attempt < maxAPIRetries && !apiResp.OK && apiResp.ErrorCode == 429 {
+			wait, ok := c.retryWait(&apiResp, attempt)
+			if ok {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(wait):
+					continue
+				}
+			}
+		}
+		return &apiResp, nil
 	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("execute request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	var apiResp APIResponse
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
-	}
-
-	return &apiResp, nil
 }
 
 // apiCallMultipart performs a multipart/form-data request to the Telegram Bot API.
 func (c *Client) apiCallMultipart(ctx context.Context, method string, build func(*multipart.Writer) error) (*APIResponse, error) {
 	url := c.endpoint + method
 
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	if err := build(writer); err != nil {
-		return nil, err
-	}
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("finalize multipart request: %w", err)
-	}
+	for attempt := 0; ; attempt++ {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		if err := build(writer); err != nil {
+			return nil, err
+		}
+		if err := writer.Close(); err != nil {
+			return nil, fmt.Errorf("finalize multipart request: %w", err)
+		}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &body)
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Content-Type", writer.FormDataContentType())
 
-	resp, err := c.fileClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("execute request: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := c.fileClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("execute request: %w", err)
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, fmt.Errorf("read response: %w", readErr)
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
+		var apiResp APIResponse
+		if err := json.Unmarshal(respBody, &apiResp); err != nil {
+			return nil, fmt.Errorf("parse response: %w", err)
+		}
 
-	var apiResp APIResponse
-	if err := json.Unmarshal(respBody, &apiResp); err != nil {
-		return nil, fmt.Errorf("parse response: %w", err)
+		if attempt < maxAPIRetries && !apiResp.OK && apiResp.ErrorCode == 429 {
+			wait, ok := c.retryWait(&apiResp, attempt)
+			if ok {
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(wait):
+					continue
+				}
+			}
+		}
+		return &apiResp, nil
 	}
-
-	return &apiResp, nil
 }
 
 // GetUpdates fetches updates from Telegram using long polling.
@@ -403,6 +473,18 @@ func (c *Client) DownloadFile(ctx context.Context, filePath string) ([]byte, err
 		return nil, fmt.Errorf("read downloaded file: %w", err)
 	}
 	return data, nil
+}
+
+// SetMyCommands registers the bot command menu with Telegram.
+func (c *Client) SetMyCommands(ctx context.Context, commands []BotCommand) error {
+	resp, err := c.apiCall(ctx, "setMyCommands", SetMyCommandsRequest{Commands: commands})
+	if err != nil {
+		return err
+	}
+	if !resp.OK {
+		return resp
+	}
+	return nil
 }
 
 // GetMe returns basic information about the bot.

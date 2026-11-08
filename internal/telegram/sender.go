@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"valinor/internal/logger"
 )
@@ -20,6 +21,10 @@ const (
 func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker, result *RenderResult) error {
 	if len(result.Images) > 0 {
 		return b.sendPhotoMessages(identity, result)
+	}
+
+	if !result.IsStreaming && utf8.RuneCountInString(result.Text) > MaxTelegramMessageLength {
+		return b.sendChunkedMessage(identity, tracker, result)
 	}
 
 	// Determine if we should edit or send a new message
@@ -50,9 +55,13 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker
 			return nil
 		}
 		if err != nil {
+			if isRateLimitError(err) {
+				return err
+			}
 			// If editing fails (e.g., message too old), fall back to sending new message
 			logger.Warning("telegram bot: edit failed, sending new message",
 				logger.BuildMetadata("error", err, "chat_id", identity.ChatID))
+			tracker.setStreamingMsgID(0)
 			return b.sendNewMessage(identity, tracker, result)
 		}
 
@@ -62,6 +71,38 @@ func (b *Bot) sendTelegramMessage(identity ChatIdentity, tracker *messageTracker
 
 	// Send new message
 	return b.sendNewMessage(identity, tracker, result)
+}
+
+// sendChunkedMessage delivers a long response in numbered parts.
+func (b *Bot) sendChunkedMessage(identity ChatIdentity, tracker *messageTracker, result *RenderResult) error {
+	text := result.Text
+	if result.ParseMode != "" && result.FallbackText != "" {
+		text = result.FallbackText
+	}
+
+	parts := splitTelegramText(text, MaxTelegramMessageLength-20)
+	if len(parts) == 0 {
+		return nil
+	}
+	if len(parts) == 1 {
+		return b.sendNewMessage(identity, tracker, &RenderResult{
+			Text:         parts[0],
+			FallbackText: parts[0],
+			IsFinal:      true,
+		})
+	}
+
+	for idx, part := range parts {
+		prefix := fmt.Sprintf("(%d/%d)\n\n", idx+1, len(parts))
+		if err := b.sendNewMessage(identity, tracker, &RenderResult{
+			Text:         prefix + part,
+			FallbackText: prefix + part,
+			IsFinal:      true,
+		}); err != nil {
+			return fmt.Errorf("send part %d/%d: %w", idx+1, len(parts), err)
+		}
+	}
+	return nil
 }
 
 // sendNewMessage sends a new Telegram message.
@@ -110,13 +151,13 @@ func (b *Bot) sendPhotoMessages(identity ChatIdentity, result *RenderResult) err
 			ReplyMarkup: result.ReplyMarkup,
 		}
 		if idx == 0 {
-			req.Caption = result.Text
+			req.Caption = telegramCaption(result.Text)
 			req.ParseMode = result.ParseMode
 		}
 
 		msg, err := b.client.SendPhoto(b.ctx, req)
 		if idx == 0 && shouldRetryWithPlainText(err, result) {
-			req.Caption = result.FallbackText
+			req.Caption = telegramCaption(result.FallbackText)
 			req.ParseMode = ""
 			msg, err = b.client.SendPhoto(b.ctx, req)
 		}
@@ -160,6 +201,13 @@ func (b *Bot) sendTypingAction(identity ChatIdentity, tracker *messageTracker) e
 	return nil
 }
 
+func telegramCaption(text string) string {
+	if utf8.RuneCountInString(text) > MaxTelegramCaptionLength {
+		return truncateTelegramText(text, MaxTelegramCaptionLength)
+	}
+	return text
+}
+
 func shouldRetryWithPlainText(err error, result *RenderResult) bool {
 	if err == nil || result == nil || result.ParseMode == "" || result.FallbackText == "" {
 		return false
@@ -167,6 +215,11 @@ func shouldRetryWithPlainText(err error, result *RenderResult) bool {
 
 	apiErr, ok := err.(*APIResponse)
 	return ok && apiErr.IsParseError()
+}
+
+func isRateLimitError(err error) bool {
+	apiErr, ok := err.(*APIResponse)
+	return ok && apiErr.ErrorCode == 429
 }
 
 func isNotModifiedError(err error) bool {

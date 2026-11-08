@@ -43,6 +43,9 @@ type Bridge struct {
 	// Event channel (shared across all bridges, owned by Bot)
 	eventsChan chan<- chatEvent
 
+	// onClose runs once after the bridge has fully stopped.
+	onClose func()
+
 	// Outgoing channel for commands to gateway
 	outgoing chan *gateway.WireEnvelope
 
@@ -65,11 +68,12 @@ type Bridge struct {
 }
 
 // NewBridge creates a new WebSocket bridge for Telegram.
-func NewBridge(gatewayURL string, identity ChatIdentity, eventsChan chan<- chatEvent) *Bridge {
+func NewBridge(gatewayURL string, identity ChatIdentity, eventsChan chan<- chatEvent, onClose func()) *Bridge {
 	return &Bridge{
 		gatewayURL: gatewayURL,
 		identity:   identity,
 		eventsChan: eventsChan,
+		onClose:    onClose,
 		outgoing:   make(chan *gateway.WireEnvelope, gateway.OutgoingQueueSize),
 	}
 }
@@ -110,7 +114,17 @@ func (b *Bridge) Stop() {
 		b.wg.Wait()
 
 		logger.Info("telegram bridge: stopped", nil)
+		if b.onClose != nil {
+			b.onClose()
+		}
 	})
+}
+
+// markClosed makes the bridge unavailable before Stop finishes.
+func (b *Bridge) markClosed() {
+	b.mu.Lock()
+	b.closed = true
+	b.mu.Unlock()
 }
 
 // SessionInfo returns the handshake session metadata if available.
@@ -282,6 +296,8 @@ func (b *Bridge) readLoop() {
 			// Attempt reconnection
 			if err := b.reconnect(); err != nil {
 				logger.Error("telegram bridge: reconnection failed", logger.BuildMetadata("error", err))
+				b.markClosed()
+				go b.Stop()
 				return
 			}
 
@@ -338,6 +354,8 @@ func (b *Bridge) writeLoop() {
 				if err := b.reconnect(); err != nil {
 					logger.Error("telegram bridge: reconnection after write error failed",
 						logger.BuildMetadata("error", err))
+					b.markClosed()
+					go b.Stop()
 					return
 				}
 

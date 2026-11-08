@@ -217,6 +217,9 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 	if cfg.Telegram.RetryMaxDelay <= 0 {
 		cfg.Telegram.RetryMaxDelay = DefaultTelegramRetryMaxDelay
 	}
+	if !md.IsDefined("telegram", "require_mention") {
+		cfg.Telegram.RequireMention = DefaultTelegramRequireMention
+	}
 
 	cfg.Scheduler.Enabled = true
 

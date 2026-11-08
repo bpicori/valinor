@@ -6,62 +6,56 @@ import (
 	"time"
 )
 
-// maxBusyDuration is the maximum time a request can be busy before being
-// considered stale. This prevents chats from being stuck forever if events
-// are lost due to crashes or network issues.
-const maxBusyDuration = 1 * time.Minute
-
 // messageTracker tracks the state for a single chat's current streaming message.
 // This is intentionally minimal - session info lives in the Bridge, not here.
 type messageTracker struct {
-	streamingMsgID int64
-	lastStreamText string
-	thinkingLines  []string
-	busy           bool
-	busySince      time.Time // when busy was set, for staleness detection
-	requestID      string
-	contentBuf     strings.Builder
-	nextTypingAt   time.Time
+	streamingMsgID   int64
+	lastStreamText   string
+	thinkingLines    []string
+	busy             bool
+	requestID        string
+	contentBuf       strings.Builder
+	nextTypingAt     time.Time
+	nextStatusEditAt time.Time
 }
 
-// isBusy returns true if the chat is currently processing a request.
-// It also checks for stale busy state (e.g., due to lost events) and
-// auto-resets if the busy duration exceeds maxBusyDuration.
+const thinkingEditInterval = 2 * time.Second
+
+// isBusy returns true while a run is active for this chat.
 func (t *messageTracker) isBusy() bool {
-	if !t.busy {
-		return false
-	}
+	return t.busy
+}
 
-	// Check for stale busy state - auto-reset if busy for too long
-	if !t.busySince.IsZero() && time.Since(t.busySince) > maxBusyDuration {
-		t.markIdle()
-		return false
+// matchesRequest reports whether an event belongs to the active run.
+// Empty request IDs are accepted because not every event carries one.
+func (t *messageTracker) matchesRequest(requestID string) bool {
+	if requestID == "" {
+		return true
 	}
-
-	return true
+	return t.requestID == requestID
 }
 
 // markBusy sets the tracker as busy with the given request ID.
 func (t *messageTracker) markBusy(requestID string) {
 	t.busy = true
-	t.busySince = time.Now()
 	t.requestID = requestID
 	t.contentBuf.Reset()
 	t.streamingMsgID = 0
 	t.lastStreamText = ""
 	t.thinkingLines = nil
 	t.nextTypingAt = time.Time{}
+	t.nextStatusEditAt = time.Time{}
 }
 
 // markIdle clears the busy state and resets transient fields.
 func (t *messageTracker) markIdle() {
 	t.busy = false
-	t.busySince = time.Time{}
 	t.requestID = ""
 	t.contentBuf.Reset()
 	t.streamingMsgID = 0
 	t.lastStreamText = ""
 	t.thinkingLines = nil
+	t.nextStatusEditAt = time.Time{}
 }
 
 // appendThinkingLine adds a tool/thinking line to the in-progress status message.
@@ -105,6 +99,16 @@ func (t *messageTracker) setLastStreamText(text string) {
 // isSameStreamText reports whether the streaming message already shows this text.
 func (t *messageTracker) isSameStreamText(text string) bool {
 	return t.lastStreamText == text
+}
+
+// canEditStatus returns true if the thinking status may be edited now.
+func (t *messageTracker) canEditStatus(now time.Time) bool {
+	return !now.Before(t.nextStatusEditAt)
+}
+
+// markStatusEdited sets the next allowed thinking status edit time.
+func (t *messageTracker) markStatusEdited(now time.Time, interval time.Duration) {
+	t.nextStatusEditAt = now.Add(interval)
 }
 
 // canSendTyping returns true if typing can be sent now (rate limiting).

@@ -3,6 +3,7 @@ package wizard
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"valinor/internal/config"
@@ -447,6 +448,12 @@ func (m *Model) buildStepForm(s step, width int) fieldForm {
 	case stepTelegram:
 		return newFieldForm([]formField{
 			{label: "Bot Token", kind: fieldString, value: m.cfg.Telegram.BotToken, hint: "from @BotFather"},
+			{
+				label: "Allowed User IDs",
+				kind:  fieldString,
+				value: formatIDList(m.cfg.Telegram.AllowedUserIDs),
+				hint:  "comma-separated numeric IDs from @userinfobot; empty denies everyone",
+			},
 		}, width)
 	default:
 		return fieldForm{}
@@ -482,6 +489,11 @@ func (m *Model) applyForm() error {
 		if m.cfg.Telegram.BotToken == "" {
 			return fmt.Errorf("bot token is required")
 		}
+		ids, err := parseIDList(m.form.fieldValue("Allowed User IDs"))
+		if err != nil {
+			return err
+		}
+		m.cfg.Telegram.AllowedUserIDs = ids
 	}
 	if m.cfg.ValinorDir == "" {
 		m.cfg.ValinorDir = config.DefaultValinorDir
@@ -516,9 +528,33 @@ func (m *Model) refreshReview() {
 	b.WriteString(fmt.Sprintf("Gateway:           %s\n", m.cfg.GatewayWebSocketURL()))
 	b.WriteString(fmt.Sprintf("Max iterations:    %d\n", m.cfg.MaxAgentIterations))
 	b.WriteString(fmt.Sprintf("Preserve recent:   %d messages\n", m.cfg.Context.PreserveRecentMessages))
-	b.WriteString("Telegram:          enabled (token configured)\n")
+	b.WriteString(fmt.Sprintf("Telegram:          enabled (%d allowed users)\n", len(m.cfg.Telegram.AllowedUserIDs)))
 	b.WriteString("\n")
 	b.WriteString(m.styles.hint.Render("Press enter to save to ~/.valinor/config.toml"))
 	m.review.SetContent(b.String())
 }
 
+// formatIDList renders numeric IDs as a comma-separated form value.
+func formatIDList(ids []int64) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// parseIDList parses comma or whitespace separated numeric IDs.
+func parseIDList(value string) ([]int64, error) {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	ids := make([]int64, 0, len(fields))
+	for _, field := range fields {
+		id, err := strconv.ParseInt(strings.TrimSpace(field), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Telegram user ID %q", field)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}

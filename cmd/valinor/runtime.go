@@ -360,12 +360,17 @@ func newTelegramBotConfig(cfg config.Config, storageDir, gatewayURL string) (tel
 		return telegram.Config{}, fmt.Errorf("resolve workspace dir: %w", err)
 	}
 	botCfg := telegram.Config{
-		BotToken:     cfg.Telegram.BotToken,
-		GatewayURL:   gatewayURL,
-		StorageDir:   storageDir,
-		WorkspaceDir: workspaceDir,
-		PollTimeout:  cfg.Telegram.PollTimeout,
-		Providers:    cfg.Providers,
+		BotToken:       cfg.Telegram.BotToken,
+		GatewayURL:     gatewayURL,
+		StorageDir:     storageDir,
+		WorkspaceDir:   workspaceDir,
+		PollTimeout:    cfg.Telegram.PollTimeout,
+		AllowedUserIDs: cfg.Telegram.AllowedUserIDs,
+		AllowedChatIDs: cfg.Telegram.AllowedChatIDs,
+		RequireMention: cfg.Telegram.RequireMention,
+		RetryBaseDelay: cfg.Telegram.RetryBaseDelay,
+		RetryMaxDelay:  cfg.Telegram.RetryMaxDelay,
+		Providers:      cfg.Providers,
 	}
 
 	if name, providerCfg, ok := cfg.TranscriptionProvider(); ok {

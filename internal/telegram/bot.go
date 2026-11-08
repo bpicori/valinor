@@ -26,11 +26,20 @@ type Bot struct {
 	config Config
 
 	// Components
-	client   *Client
-	store    *offsetStore
-	poller   *Poller
-	bridges  map[string]*Bridge
-	renderer *Renderer
+	client       *Client
+	store        *offsetStore
+	poller       *Poller
+	bridges      map[string]*Bridge
+	renderer     *Renderer
+	botID        int64
+	botUsername  string
+	allowedUsers map[int64]struct{}
+	allowedChats map[int64]struct{}
+
+	// Unauthorized DM notices are rate-limited per chat.
+	unauthorizedNotices map[int64]time.Time
+	// Gateway-unavailable notices are rate-limited per chat.
+	gatewayNotices map[int64]time.Time
 
 	// Shared event channel - all bridges push events here
 	events chan chatEvent
@@ -65,6 +74,15 @@ type Config struct {
 	WorkspaceDir string
 	// PollTimeout is the long-polling timeout in seconds (default: 30)
 	PollTimeout int
+	// AllowedUserIDs lists Telegram user IDs permitted to use the bot.
+	AllowedUserIDs []int64
+	// AllowedChatIDs lists group/supergroup chat IDs permitted to use the bot.
+	AllowedChatIDs []int64
+	// RequireMention requires a mention in group chats.
+	RequireMention bool
+	// RetryBaseDelay and RetryMaxDelay control Telegram API retry backoff.
+	RetryBaseDelay int
+	RetryMaxDelay  int
 	// Providers is the configured LLM providers for model selection.
 	Providers map[string]config.ProviderConfig
 	// Transcriber transcribes voice messages when configured; nil when disabled.
@@ -85,13 +103,26 @@ func NewBot(cfg Config) (*Bot, error) {
 	}
 
 	return &Bot{
-		config:           cfg,
-		bridges:          make(map[string]*Bridge),
-		events:           make(chan chatEvent, 100),
-		trackers:         make(map[int64]*messageTracker),
-		modelPickers:     make(map[int64]*modelPicker),
-		pendingQuestions: make(map[int64]map[string]pendingQuestion),
+		config:              cfg,
+		bridges:             make(map[string]*Bridge),
+		events:              make(chan chatEvent, 100),
+		trackers:            make(map[int64]*messageTracker),
+		modelPickers:        make(map[int64]*modelPicker),
+		pendingQuestions:    make(map[int64]map[string]pendingQuestion),
+		allowedUsers:        idSet(cfg.AllowedUserIDs),
+		allowedChats:        idSet(cfg.AllowedChatIDs),
+		unauthorizedNotices: make(map[int64]time.Time),
+		gatewayNotices:      make(map[int64]time.Time),
 	}, nil
+}
+
+// idSet converts a slice of IDs into a lookup set.
+func idSet(ids []int64) map[int64]struct{} {
+	set := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
 }
 
 const questionTTL = 10 * time.Minute
@@ -107,15 +138,34 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.ctx, b.cancel = context.WithCancel(ctx)
 
 	// Initialize API client
-	b.client = NewClient(b.config.BotToken)
+	retryBase := time.Duration(b.config.RetryBaseDelay) * time.Second
+	retryMax := time.Duration(b.config.RetryMaxDelay) * time.Second
+	b.client = NewClientWithRetry(b.config.BotToken, retryBase, retryMax)
 
-	// Verify bot token by calling getMe
+	// Verify bot token by calling getMe.
 	me, err := b.client.GetMe(b.ctx)
 	if err != nil {
 		return fmt.Errorf("verify bot token: %w", err)
 	}
+	b.botID = me.ID
+	b.botUsername = me.Username
+	if len(b.allowedUsers) == 0 {
+		logger.Warning("telegram bot: no allowed_user_ids configured; all users are denied", nil)
+	}
 	logger.Info("telegram bot: authenticated",
 		logger.BuildMetadata("username", me.Username, "id", me.ID))
+
+	if err := b.client.SetMyCommands(b.ctx, []BotCommand{
+		{Command: "new", Description: "Start a fresh session"},
+		{Command: "clear", Description: "Clear this conversation"},
+		{Command: "cancel", Description: "Stop the current run"},
+		{Command: "model", Description: "Choose provider and model"},
+		{Command: "status", Description: "Show session status"},
+		{Command: "whoami", Description: "Show your Telegram IDs"},
+		{Command: "help", Description: "Show available commands"},
+	}); err != nil {
+		logger.Warning("telegram bot: failed to register command menu", logger.BuildMetadata("error", err))
+	}
 
 	// Initialize offset store
 	store, err := newOffsetStore(b.config.StorageDir)
@@ -214,6 +264,9 @@ func (b *Bot) getOrCreateTracker(chatID int64) *messageTracker {
 // onUpdate handles a Telegram update from the poller.
 func (b *Bot) onUpdate(update Update) {
 	if update.CallbackQuery != nil {
+		if !b.authorizeCallback(update.CallbackQuery) {
+			return
+		}
 		if err := b.processCallbackQuery(update.CallbackQuery); err != nil {
 			logger.Error("telegram bot: failed to process callback",
 				logger.BuildMetadata("error", err, "update_id", update.UpdateID))
@@ -222,6 +275,11 @@ func (b *Bot) onUpdate(update Update) {
 	}
 
 	if msg := extractMessage(update); msg != nil {
+		if !b.authorizeMessage(msg) {
+			return
+		}
+		msg.Text = b.stripBotMention(msg.Text)
+		msg.Caption = b.stripBotMention(msg.Caption)
 		if msg.Voice != nil {
 			if err := b.processVoiceMessage(msg, update.UpdateID); err != nil {
 				logger.Error("telegram bot: failed to process voice message",
@@ -254,6 +312,153 @@ func (b *Bot) onUpdate(update Update) {
 		logger.Error("telegram bot: failed to process command",
 			logger.BuildMetadata("error", err, "chat_id", cmd.Identity.ChatID))
 	}
+}
+
+// authorizeMessage reports whether a message may reach the agent.
+// It also sends a rate-limited setup hint for unauthorized DMs.
+func (b *Bot) authorizeMessage(msg *Message) bool {
+	if msg == nil || msg.Chat == nil || msg.From == nil || msg.From.IsBot {
+		return false
+	}
+	if !b.allowedUser(msg.From.ID) {
+		b.handleUnauthorizedMessage(msg)
+		return false
+	}
+	if !b.allowedChat(msg.Chat) {
+		b.handleUnauthorizedMessage(msg)
+		return false
+	}
+	if b.isGroupChat(msg.Chat) && b.config.RequireMention && !b.isBotMentioned(msg) {
+		logger.Debug("telegram bot: ignoring unmentioned group message",
+			logger.BuildMetadata("chat_id", msg.Chat.ID, "user_id", msg.From.ID))
+		return false
+	}
+	return true
+}
+
+// authorizeCallback reports whether a callback query may be handled.
+func (b *Bot) authorizeCallback(query *CallbackQuery) bool {
+	if query == nil || query.From == nil {
+		return false
+	}
+	if !b.allowedUser(query.From.ID) {
+		_ = b.answerCallback(query.ID, "Not authorized")
+		logger.Warning("telegram bot: rejected unauthorized callback",
+			logger.BuildMetadata("user_id", query.From.ID, "chat_id", callbackChatID(query)))
+		return false
+	}
+	if query.Message != nil && query.Message.Chat != nil && !b.allowedChat(query.Message.Chat) {
+		_ = b.answerCallback(query.ID, "Not authorized")
+		logger.Warning("telegram bot: rejected callback from unlisted chat",
+			logger.BuildMetadata("user_id", query.From.ID, "chat_id", query.Message.Chat.ID))
+		return false
+	}
+	return true
+}
+
+func (b *Bot) allowedUser(id int64) bool {
+	_, ok := b.allowedUsers[id]
+	return ok
+}
+
+func (b *Bot) allowedChat(chat *Chat) bool {
+	if chat == nil {
+		return false
+	}
+	switch chat.Type {
+	case "private":
+		return true
+	case "group", "supergroup":
+		_, ok := b.allowedChats[chat.ID]
+		return ok
+	default:
+		return false
+	}
+}
+
+func (b *Bot) isGroupChat(chat *Chat) bool {
+	return chat != nil && (chat.Type == "group" || chat.Type == "supergroup")
+}
+
+// isBotMentioned reports whether a group message addresses this bot.
+func (b *Bot) isBotMentioned(msg *Message) bool {
+	if msg == nil {
+		return false
+	}
+	if msg.IsCommand() {
+		return true
+	}
+	text := msg.Text
+	if text == "" {
+		text = msg.Caption
+	}
+	if b.botUsername != "" && strings.Contains(strings.ToLower(text), "@"+strings.ToLower(b.botUsername)) {
+		return true
+	}
+	for _, entity := range msg.Entities {
+		if entity.Type == "text_mention" && entity.User != nil && entity.User.ID == b.botID {
+			return true
+		}
+	}
+	for _, entity := range msg.CaptionEntities {
+		if entity.Type == "text_mention" && entity.User != nil && entity.User.ID == b.botID {
+			return true
+		}
+	}
+	return msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil && msg.ReplyToMessage.From.ID == b.botID
+}
+
+// stripBotMention removes a leading @botusername from text sent to the model.
+func (b *Bot) stripBotMention(text string) string {
+	if b.botUsername == "" || strings.TrimSpace(text) == "" {
+		return text
+	}
+	trimmed := strings.TrimSpace(text)
+	token := "@" + strings.ToLower(b.botUsername)
+	if !strings.HasPrefix(strings.ToLower(trimmed), token) {
+		return text
+	}
+	rest := trimmed[len(token):]
+	if rest != "" && rest[0] != ' ' && rest[0] != '\t' && rest[0] != '\n' {
+		return text
+	}
+	return strings.TrimSpace(rest)
+}
+
+// handleUnauthorizedMessage sends a setup hint for DMs and logs group traffic.
+func (b *Bot) handleUnauthorizedMessage(msg *Message) {
+	if msg == nil || msg.Chat == nil || msg.From == nil {
+		return
+	}
+	if msg.Chat.Type != "private" {
+		logger.Info("telegram bot: ignored unauthorized group message",
+			logger.BuildMetadata("chat_id", msg.Chat.ID, "user_id", msg.From.ID))
+		return
+	}
+
+	now := time.Now()
+	if last, ok := b.unauthorizedNotices[msg.Chat.ID]; ok && now.Sub(last) < 10*time.Minute {
+		return
+	}
+	b.unauthorizedNotices[msg.Chat.ID] = now
+
+	text := fmt.Sprintf(
+		"This bot is not configured to allow you.\n\nYour Telegram user ID is %d.\n\nAdd it to ~/.valinor/config.toml:\n\n[telegram]\nallowed_user_ids = [%d]",
+		msg.From.ID, msg.From.ID,
+	)
+	if _, err := b.client.SendMessage(b.ctx, SendMessageRequest{ChatID: msg.Chat.ID, Text: text}); err != nil {
+		logger.Warning("telegram bot: failed to send unauthorized hint",
+			logger.BuildMetadata("chat_id", msg.Chat.ID, "error", err))
+	}
+	logger.Warning("telegram bot: denied unauthorized user",
+		logger.BuildMetadata("chat_id", msg.Chat.ID, "user_id", msg.From.ID))
+}
+
+func callbackChatID(query *CallbackQuery) int64 {
+	if query != nil && query.Message != nil && query.Message.Chat != nil {
+		return query.Message.Chat.ID
+	}
+	return 0
 }
 
 // onEvent handles a gateway event from a bridge.
@@ -490,51 +695,104 @@ func sanitizeAttachmentName(name string) string {
 	return b.String()
 }
 
+// sendHelp renders the supported command list.
+func (b *Bot) sendHelp(cmd *Command, tracker *messageTracker) error {
+	mention := ""
+	if b.config.RequireMention && b.botUsername != "" {
+		mention = fmt.Sprintf("\nIn groups, mention @%s on the message.", b.botUsername)
+	}
+	text := "Valinor commands:\n" +
+		"/new - start a fresh session\n" +
+		"/clear - clear this conversation\n" +
+		"/cancel - stop the current run\n" +
+		"/model - choose provider and model\n" +
+		"/status - show session and context info\n" +
+		"/whoami - show your Telegram IDs\n" +
+		"/help - show this help" + mention
+	return b.sendTelegramMessage(cmd.Identity, tracker, &RenderResult{Text: text})
+}
+
+// sendWhoAmI reports the chat and sender IDs used by access control.
+func (b *Bot) sendWhoAmI(cmd *Command, tracker *messageTracker) error {
+	userID := cmd.Identity.UserID
+	if userID == 0 {
+		userID = cmd.Identity.ChatID
+	}
+	text := fmt.Sprintf("User ID: %d\nChat ID: %d\nAuthorized: yes", userID, cmd.Identity.ChatID)
+	if b.isGroupChatIdentity(cmd.Identity) {
+		text += fmt.Sprintf("\nMention required: %t", b.config.RequireMention)
+	}
+	return b.sendTelegramMessage(cmd.Identity, tracker, &RenderResult{Text: text})
+}
+
+func (b *Bot) isGroupChatIdentity(identity ChatIdentity) bool {
+	return identity.ChatID < 0
+}
+
 // processCommand handles a user command.
 func (b *Bot) processCommand(cmd *Command, tracker *messageTracker) error {
+	switch cmd.Type {
+	case commandHelp:
+		return b.sendHelp(cmd, tracker)
+	case commandWhoAmI:
+		return b.sendWhoAmI(cmd, tracker)
+	}
+
 	bridge, err := b.getOrCreateBridge(cmd.Identity)
 	if err != nil {
+		b.notifyGatewayUnavailable(cmd.Identity, err)
 		return fmt.Errorf("get bridge for chat: %w", err)
 	}
 
 	// Handle model picker and direct model switch before generic control dispatch.
 	switch cmd.Type {
 	case commandNewSession:
+		tracker.markIdle()
 		return b.createNewSession(cmd, bridge)
 	case commandModelPickerOpen:
+		if tracker.isBusy() {
+			return b.sendBusyNotice(cmd, tracker)
+		}
 		return b.openModelPicker(cmd.Identity, tracker, "")
 	case commandModelPickerProvider:
+		if tracker.isBusy() {
+			return b.sendBusyNotice(cmd, tracker)
+		}
 		provider, _ := cmd.Payload.(string)
 		return b.openModelPicker(cmd.Identity, tracker, provider)
 	case commandModelPickerError:
+		if tracker.isBusy() {
+			return b.sendBusyNotice(cmd, tracker)
+		}
 		message, _ := cmd.Payload.(string)
 		return b.sendTelegramMessage(cmd.Identity, tracker, pickerRenderResult(message, nil))
 	case gateway.CommandChangeProviderModel:
+		if tracker.isBusy() {
+			return b.sendBusyNotice(cmd, tracker)
+		}
 		return b.applyDirectModelSwitch(cmd, bridge)
 	}
 
-	// Handle control commands directly
-	if cmd.IsControlCommand {
-		if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
-			return fmt.Errorf("failed to send control command")
-		}
-		return nil
-	}
-
-	// Handle status command locally
+	// Status is always available, even while a run is active.
 	if cmd.Type == "status" {
 		sessionKey, provider, model, contextTokens, tokensEstimated, _ := bridge.SessionInfo()
 		result := b.renderer.RenderStatus(sessionKey, provider, model, contextTokens, tokensEstimated)
 		return b.sendTelegramMessage(cmd.Identity, tracker, result)
 	}
 
-	// Check if chat is busy
-	if tracker.isBusy() {
-		notice := &RenderResult{
-			Text:      "\u23f3 Please wait for the current response to complete\\.",
-			ParseMode: "MarkdownV2",
+	// Cancel is always allowed and gives immediate feedback.
+	if cmd.Type == gateway.CommandCancelAgentRun {
+		if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
+			tracker.markIdle()
+			return b.sendTelegramMessage(cmd.Identity, tracker, &RenderResult{Text: "Connection lost; cancel was not sent."})
 		}
-		return b.sendTelegramMessage(cmd.Identity, tracker, notice)
+		tracker.markIdle()
+		return b.sendTelegramMessage(cmd.Identity, tracker, &RenderResult{Text: "🛑 Cancelled", ParseMode: "MarkdownV2"})
+	}
+
+	// Everything else mutates or starts a session, so reject it while a run is active.
+	if tracker.isBusy() {
+		return b.sendBusyNotice(cmd, tracker)
 	}
 
 	// A typed reply supersedes any pending question buttons.
@@ -542,24 +800,79 @@ func (b *Bot) processCommand(cmd *Command, tracker *messageTracker) error {
 		delete(b.pendingQuestions, cmd.Identity.ChatID)
 	}
 
-	// Finalize any existing streaming before starting new conversation
+	// Clear resets the current session without replacing it.
 	if cmd.Type == gateway.CommandNewConversation {
 		tracker.markIdle()
+		if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
+			return fmt.Errorf("failed to send clear command")
+		}
+		return nil
 	}
 
-	// Mark as busy before sending
-	tracker.markBusy(cmd.RequestID)
+	// Remaining control commands are sent without starting an agent run.
+	if cmd.IsControlCommand {
+		if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
+			return fmt.Errorf("failed to send control command")
+		}
+		return nil
+	}
 
+	// Mark as busy before sending.
+	tracker.markBusy(cmd.RequestID)
 	if !bridge.SendCommand(cmd.Type, cmd.Payload, cmd.RequestID) {
 		tracker.markIdle()
-		return fmt.Errorf("failed to send command")
+		return b.sendTelegramMessage(cmd.Identity, tracker, &RenderResult{Text: "Connection lost; message was not sent."})
 	}
 
 	return nil
 }
 
+// notifyGatewayUnavailable tells the user that the bot cannot reach the gateway.
+func (b *Bot) notifyGatewayUnavailable(identity ChatIdentity, err error) {
+	now := time.Now()
+	if last, ok := b.gatewayNotices[identity.ChatID]; ok && now.Sub(last) < 30*time.Second {
+		return
+	}
+	b.gatewayNotices[identity.ChatID] = now
+	logger.Warning("telegram bot: gateway unavailable",
+		logger.BuildMetadata("chat_id", identity.ChatID, "error", err))
+	if _, sendErr := b.client.SendMessage(b.ctx, SendMessageRequest{
+		ChatID: identity.ChatID,
+		Text:   "Agent gateway unavailable. Is Valinor running?",
+	}); sendErr != nil {
+		logger.Warning("telegram bot: failed to send gateway notice",
+			logger.BuildMetadata("chat_id", identity.ChatID, "error", sendErr))
+	}
+}
+
+// sendBusyNotice tells the user that a run is already active.
+func (b *Bot) sendBusyNotice(cmd *Command, tracker *messageTracker) error {
+	return b.sendTelegramMessage(cmd.Identity, tracker, &RenderResult{
+		Text: "⏳ Still working. Send /cancel to stop, or wait for the current response.",
+	})
+}
+
+// isAgentRunEvent reports whether an event belongs to one agent run.
+func isAgentRunEvent(eventType event.EventType) bool {
+	switch eventType {
+	case event.AgentContentDelta, event.AgentContentFull, event.AgentThinking,
+		event.AgentStepTokens, event.AgentRefusal, event.AgentImage, event.AgentFile,
+		event.AgentQuestion, event.AgentDone, event.AgentError, event.AgentCancelled,
+		event.ContextTokens, event.ContextCompressed, event.ContextCompressionFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // processEvent handles a gateway event.
 func (b *Bot) processEvent(ev chatEvent, tracker *messageTracker) error {
+	if isAgentRunEvent(ev.event.Type) && !tracker.matchesRequest(ev.event.RequestID) {
+		logger.Debug("telegram bot: ignored event from an inactive run",
+			logger.BuildMetadata("event_type", ev.event.Type, "request_id", ev.event.RequestID, "chat_id", ev.identity.ChatID))
+		return nil
+	}
+
 	switch ev.event.Type {
 	case event.AgentContentDelta:
 		return b.handleContentDelta(ev, tracker)
@@ -612,10 +925,16 @@ func (b *Bot) handleThinking(ev chatEvent, tracker *messageTracker) error {
 	}
 
 	tracker.appendThinkingLine(line)
+	now := time.Now()
+	if !tracker.canEditStatus(now) {
+		return nil
+	}
+
 	result := b.renderer.renderThinkingStatus(tracker.getThinkingLines())
 	if result == nil {
 		return nil
 	}
+	tracker.markStatusEdited(now, thinkingEditInterval)
 	return b.sendTelegramMessage(ev.identity, tracker, result)
 }
 
@@ -885,6 +1204,7 @@ func (b *Bot) handleAgentCancelled(ev chatEvent, tracker *messageTracker) error 
 
 // handleSessionAttached renders session attachment notification.
 func (b *Bot) handleSessionAttached(ev chatEvent, tracker *messageTracker) error {
+	tracker.markIdle()
 	result := b.renderer.RenderEvent(ev.event)
 	if result != nil {
 		return b.sendTelegramMessage(ev.identity, tracker, result)
@@ -1033,6 +1353,9 @@ func (b *Bot) processCallbackQuery(query *CallbackQuery) error {
 
 	identity := FromTelegramUpdate(query.Message.Chat)
 	tracker := b.getOrCreateTracker(identity.ChatID)
+	if tracker.isBusy() {
+		return b.answerCallback(query.ID, "Please wait for the current response.")
+	}
 	picker := b.modelPickers[identity.ChatID]
 
 	bridge, err := b.getOrCreateBridge(identity)
@@ -1217,26 +1540,42 @@ func (b *Bot) getOrCreateBridge(identity ChatIdentity) (*Bridge, error) {
 	b.bridgesMu.RLock()
 	bridge := b.bridges[identityKey]
 	b.bridgesMu.RUnlock()
-	if bridge != nil {
+	if bridge != nil && !bridge.IsClosed() {
 		return bridge, nil
+	}
+
+	if bridge != nil {
+		b.bridgesMu.Lock()
+		if current, ok := b.bridges[identityKey]; ok && current == bridge {
+			delete(b.bridges, identityKey)
+		}
+		b.bridgesMu.Unlock()
+		b.getOrCreateTracker(identity.ChatID).markIdle()
 	}
 
 	b.bridgesMu.Lock()
 	defer b.bridgesMu.Unlock()
 
 	if existing := b.bridges[identityKey]; existing != nil {
-		return existing, nil
+		if !existing.IsClosed() {
+			return existing, nil
+		}
+		delete(b.bridges, identityKey)
+		b.getOrCreateTracker(identity.ChatID).markIdle()
 	}
 
 	return b.createBridgeLocked(identity, identityKey)
 }
 
 // createBridgeLocked creates a new bridge for the given identity.
+// The caller must hold bridgesMu.
 func (b *Bot) createBridgeLocked(identity ChatIdentity, identityKey string) (*Bridge, error) {
-	chatBridge := NewBridge(
+	var chatBridge *Bridge
+	chatBridge = NewBridge(
 		b.config.GatewayURL,
 		identity,
 		b.events,
+		func() { b.removeBridge(identityKey, chatBridge) },
 	)
 	if err := chatBridge.Start(b.ctx); err != nil {
 		return nil, fmt.Errorf("start bridge for %s: %w", identityKey, err)
@@ -1244,6 +1583,15 @@ func (b *Bot) createBridgeLocked(identity ChatIdentity, identityKey string) (*Br
 
 	b.bridges[identityKey] = chatBridge
 	return chatBridge, nil
+}
+
+// removeBridge drops a stopped bridge if it is still the current entry.
+func (b *Bot) removeBridge(identityKey string, bridge *Bridge) {
+	b.bridgesMu.Lock()
+	defer b.bridgesMu.Unlock()
+	if current, ok := b.bridges[identityKey]; ok && current == bridge {
+		delete(b.bridges, identityKey)
+	}
 }
 
 // stopAllBridges stops and clears all per-chat bridges.
@@ -1261,9 +1609,10 @@ func (b *Bot) stopAllBridges() {
 	}
 }
 
-// ChatIdentity uniquely identifies a Telegram DM chat for session binding.
+// ChatIdentity uniquely identifies a Telegram chat for session binding.
 type ChatIdentity struct {
 	ChatID   int64  `json:"chat_id"`            // Telegram chat ID
+	UserID   int64  `json:"user_id,omitempty"`  // Sender user ID, for display only
 	Username string `json:"username,omitempty"` // Optional username for display
 }
 

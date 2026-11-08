@@ -38,6 +38,7 @@ type Session struct {
 	agentContext agentcontext.Context
 	lastUsage    llm.Usage // last real token usage from API response
 	mu           sync.Mutex
+	runMu        sync.Mutex // serializes turns so a cancelled run cannot overwrite the next one
 }
 
 // RunInteractionOptions controls how an interaction is executed.
@@ -67,6 +68,9 @@ func (s *Session) RunInteraction(ctx context.Context, requestID string, message 
 
 // RunInteractionWithOptions appends a user message and processes it through a fresh agent.
 func (s *Session) RunInteractionWithOptions(ctx context.Context, requestID string, message string, opts RunInteractionOptions) (llm.RunResult, error) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
 	s.mu.Lock()
 	runData := s.agentContext.PrepareRun(message)
 
@@ -151,6 +155,9 @@ func (s *Session) SetTools(tools []agenttools.Tool, runContext *agenttools.RunCo
 
 // ResetConversation clears messages to only the base system prompt.
 func (s *Session) ResetConversation(ctx context.Context) error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
 	s.mu.Lock()
 	s.agentContext.Reset()
 	s.lastUsage = llm.Usage{} // reset cached usage
@@ -167,6 +174,9 @@ func (s *Session) ResetConversation(ctx context.Context) error {
 // Note: Changing providers requires creating a new session.
 // The model is stored in metadata and used when building the agent for each run.
 func (s *Session) SetModel(ctx context.Context, model string) error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -254,6 +264,9 @@ func deriveTitle(msg string) string {
 
 // Close releases resources. Call when the session is no longer needed.
 func (s *Session) Close() error {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+
 	sessionID := s.meta.ID
 	logger.Debug("session close start", logger.BuildMetadata("session_id", sessionID))
 

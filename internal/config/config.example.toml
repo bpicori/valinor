@@ -67,13 +67,15 @@ max_agent_iterations = 20
 # max_output_tokens = 8192       # raise to 65536 for DeepSeek thinking mode
 
 # Telegram Bot configuration
-# enabled defaults to true; the setup wizard only asks for bot_token
+# enabled defaults to true; the setup wizard asks for the token and allowed user IDs.
 # [telegram]
 # bot_token = "YOUR_BOT_TOKEN_FROM_BOTFATHER"
+# allowed_user_ids = [123456789] # numeric IDs; DM @userinfobot. Empty denies everyone.
+# allowed_chat_ids = []          # optional group/supergroup IDs; empty denies groups
 # poll_timeout = 30              # optional; long-polling timeout (seconds, max 90)
 # retry_base_delay = 1           # optional; base retry delay (seconds)
 # retry_max_delay = 30           # optional; maximum retry delay (seconds)
-# require_mention = false        # optional; require @bot mention in groups
+# require_mention = true         # optional; require @bot mention in groups
 
 # Scheduled jobs (enabled by default)
 # The agent manages jobs via the cronjob tool (action=add|list|remove|history|pause|resume|run|edit).

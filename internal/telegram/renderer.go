@@ -180,9 +180,10 @@ func (r *Renderer) renderError(payload interface{}) *RenderResult {
 	text := "❌ *Error:*\n" + EscapeMarkdown(errMsg)
 
 	return &RenderResult{
-		Text:      text,
-		ParseMode: "MarkdownV2",
-		IsFinal:   true,
+		Text:         text,
+		FallbackText: "❌ Error:\n" + errMsg,
+		ParseMode:    "MarkdownV2",
+		IsFinal:      true,
 	}
 }
 
@@ -279,48 +280,33 @@ func (r *Renderer) renderContextCompressionFailed(payload interface{}) *RenderRe
 }
 
 // renderCronJobResult renders a scheduled job alert.
+// The sender splits long results; nothing is truncated here.
 func (r *Renderer) renderCronJobResult(payload interface{}) *RenderResult {
 	p, ok := payload.(gateway.CronJobResultPayload)
 	if !ok {
 		return nil
 	}
 
-	var sb strings.Builder
-	sb.WriteString("⏰ *Scheduled Alert*\n")
-	sb.WriteString(EscapeMarkdownf("Job: %s\n\n", p.JobName))
-
-	message := p.Content
-	if len(message) > MaxTelegramMessageLength-100 {
-		message = message[:MaxTelegramMessageLength-103] + "..."
-	}
-	sb.WriteString(EscapeMarkdown(message))
-
+	text := fmt.Sprintf("⏰ Scheduled Alert\nJob: %s\n\n%s", p.JobName, p.Content)
 	return &RenderResult{
-		Text:      sb.String(),
-		ParseMode: "MarkdownV2",
-		IsFinal:   true,
+		Text:         text,
+		FallbackText: text,
+		IsFinal:      true,
 	}
 }
 
-// RenderFinalContent renders the final assistant content as a single Telegram message.
-// Converts standard markdown to Telegram-safe HTML with a plain-text fallback.
+// RenderFinalContent renders the final assistant content.
+// Long content is returned as plain text so the sender can split it without
+// breaking HTML tags or losing the tail.
 func (r *Renderer) RenderFinalContent(content string) *RenderResult {
 	if content == "" {
 		return nil
 	}
 
-	return renderTelegramText(content, MaxTelegramMessageLength)
-}
-
-func renderTelegramText(content string, limit int) *RenderResult {
-	if content == "" {
-		return nil
-	}
-
 	formatted := FormatTelegramMarkdown(content)
-	plainText := truncateTelegramText(formatted.PlainText, limit)
+	plainText := formatted.PlainText
 	if plainText == "" {
-		plainText = truncateTelegramText(content, limit)
+		plainText = content
 	}
 
 	result := &RenderResult{
@@ -329,8 +315,9 @@ func renderTelegramText(content string, limit int) *RenderResult {
 		IsFinal:      true,
 	}
 
-	if formatted.HTML != "" && utf8.RuneCountInString(formatted.HTML) <= limit {
+	if formatted.HTML != "" && utf8.RuneCountInString(formatted.HTML) <= MaxTelegramMessageLength {
 		result.Text = formatted.HTML
+		result.FallbackText = plainText
 		result.ParseMode = "HTML"
 	}
 

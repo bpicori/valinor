@@ -27,6 +27,7 @@ type Message struct {
 	Chat            *Chat           `json:"chat"`
 	Text            string          `json:"text,omitempty"`
 	Caption         string          `json:"caption,omitempty"`
+	CaptionEntities []MessageEntity `json:"caption_entities,omitempty"`
 	Voice           *Voice          `json:"voice,omitempty"`
 	Photo           []PhotoSize     `json:"photo,omitempty"`
 	Document        *Document       `json:"document,omitempty"`
@@ -213,6 +214,17 @@ type AnswerCallbackQueryRequest struct {
 	CallbackQueryID string `json:"callback_query_id"`
 	Text            string `json:"text,omitempty"`
 	ShowAlert       bool   `json:"show_alert,omitempty"`
+}
+
+// BotCommand describes one entry in the Telegram command menu.
+type BotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
+// SetMyCommandsRequest represents the payload for setMyCommands.
+type SetMyCommandsRequest struct {
+	Commands []BotCommand `json:"commands"`
 }
 
 // ReplyParameters describes the message to reply to.

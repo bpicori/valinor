@@ -9,7 +9,11 @@ import (
 	"valinor/internal/gateway"
 )
 
-const commandNewSession = "new_session"
+const (
+	commandNewSession = "new_session"
+	commandHelp       = "help"
+	commandWhoAmI     = "whoami"
+)
 
 // Command represents a parsed Telegram command ready for routing.
 type Command struct {
@@ -34,6 +38,9 @@ func parseUpdate(update Update, providers map[string]config.ProviderConfig) (*Co
 	}
 
 	identity := FromTelegramUpdate(msg.Chat)
+	if msg.From != nil {
+		identity.UserID = msg.From.ID
+	}
 	return parseCommand(identity, msg, update.UpdateID, providers)
 }
 
@@ -57,6 +64,24 @@ func parseCommand(identity ChatIdentity, msg *Message, updateID int64, providers
 		cmdLower := strings.ToLower(cmd)
 
 		switch cmdLower {
+		case "help", "start":
+			return &Command{
+				Identity:         identity,
+				RequestID:        requestID,
+				Type:             commandHelp,
+				RawText:          msg.Text,
+				IsControlCommand: true,
+			}, nil
+
+		case "whoami":
+			return &Command{
+				Identity:         identity,
+				RequestID:        requestID,
+				Type:             commandWhoAmI,
+				RawText:          msg.Text,
+				IsControlCommand: true,
+			}, nil
+
 		case "new":
 			return &Command{
 				Identity:         identity,
@@ -88,7 +113,7 @@ func parseCommand(identity ChatIdentity, msg *Message, updateID int64, providers
 			parts := strings.Fields(args)
 			if len(parts) >= 2 {
 				return &Command{
-					Identity: identity,
+					Identity:  identity,
 					RequestID: requestID,
 					Type:      gateway.CommandChangeProviderModel,
 					Payload: gateway.ChangeProviderModelPayload{

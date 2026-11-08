@@ -27,7 +27,7 @@ const (
 	DefaultTelegramPollTimeout    = 30
 	DefaultTelegramRetryBaseDelay = 1  // seconds
 	DefaultTelegramRetryMaxDelay  = 30 // seconds
-	DefaultTelegramRequireMention = false
+	DefaultTelegramRequireMention = true
 )
 
 // Default scheduler configuration.
@@ -104,13 +104,19 @@ type TelegramConfig struct {
 	Enabled bool `toml:"enabled"`
 	// BotToken is the Telegram Bot API token from @BotFather (required if enabled).
 	BotToken string `toml:"bot_token"`
+	// AllowedUserIDs lists the Telegram user IDs allowed to use the bot.
+	// An empty list denies every user.
+	AllowedUserIDs []int64 `toml:"allowed_user_ids"`
+	// AllowedChatIDs lists group/supergroup chat IDs the bot may respond in.
+	// DMs do not need a chat ID. An empty list denies every group.
+	AllowedChatIDs []int64 `toml:"allowed_chat_ids"`
 	// PollTimeout is the long-polling timeout in seconds (default: 30, max: 90).
 	PollTimeout int `toml:"poll_timeout"`
 	// RetryBaseDelay is the base delay for exponential backoff in seconds (default: 1).
 	RetryBaseDelay int `toml:"retry_base_delay"`
 	// RetryMaxDelay is the maximum retry delay in seconds (default: 30).
 	RetryMaxDelay int `toml:"retry_max_delay"`
-	// RequireMention requires the bot to be mentioned in group chats (default: false).
+	// RequireMention requires the bot to be mentioned in group chats (default: true).
 	RequireMention bool `toml:"require_mention"`
 }
 
