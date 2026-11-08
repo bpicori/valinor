@@ -796,12 +796,15 @@ func (m *Model) handleAgentQuestion(payload gateway.QuestionPayload) tea.Cmd {
 	content := payload.Question
 	if len(payload.Options) > 0 {
 		content += "\n"
-		for i, option := range payload.Options {
-			content += fmt.Sprintf("\n%d. %s", i+1, option)
+		for _, option := range payload.Options {
+			content += "\n- " + option
 		}
 	}
-	if payload.AllowFreeText {
-		content += "\n\nType your answer."
+	switch {
+	case payload.AllowFreeText:
+		content += "\n\nType an option or your own answer."
+	case len(payload.Options) > 0:
+		content += "\n\nReply with one of the options above."
 	}
 
 	msg := chatMessage{
