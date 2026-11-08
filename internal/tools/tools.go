@@ -75,8 +75,6 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 		buildTool(sendImageName, "Send a workspace image to the current client. Parameters: path.", sendImageParams(), func(a json.RawMessage) (string, error) { return sendImageExec(rt, run, a) }),
 		buildTool(generateImageName, "Generate an image from a prompt. Saves to workspace. Parameters: prompt, send (default true), aspect_ratio (optional), size (optional).", generateImageParams(), func(a json.RawMessage) (string, error) { return generateImageExec(rt, run, providerCfg, a) }),
 		buildTool(bashExecName, "Run bash in the sandbox. Parameters: command, cwd (optional).", bashExecParams(), func(a json.RawMessage) (string, error) { return bashExec(rt, a) }),
-		buildTool(todoWriteName, "Create or update session todos. Parameters: todos, merge.", todoWriteParams(), func(a json.RawMessage) (string, error) { return todoWriteExec(run, a) }),
-		buildTool(todoReadName, "Read session todos.", todoReadParams(), func(a json.RawMessage) (string, error) { return todoReadExec(run, a) }),
 		buildTool(CronjobName,
 			"Manage cron jobs. Parameters: action (add|list|remove|history|pause|resume|run|edit) plus job fields.",
 			cronjobParams(), func(a json.RawMessage) (string, error) { return cronjobExec(run, a) }),

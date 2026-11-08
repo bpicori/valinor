@@ -149,8 +149,4 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 
 ## Task Management
 
-Todos are scoped to the current session.
-
-- Use **todo_write** / **todo_read** for multi-step work (3+ steps).
-- `merge=true` updates items by id; `merge=false` replaces the list.
-- Skip todos for simple one- or two-step tasks.
+For work with 3+ steps, state a short plan in your reply and update it as you go.
