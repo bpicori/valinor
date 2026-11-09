@@ -19,6 +19,10 @@ const SkillsDir = "skills"
 const MemoryFile = "MEMORY.md"
 const MaxMemoryMainChars = 15000
 
+// memorySectionEnd delimits the LoadedMemory block so it can be refreshed even
+// though MEMORY.md itself contains "## " headings.
+const memorySectionEnd = "<!-- /LoadedMemory -->"
+
 var (
 	skillHeaderRE      = regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---`)
 	skillNameRE        = regexp.MustCompile(`(?m)^name:\s*(.+)$`)
@@ -276,16 +280,26 @@ func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory str
 		}
 	}
 
-	sb.WriteString("\n## LoadedMemory\n")
-	sb.WriteString("Current content of MEMORY.md at the start of this session. Edit it directly with read_file + edit_file / write_file whenever you learn durable facts.\n\n")
+	sb.WriteString("\n")
+	sb.WriteString(memorySection(memory))
+
+	return strings.TrimSpace(sb.String())
+}
+
+// memorySection renders the LoadedMemory block for a MEMORY.md snapshot.
+func memorySection(memory string) string {
+	var sb strings.Builder
+	sb.WriteString("## LoadedMemory\n")
+	sb.WriteString("Current content of MEMORY.md at the start of this turn. Edit it directly with read_file + edit_file / write_file whenever you learn durable facts.\n\n")
 	if strings.TrimSpace(memory) == "" {
 		sb.WriteString("MEMORY.md is empty. Use edit_file or write_file to add clear ## sections with important facts.\n")
 	} else {
 		sb.WriteString(memory)
 		sb.WriteString("\n")
 	}
-
-	return strings.TrimSpace(sb.String())
+	sb.WriteString(memorySectionEnd)
+	sb.WriteString("\n")
+	return sb.String()
 }
 
 func currentDateContext() string {
@@ -334,6 +348,36 @@ func InjectFreshCurrentDate(prompt string) string {
 	}
 
 	return before + fresh + "\n" + after
+}
+
+// InjectFreshMemory replaces the "## LoadedMemory" section (if present) with the
+// current MEMORY.md content. This keeps long-lived sessions in sync with memory
+// updates made by the agent, by another session, or by background dreaming.
+// The section is delimited by memorySectionEnd because MEMORY.md has its own
+// "## " headings that must not be mistaken for the end of the section.
+func InjectFreshMemory(prompt string, memory string) string {
+	section := strings.TrimRight(memorySection(memory), "\n")
+
+	startMarker := "## LoadedMemory"
+	start := strings.Index(prompt, startMarker)
+	if start == -1 {
+		trimmed := strings.TrimRight(prompt, "\n")
+		return trimmed + "\n\n" + section
+	}
+
+	// Prompts built before the end marker existed put LoadedMemory last, so
+	// falling back to the end of the prompt is correct for them too.
+	end := len(prompt)
+	if idx := strings.LastIndex(prompt, memorySectionEnd); idx >= start {
+		end = idx + len(memorySectionEnd)
+	}
+
+	before := strings.TrimRight(prompt[:start], "\n")
+	after := strings.TrimLeft(prompt[end:], "\n")
+	if after != "" {
+		after = "\n\n" + after
+	}
+	return before + "\n\n" + section + after
 }
 
 func parseSkillHeader(contents string) (name, description string, ok bool) {

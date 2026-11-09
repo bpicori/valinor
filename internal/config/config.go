@@ -61,6 +61,9 @@ type Config struct {
 	// Scheduler configuration for Cron.md based scheduled jobs.
 	Scheduler SchedulerConfig `toml:"scheduler"`
 
+	// Dreaming configures offline memory consolidation from past sessions.
+	Dreaming DreamingConfig `toml:"dreaming"`
+
 	// Search configures the web_search and web_fetch tools.
 	Search SearchConfig `toml:"search"`
 
@@ -129,6 +132,14 @@ type SchedulerConfig struct {
 	ScriptsDir string `toml:"scripts_dir"`
 	// ScriptTimeout is the max runtime for no_agent scripts (default: "120s").
 	ScriptTimeout string `toml:"script_timeout"`
+}
+
+// DreamingConfig holds offline memory consolidation settings.
+// The only user-facing switch is enabled; consolidation limits and cadence are
+// internal to the dreaming runtime.
+type DreamingConfig struct {
+	// Enabled runs offline memory consolidation while the instance is idle.
+	Enabled bool `toml:"enabled"`
 }
 
 // ProviderConfig holds configuration for a specific LLM provider.
@@ -232,6 +243,15 @@ func (c Config) ResolveCronDir() (string, error) {
 		return "", err
 	}
 	return filepath.Join(baseDir, "cron"), nil
+}
+
+// ResolveDreamingDir returns the absolute path for dreaming state and backups.
+func (c Config) ResolveDreamingDir() (string, error) {
+	baseDir, err := c.ResolveValinorDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(baseDir, "dreaming"), nil
 }
 
 // CronScriptsSubdir is the workspace-relative directory for no_agent cron scripts.

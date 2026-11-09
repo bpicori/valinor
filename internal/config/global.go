@@ -12,6 +12,7 @@ type Paths struct {
 	WorkspaceDir string
 	CronDir      string
 	ScriptsDir   string
+	DreamingDir  string
 }
 
 var (
@@ -44,6 +45,10 @@ func Init(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("resolve scripts dir: %w", err)
 	}
+	dreamingDir, err := cfg.ResolveDreamingDir()
+	if err != nil {
+		return fmt.Errorf("resolve dreaming dir: %w", err)
+	}
 
 	globalMu.Lock()
 	defer globalMu.Unlock()
@@ -54,6 +59,7 @@ func Init(cfg Config) error {
 		WorkspaceDir: workspaceDir,
 		CronDir:      cronDir,
 		ScriptsDir:   scriptsDir,
+		DreamingDir:  dreamingDir,
 	}
 	globalInited = true
 	return nil

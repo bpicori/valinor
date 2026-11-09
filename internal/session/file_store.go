@@ -87,18 +87,27 @@ func (s *FileStore) LoadMessages(ctx context.Context) ([]agentcontext.Message, e
 	}
 
 	messagesPath := filepath.Join(s.dir, MessagesFile)
-	data, err := os.ReadFile(messagesPath)
+	messages, err := readMessagesFile(messagesPath)
+	if err != nil {
+		logger.Error("store load messages error", logger.BuildMetadata("dir", s.dir, "error", err))
+		return nil, err
+	}
+	return messages, nil
+}
+
+// readMessagesFile reads and decodes one session transcript file.
+// A missing file is treated as an empty transcript.
+func readMessagesFile(path string) ([]agentcontext.Message, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		logger.Error("store load messages read error", logger.BuildMetadata("dir", s.dir, "error", err))
 		return nil, fmt.Errorf("read messages: %w", err)
 	}
 
 	var messages []agentcontext.Message
 	if err := json.Unmarshal(data, &messages); err != nil {
-		logger.Error("store load messages unmarshal error", logger.BuildMetadata("dir", s.dir, "error", err))
 		return nil, fmt.Errorf("unmarshal messages: %w", err)
 	}
 	return messages, nil

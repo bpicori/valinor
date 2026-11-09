@@ -11,6 +11,7 @@ import (
 	"valinor/internal/config"
 	agentcontext "valinor/internal/context"
 	"valinor/internal/cron"
+	"valinor/internal/dream"
 	"valinor/internal/gateway"
 	"valinor/internal/llm/factory"
 	"valinor/internal/logger"
@@ -29,6 +30,7 @@ type gatewayDeps struct {
 	sm             *session.Manager
 	sessionRuntime *session.Runtime
 	sched          *scheduler.Scheduler
+	dream          *dream.Runtime
 	rtr            *gateway.Router
 	gw             *gateway.Server
 }
@@ -36,6 +38,9 @@ type gatewayDeps struct {
 func (d *gatewayDeps) cleanup() {
 	if d.rtr != nil {
 		d.rtr.Stop()
+	}
+	if d.dream != nil {
+		d.dream.Stop()
 	}
 	if d.sessionRuntime != nil {
 		d.sessionRuntime.Close()
@@ -154,6 +159,15 @@ func startGatewayStack(ctx context.Context, deps *gatewayDeps) (*gateway.Server,
 		logger.Warning("scheduler enabled but cron jobs store failed to initialize", nil)
 	}
 
+	if cfg.Dreaming.Enabled {
+		dreamRuntime, err := startDreaming(ctx, cfg, deps.sm, sessionRuntime)
+		if err != nil {
+			logger.Error("dreaming disabled", logger.BuildMetadata("error", err))
+		} else {
+			deps.dream = dreamRuntime
+		}
+	}
+
 	gwCfg := gateway.Config{
 		Host: cfg.GatewayHost,
 		Port: cfg.GatewayPort,
@@ -164,6 +178,44 @@ func startGatewayStack(ctx context.Context, deps *gatewayDeps) (*gateway.Server,
 
 	logger.Info("gateway server starting", logger.BuildMetadata("url", cfg.GatewayWebSocketURL()))
 	return gw, nil
+}
+
+// startDreaming builds and starts offline memory consolidation for this instance.
+func startDreaming(ctx context.Context, cfg config.Config, manager *session.Manager, activity dream.Activity) (*dream.Runtime, error) {
+	providerName, model, err := cfg.ResolveProviderModel("", "")
+	if err != nil {
+		return nil, fmt.Errorf("resolve provider: %w", err)
+	}
+	providerCfg, ok := cfg.Providers[providerName]
+	if !ok {
+		return nil, fmt.Errorf("provider %q not found", providerName)
+	}
+	provider, err := factory.CreateProvider(providerCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create provider: %w", err)
+	}
+
+	paths := config.MustPaths()
+	runtime, err := dream.New(dream.Options{
+		Provider:     provider,
+		ProviderName: providerName,
+		Model:        model,
+		WorkspaceDir: paths.WorkspaceDir,
+		StateDir:     paths.DreamingDir,
+		Sessions:     manager,
+		Activity:     activity,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	runtime.Start(ctx)
+	logger.Info("dreaming enabled", logger.BuildMetadata(
+		"provider", providerName,
+		"model", model,
+		"state_dir", paths.DreamingDir,
+	))
+	return runtime, nil
 }
 
 func runGateway(ctx context.Context) error {

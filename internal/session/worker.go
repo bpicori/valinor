@@ -81,6 +81,13 @@ func (w *sessionWorker) cancelRun() {
 	w.mu.Unlock()
 }
 
+// isRunning reports whether this worker is currently executing a turn.
+func (w *sessionWorker) isRunning() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.runInProgress
+}
+
 // close cancels any in-progress run for this worker.
 func (w *sessionWorker) close() {
 	w.mu.Lock()

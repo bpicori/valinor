@@ -88,3 +88,11 @@ default_model = "gemini-2.0-flash"
 # [scheduler]
 # script_timeout = "120s"        # optional; max runtime for no_agent scripts
 # scripts_dir = "/custom/path"   # optional override; default is workspace/scripts
+
+# Offline memory consolidation ("dreaming", opt-in)
+# When enabled, Valinor periodically consolidates recent conversations into
+# MEMORY.md for a more continuous, personal experience. Runs happen while the
+# instance is idle and are not configurable beyond on/off. Reports are written
+# to <workspace>/memory/dreams/.
+# [dreaming]
+# enabled = true

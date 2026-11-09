@@ -3,12 +3,14 @@ package agentcontext
 import (
 	"fmt"
 
+	"valinor/internal/logger"
 	"valinor/internal/tools"
 )
 
 // Context owns the in-memory conversation state and tools for one session.
 type Context struct {
 	systemPrompt string
+	workspaceDir string
 	messages     []Message
 	tools        []tools.Tool
 	runContext   *tools.RunContext
@@ -26,6 +28,7 @@ func New(workspaceDir string, providerName, model string) (Context, error) {
 	}
 	return Context{
 		systemPrompt: systemPrompt,
+		workspaceDir: workspaceDir,
 		messages:     []Message{{Role: RoleSystem, Content: systemPrompt}},
 		tools:        builtTools,
 		runContext:   runContext,
@@ -44,6 +47,7 @@ func Resume(workspaceDir string, providerName, model string, messages []Message)
 	}
 	return Context{
 		systemPrompt: systemPrompt,
+		workspaceDir: workspaceDir,
 		messages:     normalizeSystemPrompt(CloneMessages(messages), systemPrompt),
 		tools:        builtTools,
 		runContext:   runContext,
@@ -114,11 +118,12 @@ type RunData struct {
 }
 
 // PrepareRun appends the user message and returns a snapshot of messages and tools for the LLM.
-// It also refreshes the dynamic "## Current Date" section in the leading system prompt so that
-// long-lived sessions (e.g. Telegram) always see an up-to-date calendar day.
+// It also refreshes the dynamic "## Current Date" and "## LoadedMemory" sections so that
+// long-lived sessions (e.g. Telegram) always see an up-to-date calendar day and memory file.
 func (c *Context) PrepareRun(userMessage string) RunData {
 	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
 		c.messages[0].Content = InjectFreshCurrentDate(c.messages[0].Content)
+		c.refreshMemory()
 	}
 	c.messages = append(c.messages, Message{Role: RoleUser, Content: userMessage})
 	return RunData{
@@ -126,6 +131,20 @@ func (c *Context) PrepareRun(userMessage string) RunData {
 		Tools:      c.tools,
 		RunContext: c.runContext,
 	}
+}
+
+// refreshMemory reloads MEMORY.md from disk into the system prompt. Failures keep
+// the previous snapshot so a transient read error cannot break a turn.
+func (c *Context) refreshMemory() {
+	if c.workspaceDir == "" || len(c.messages) == 0 || c.messages[0].Role != RoleSystem {
+		return
+	}
+	memory, err := LoadMemory(c.workspaceDir)
+	if err != nil {
+		logger.Warning("context refresh memory failed", logger.BuildMetadata("workspace_dir", c.workspaceDir, "error", err))
+		return
+	}
+	c.messages[0].Content = InjectFreshMemory(c.messages[0].Content, memory)
 }
 
 // CompleteRun replaces internal messages with the agent's result and returns a clone for persistence.

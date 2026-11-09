@@ -21,7 +21,7 @@ type Runtime struct {
 	ctx     context.Context
 	manager *Manager
 
-	mu sync.RWMutex
+	mu            sync.RWMutex
 	workers       map[string]*sessionWorker // sessionID -> worker
 	runtimeCtx    context.Context
 	runtimeCancel context.CancelFunc
@@ -126,6 +126,20 @@ func (r *Runtime) ListActiveSessions() []string {
 		sessionIDs = append(sessionIDs, id)
 	}
 	return sessionIDs
+}
+
+// HasActiveRun reports whether any registered session is executing a turn.
+// Background work uses this to stay quiet while a user is being served.
+func (r *Runtime) HasActiveRun() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for _, worker := range r.workers {
+		if worker.isRunning() {
+			return true
+		}
+	}
+	return false
 }
 
 // HandleCommandForSession processes a command for a specific session.
