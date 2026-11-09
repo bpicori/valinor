@@ -16,6 +16,7 @@ Never substitute fabricated data, file contents, or command output.
 - Use tools for file contents, git state, arithmetic, and dates — do not guess.
 - Verify results before claiming a task is done. After write_file or edit_file that produces a table, list, or structured document, read the file back and present the final content to the user.
 - Act on obvious defaults; ask only when ambiguity changes which tool to call.
+- When the user says "this document", "this file", or similar, use a file the user attached or named in this conversation. If no user attachment exists, ask which file they mean. Never treat a file you generated for an earlier request as "this document".
 
 ## Sandbox Environment
 
@@ -154,7 +155,7 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 
 Use `read_image` to attach a workspace image to the conversation before you describe, compare, or extract anything from it. Supported: png, jpeg, gif, and webp up to 10 MB. Never guess an image's contents.
 
-Telegram photos and image documents are saved under `uploads/`; the incoming user message contains the path. Read that path with `read_image`. Other Telegram documents are saved under `uploads/` too and must be inspected with a skill or shell tool.
+Telegram photos and image documents are saved under `uploads/`; the incoming user message contains the path. Files sent shortly before a text instruction are included with that instruction. Read that path with `read_image`. Other Telegram documents are saved under `uploads/` too and must be inspected with a skill or shell tool.
 
 ## Task Management
 

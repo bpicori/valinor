@@ -9,17 +9,24 @@ import (
 // messageTracker tracks the state for a single chat's current streaming message.
 // This is intentionally minimal - session info lives in the Bridge, not here.
 type messageTracker struct {
-	streamingMsgID   int64
-	lastStreamText   string
-	thinkingLines    []string
-	busy             bool
-	requestID        string
-	contentBuf       strings.Builder
-	nextTypingAt     time.Time
-	nextStatusEditAt time.Time
+	streamingMsgID       int64
+	lastStreamText       string
+	thinkingLines        []string
+	busy                 bool
+	requestID            string
+	contentBuf           strings.Builder
+	nextTypingAt         time.Time
+	nextStatusEditAt     time.Time
+	pendingAttachments   []pendingAttachment
+	pendingAttachmentsAt time.Time
 }
 
-const thinkingEditInterval = 2 * time.Second
+const (
+	thinkingEditInterval = 2 * time.Second
+	// pendingAttachmentTTL bounds how long files sent without an instruction
+	// stay attached to the chat's next message.
+	pendingAttachmentTTL = 15 * time.Minute
+)
 
 // isBusy returns true while a run is active for this chat.
 func (t *messageTracker) isBusy() bool {
@@ -56,6 +63,40 @@ func (t *messageTracker) markIdle() {
 	t.lastStreamText = ""
 	t.thinkingLines = nil
 	t.nextStatusEditAt = time.Time{}
+}
+
+// addPending queues files sent without an instruction for the next message.
+// An expired batch is dropped first so unrelated files never carry over.
+func (t *messageTracker) addPending(attachments []pendingAttachment, now time.Time) {
+	if len(attachments) == 0 {
+		return
+	}
+	if now.Sub(t.pendingAttachmentsAt) > pendingAttachmentTTL {
+		t.pendingAttachments = nil
+	}
+	t.pendingAttachments = append(t.pendingAttachments, attachments...)
+	t.pendingAttachmentsAt = now
+}
+
+// takePending returns queued files and clears the batch.
+func (t *messageTracker) takePending(now time.Time) []pendingAttachment {
+	if len(t.pendingAttachments) == 0 {
+		return nil
+	}
+	expired := now.Sub(t.pendingAttachmentsAt) > pendingAttachmentTTL
+	pending := t.pendingAttachments
+	t.pendingAttachments = nil
+	t.pendingAttachmentsAt = time.Time{}
+	if expired {
+		return nil
+	}
+	return pending
+}
+
+// clearPending drops queued files without using them.
+func (t *messageTracker) clearPending() {
+	t.pendingAttachments = nil
+	t.pendingAttachmentsAt = time.Time{}
 }
 
 // appendThinkingLine adds a tool/thinking line to the in-progress status message.

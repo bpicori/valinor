@@ -116,7 +116,8 @@ type TelegramConfig struct {
 	RetryBaseDelay int `toml:"retry_base_delay"`
 	// RetryMaxDelay is the maximum retry delay in seconds (default: 30).
 	RetryMaxDelay int `toml:"retry_max_delay"`
-	// RequireMention requires the bot to be mentioned in group chats (default: true).
+	// RequireMention requires the bot to be mentioned on text messages in group chats (default: true).
+	// Files from allowed users are kept and attached to the next instructed message.
 	RequireMention bool `toml:"require_mention"`
 }
 

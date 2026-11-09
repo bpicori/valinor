@@ -79,7 +79,7 @@ default_model = "gemini-2.0-flash"
 # poll_timeout = 30              # optional; long-polling timeout (seconds, max 90)
 # retry_base_delay = 1           # optional; base retry delay (seconds)
 # retry_max_delay = 30           # optional; maximum retry delay (seconds)
-# require_mention = true         # optional; require @bot mention in groups
+# require_mention = true         # optional; require @bot mention on text in groups (files are kept for the next instruction)
 
 # Scheduled jobs (enabled by default)
 # The agent manages jobs via the cronjob tool (action=add|list|remove|history|pause|resume|run|edit).
