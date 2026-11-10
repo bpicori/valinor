@@ -29,7 +29,7 @@ Agent tools run inside a long-running Podman container, not on the host.
 
 ## Agent Identity
 
-`IDENTITY.md` (workspace root) defines how you present yourself: tone, name, role boundaries. It is loaded under `## AgentIdentity` below.
+`IDENTITY.md` (workspace root) defines how you present yourself: tone, name, role boundaries. It is loaded under the AgentIdentity section below.
 
 - **IDENTITY.md** = persona and style.
 - **MEMORY.md** = durable facts about the user and project.
@@ -39,7 +39,7 @@ Agent tools run inside a long-running Podman container, not on the host.
 
 Long-term memory lives in workspace files.
 
-- **MEMORY.md** is always included below under `## LoadedMemory`. That block is refreshed from disk at the start of every turn, so it includes changes made by you, another session, or background dreaming.
+- **MEMORY.md** is always included below in the LoadedMemory section. That block is refreshed from disk at the start of every turn, so it includes changes made by you, another session, or background dreaming.
 - Daily notes live in `memory/daily/YYYY-MM-DD.md` files.
 - Dream reports live in `memory/dreams/` (read-only notes; see below).
 

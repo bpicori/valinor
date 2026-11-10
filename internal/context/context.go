@@ -23,6 +23,10 @@ const MaxMemoryMainChars = 15000
 // though MEMORY.md itself contains "## " headings.
 const memorySectionEnd = "<!-- /LoadedMemory -->"
 
+// memorySectionStart identifies the composed memory block. It includes the
+// first line because the base prompt mentions the header by name.
+const memorySectionStart = "## LoadedMemory\nCurrent content of MEMORY.md"
+
 var (
 	skillHeaderRE      = regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---`)
 	skillNameRE        = regexp.MustCompile(`(?m)^name:\s*(.+)$`)
@@ -318,8 +322,9 @@ func currentDateContext() string {
 func InjectFreshCurrentDate(prompt string) string {
 	fresh := currentDateContext()
 
-	// Find the start of the current date block.
-	startMarker := "## Current Date"
+	// Find the start of the current date block. Match the header together with
+	// its first line so prose that mentions the header cannot match.
+	startMarker := "## Current Date\n\nToday is"
 	start := strings.Index(prompt, startMarker)
 	if start == -1 {
 		// No existing block — append at the top level after the initial prose (best effort).
@@ -358,8 +363,7 @@ func InjectFreshCurrentDate(prompt string) string {
 func InjectFreshMemory(prompt string, memory string) string {
 	section := strings.TrimRight(memorySection(memory), "\n")
 
-	startMarker := "## LoadedMemory"
-	start := strings.Index(prompt, startMarker)
+	start := strings.Index(prompt, memorySectionStart)
 	if start == -1 {
 		trimmed := strings.TrimRight(prompt, "\n")
 		return trimmed + "\n\n" + section
