@@ -308,11 +308,13 @@ func (b *Bot) onUpdate(update Update) {
 			if !b.authorizeSender(msg) {
 				return
 			}
-			msg.Caption = b.stripBotMention(msg.Caption)
+			// Check the mention before stripping it: for a photo, the caption is
+			// the only place that can address the bot in a group.
 			if b.unmentionedGroupMessage(msg) {
 				b.stashAttachment(msg)
 				return
 			}
+			msg.Caption = b.stripBotMention(msg.Caption)
 			if err := b.processAttachmentMessage(msg, update.UpdateID); err != nil {
 				logger.Error("telegram bot: failed to process attachment",
 					logger.BuildMetadata("error", err, "update_id", update.UpdateID))
