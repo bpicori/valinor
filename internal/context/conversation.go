@@ -118,13 +118,10 @@ type RunData struct {
 }
 
 // PrepareRun appends the user message and returns a snapshot of messages and tools for the LLM.
-// It also refreshes the dynamic "## Current Date" and "## LoadedMemory" sections so that
-// long-lived sessions (e.g. Telegram) always see an up-to-date calendar day and memory file.
+// It rebuilds the system prompt and refreshes the dynamic "## Current Date" and
+// "## LoadedMemory" sections so long-lived sessions always see current instructions.
 func (c *Context) PrepareRun(userMessage string) RunData {
-	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
-		c.messages[0].Content = InjectFreshCurrentDate(c.messages[0].Content)
-		c.refreshMemory()
-	}
+	c.refreshSystemPrompt()
 	c.messages = append(c.messages, Message{Role: RoleUser, Content: userMessage})
 	return RunData{
 		Messages:   CloneMessages(c.messages),
@@ -133,18 +130,31 @@ func (c *Context) PrepareRun(userMessage string) RunData {
 	}
 }
 
-// refreshMemory reloads MEMORY.md from disk into the system prompt. Failures keep
-// the previous snapshot so a transient read error cannot break a turn.
-func (c *Context) refreshMemory() {
-	if c.workspaceDir == "" || len(c.messages) == 0 || c.messages[0].Role != RoleSystem {
+// refreshSystemPrompt restores the composed prompt built for this context and
+// refreshes its date and memory sections. Persisted transcripts can hold a prompt
+// composed by an older build; rebuilding it every turn keeps sessions current.
+func (c *Context) refreshSystemPrompt() {
+	if c.systemPrompt == "" {
 		return
 	}
-	memory, err := LoadMemory(c.workspaceDir)
-	if err != nil {
-		logger.Warning("context refresh memory failed", logger.BuildMetadata("workspace_dir", c.workspaceDir, "error", err))
-		return
+
+	content := c.systemPrompt
+	if c.workspaceDir != "" {
+		memory, err := LoadMemory(c.workspaceDir)
+		if err != nil {
+			logger.Warning("context refresh memory failed", logger.BuildMetadata("workspace_dir", c.workspaceDir, "error", err))
+		} else {
+			content = InjectFreshMemory(content, memory)
+		}
 	}
-	c.messages[0].Content = InjectFreshMemory(c.messages[0].Content, memory)
+	content = InjectFreshCurrentDate(content)
+
+	if len(c.messages) > 0 && c.messages[0].Role == RoleSystem {
+		c.messages[0].Content = content
+	} else {
+		c.messages = append([]Message{{Role: RoleSystem, Content: content}}, c.messages...)
+	}
+	logger.Debug("context system prompt refreshed", logger.BuildMetadata("workspace_dir", c.workspaceDir, "length", len(content)))
 }
 
 // CompleteRun replaces internal messages with the agent's result and returns a clone for persistence.
