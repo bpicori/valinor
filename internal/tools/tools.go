@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"valinor/internal/config"
+	imagegenfactory "valinor/internal/imagegen/factory"
 	"valinor/internal/logger"
 	"valinor/internal/sandbox"
 	"valinor/internal/search"
@@ -104,10 +105,12 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 			cronjobParams(), func(a json.RawMessage) (string, error) { return cronjobExec(run, a) }),
 	}
 
-	if reason := imageGenerationConfigError(providerCfg); reason == "" {
-		result = append(result, buildTool(generateImageName, "Generate an image from a prompt. Saves to workspace. Parameters: prompt, send (default true), aspect_ratio (optional), size (optional).", generateImageParams(), func(a json.RawMessage) (string, error) { return generateImageExec(rt, run, providerCfg, a) }))
-	} else {
-		logger.Debug("image generation tool disabled", logger.BuildMetadata("provider", providerName, "reason", reason))
+	imageProvider, err := imagegenfactory.Create(cfg.ImageGeneration)
+	if err != nil {
+		return nil, nil, err
+	}
+	if imageProvider != nil {
+		result = append(result, buildTool(generateImageName, "Generate an image from a prompt. Saves to workspace. Parameters: prompt, send (default true), aspect_ratio (optional), size (optional: resolution tier or pixels).", generateImageParams(), func(a json.RawMessage) (string, error) { return generateImageExec(rt, run, imageProvider, a) }))
 	}
 
 	searchProvider, err := searchfactory.Create(cfg.Search)

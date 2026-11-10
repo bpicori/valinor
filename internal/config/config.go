@@ -39,6 +39,12 @@ const (
 // Default search configuration.
 const DefaultSearchMaxResults = 10
 
+// Image generation defaults.
+const (
+	DefaultImageGenerationBaseURL = "https://openrouter.ai/api/v1"
+	SuggestedImageModel           = "bytedance-seed/seedream-5-0-flash"
+)
+
 // Default context compression configuration.
 const DefaultPreserveRecentMessages = 20
 
@@ -67,6 +73,9 @@ type Config struct {
 	// Search configures the web_search and web_fetch tools.
 	Search SearchConfig `toml:"search"`
 
+	// ImageGeneration configures the generate_image tool.
+	ImageGeneration ImageGenerationConfig `toml:"image_generation"`
+
 	// Context holds context-window compression settings.
 	Context ContextConfig `toml:"context"`
 }
@@ -83,6 +92,20 @@ type SearchConfig struct {
 	BaseURL string `toml:"base_url"`
 	// MaxResults is the default number of results (1-50).
 	MaxResults int `toml:"max_results"`
+}
+
+// ImageGenerationConfig configures the generate_image tool.
+// An empty provider disables the tool; image generation is independent of the
+// chat provider.
+type ImageGenerationConfig struct {
+	// Provider selects the image backend (supported: "openrouter").
+	Provider string `toml:"provider"`
+	// APIKey authenticates the provider.
+	APIKey string `toml:"api_key"`
+	// BaseURL overrides the provider default endpoint.
+	BaseURL string `toml:"base_url"`
+	// Model is the image model slug (e.g. bytedance-seed/seedream-5-0-flash).
+	Model string `toml:"model"`
 }
 
 // Default context window and output settings.
@@ -156,11 +179,6 @@ type ProviderConfig struct {
 	TranscriptionEnabled bool `toml:"transcription_enabled"`
 	// TranscriptionModel is the STT model slug (e.g. openai/whisper-1 on OpenRouter).
 	TranscriptionModel string `toml:"transcription_model"`
-
-	// ImageGenerationEnabled enables the generate_image tool for sessions using this provider.
-	ImageGenerationEnabled bool `toml:"image_generation_enabled"`
-	// ImageModel is the image model slug (e.g. openai/gpt-image-1 on OpenRouter).
-	ImageModel string `toml:"image_model"`
 }
 
 // TranscriptionProvider returns the provider configured for voice transcription.

@@ -25,6 +25,7 @@ const (
 	stepNetworking
 	stepAgent
 	stepTelegram
+	stepImage
 	stepReview
 	stepDone
 )
@@ -384,8 +385,8 @@ func (m *Model) handleReviewKey(keyMsg tea.KeyMsg) (bool, tea.Cmd) {
 		m.step = stepDone
 		return true, tea.Quit
 	case "esc":
-		m.step = stepTelegram
-		m.form = m.buildStepForm(stepTelegram, m.panelWidth()-8)
+		m.step = stepImage
+		m.form = m.buildStepForm(stepImage, m.panelWidth()-8)
 		return true, nil
 	}
 	if isNextStepKey(keyMsg, true) {
@@ -456,6 +457,25 @@ func (m *Model) buildStepForm(s step, width int) fieldForm {
 				hint:  "comma-separated numeric IDs from @userinfobot; empty denies everyone",
 			},
 		}, width)
+	case stepImage:
+		enabled := "no"
+		if m.cfg.ImageGeneration.Provider != "" {
+			enabled = "yes"
+		}
+		model := m.cfg.ImageGeneration.Model
+		if model == "" {
+			model = config.SuggestedImageModel
+		}
+		baseURL := m.cfg.ImageGeneration.BaseURL
+		if baseURL == "" {
+			baseURL = config.DefaultImageGenerationBaseURL
+		}
+		return newFieldForm([]formField{
+			{label: "Enable Image Generation", kind: fieldBool, value: enabled, hint: "generate images through OpenRouter"},
+			{label: "OpenRouter API Key", kind: fieldString, value: m.cfg.ImageGeneration.APIKey, hint: "from openrouter.ai/keys; image models are billed"},
+			{label: "Image Model", kind: fieldString, value: model, hint: "e.g. bytedance-seed/seedream-5-0-flash"},
+			{label: "OpenRouter Base URL", kind: fieldString, value: baseURL, hint: "https://openrouter.ai/api/v1"},
+		}, width)
 	default:
 		return fieldForm{}
 	}
@@ -495,6 +515,25 @@ func (m *Model) applyForm() error {
 			return err
 		}
 		m.cfg.Telegram.AllowedUserIDs = ids
+	case stepImage:
+		enabled := m.form.fieldBoolAt(0)
+		apiKey := strings.TrimSpace(m.form.fieldValue("OpenRouter API Key"))
+		model := strings.TrimSpace(m.form.fieldValue("Image Model"))
+		baseURL := strings.TrimSpace(m.form.fieldValue("OpenRouter Base URL"))
+		if enabled {
+			if apiKey == "" {
+				return fmt.Errorf("OpenRouter API key is required for image generation")
+			}
+			if model == "" {
+				return fmt.Errorf("image model is required for image generation")
+			}
+			m.cfg.ImageGeneration.Provider = "openrouter"
+		} else {
+			m.cfg.ImageGeneration.Provider = ""
+		}
+		m.cfg.ImageGeneration.APIKey = apiKey
+		m.cfg.ImageGeneration.Model = model
+		m.cfg.ImageGeneration.BaseURL = baseURL
 	}
 	if m.cfg.ValinorDir == "" {
 		m.cfg.ValinorDir = config.DefaultValinorDir
@@ -530,6 +569,11 @@ func (m *Model) refreshReview() {
 	b.WriteString(fmt.Sprintf("Max iterations:    %d\n", m.cfg.MaxAgentIterations))
 	b.WriteString(fmt.Sprintf("Preserve recent:   %d messages\n", m.cfg.Context.PreserveRecentMessages))
 	b.WriteString(fmt.Sprintf("Telegram:          enabled (%d allowed users)\n", len(m.cfg.Telegram.AllowedUserIDs)))
+	if m.cfg.ImageGeneration.Provider != "" {
+		b.WriteString(fmt.Sprintf("Image generation:  enabled (%s)\n", m.cfg.ImageGeneration.Model))
+	} else {
+		b.WriteString("Image generation:  disabled\n")
+	}
 	b.WriteString("\n")
 	b.WriteString(m.styles.hint.Render("Press enter to save to " + m.savePath))
 	m.review.SetContent(b.String())

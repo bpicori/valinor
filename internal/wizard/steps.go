@@ -11,5 +11,6 @@ var wizardSteps = []wizardStep{
 	{stepNetworking, "Gateway"},
 	{stepAgent, "Agent & Context"},
 	{stepTelegram, "Telegram"},
+	{stepImage, "Image Generation"},
 	{stepReview, "Review & Save"},
 }

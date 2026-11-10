@@ -191,6 +191,17 @@ func Validate(cfg Config) error {
 			return fmt.Errorf("search.max_results must be between 1 and 50")
 		}
 	}
+	if cfg.ImageGeneration.Provider != "" {
+		if cfg.ImageGeneration.Provider != "openrouter" {
+			return fmt.Errorf("image_generation.provider %q is not supported (supported: openrouter)", cfg.ImageGeneration.Provider)
+		}
+		if strings.TrimSpace(cfg.ImageGeneration.APIKey) == "" {
+			return fmt.Errorf("image_generation.api_key is required")
+		}
+		if strings.TrimSpace(cfg.ImageGeneration.Model) == "" {
+			return fmt.Errorf("image_generation.model is required")
+		}
+	}
 	if cfg.Context.WindowTokens > 0 && cfg.Context.WindowTokens < 8000 {
 		return fmt.Errorf("context.window_tokens must be at least 8000")
 	}
@@ -259,6 +270,12 @@ func ApplyDefaults(cfg Config, md toml.MetaData) Config {
 		}
 		if cfg.Search.MaxResults > 50 {
 			cfg.Search.MaxResults = 50
+		}
+	}
+
+	if cfg.ImageGeneration.Provider != "" {
+		if cfg.ImageGeneration.BaseURL == "" {
+			cfg.ImageGeneration.BaseURL = DefaultImageGenerationBaseURL
 		}
 	}
 

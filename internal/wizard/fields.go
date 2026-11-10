@@ -136,19 +136,19 @@ func (f *fieldForm) fieldBoolAt(i int) bool {
 func (f *fieldForm) render(s styles) string {
 	var b strings.Builder
 	for i, field := range f.fields {
+		if field.kind == fieldBool {
+			b.WriteString(renderBoolField(s, field.label, f.fieldBoolAt(i), i == f.focus))
+			b.WriteString("\n\n")
+			continue
+		}
 		label := s.label.Render(field.label)
 		if field.optional {
 			label += s.hint.Render(" optional")
 		}
 		b.WriteString(label)
 		b.WriteString("\n")
-		if field.kind == fieldBool {
-			b.WriteString(renderBoolField(s, field.label, f.fieldBoolAt(i), i == f.focus))
-			b.WriteString("\n\n")
-			continue
-		}
 		b.WriteString(renderInputBox(s, f.inputs[i], i == f.focus, f.width))
-		if field.hint != "" && field.kind != fieldBool {
+		if field.hint != "" {
 			b.WriteString("\n")
 			b.WriteString(s.hint.Render(field.hint))
 		}

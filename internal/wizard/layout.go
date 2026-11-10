@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	sidebarWidth = 22
+	sidebarWidth  = 22
 	maxPanelWidth = 64
 	footerBarH    = 2
 	headerH       = 3
@@ -109,8 +109,10 @@ func (m *Model) progressIndex() int {
 		return 3
 	case stepTelegram:
 		return 4
-	case stepReview, stepDone:
+	case stepImage:
 		return 5
+	case stepReview, stepDone:
+		return 6
 	default:
 		return 0
 	}
@@ -142,6 +144,8 @@ func (m *Model) panelTitle() string {
 		return "Agent & Context"
 	case stepTelegram:
 		return "Telegram Bot"
+	case stepImage:
+		return "Image Generation"
 	case stepReview:
 		return "Review Configuration"
 	default:

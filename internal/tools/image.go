@@ -1,20 +1,18 @@
 package tools
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"valinor/internal/config"
 	"valinor/internal/event"
+	"valinor/internal/imagegen"
 	"valinor/internal/sandbox"
 )
 
@@ -24,19 +22,6 @@ const (
 	maxImageBytes          = 10 << 20
 	imageGenerationTimeout = 120 * time.Second
 )
-
-type imageGenerateRequest struct {
-	Model       string `json:"model"`
-	Prompt      string `json:"prompt"`
-	AspectRatio string `json:"aspect_ratio,omitempty"`
-	Size        string `json:"size,omitempty"`
-}
-
-type imageGenerateResponse struct {
-	Data []struct {
-		B64JSON string `json:"b64_json"`
-	} `json:"data"`
-}
 
 func sendImageParams() map[string]any {
 	return map[string]any{
@@ -70,7 +55,7 @@ func generateImageParams() map[string]any {
 			},
 			"size": map[string]string{
 				"type":        "string",
-				"description": "Optional size tier or pixels, e.g. 2K or 1024x1024.",
+				"description": "Optional resolution tier (512, 768, 1K, 1.5K, 2K, 4K) or explicit pixels (e.g. 1024x1024).",
 			},
 		},
 		"required":             []string{"prompt"},
@@ -109,9 +94,12 @@ func sendImageExec(rt *sandbox.Runtime, runContext *RunContext, args json.RawMes
 	return cleaned, nil
 }
 
-func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, providerCfg config.ProviderConfig, args json.RawMessage) (string, error) {
+func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, generator imagegen.Provider, args json.RawMessage) (string, error) {
 	if rt == nil {
 		return "", fmt.Errorf("sandbox runtime is required")
+	}
+	if generator == nil {
+		return "Tool Error: image generation is not configured.", nil
 	}
 
 	var payload struct {
@@ -128,9 +116,6 @@ func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, providerCfg 
 	if prompt == "" {
 		return "Tool Error: prompt is required.", nil
 	}
-	if configErr := imageGenerationConfigError(providerCfg); configErr != "" {
-		return configErr, nil
-	}
 
 	send := true
 	if payload.Send != nil {
@@ -140,13 +125,20 @@ func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, providerCfg 
 	ctx, cancel := context.WithTimeout(context.Background(), imageGenerationTimeout)
 	defer cancel()
 
-	data, err := generateImageHTTP(ctx, providerCfg, prompt, payload.AspectRatio, payload.Size)
+	data, err := generator.Generate(ctx, imagegen.Params{
+		Prompt:      prompt,
+		AspectRatio: payload.AspectRatio,
+		Size:        payload.Size,
+	})
 	if err != nil {
 		return "", fmt.Errorf("generate image: %w", err)
 	}
 
 	mimeType, imageErr := validateImageBytes(data)
 	if imageErr != "" {
+		if strings.Contains(imageErr, "exceeds") {
+			imageErr += " Retry with a smaller size (e.g. 1K)."
+		}
 		return imageErr, nil
 	}
 
@@ -166,73 +158,6 @@ func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, providerCfg 
 		return fmt.Sprintf("%s (sent to client)", relativePath), nil
 	}
 	return relativePath, nil
-}
-
-func imageGenerationConfigError(cfg config.ProviderConfig) string {
-	if !cfg.ImageGenerationEnabled {
-		return "Tool Error: image generation is not enabled for this provider."
-	}
-	if cfg.Type != "openai" && cfg.Type != "openai-compatible" {
-		return "Tool Error: image generation requires an openai-compatible provider."
-	}
-	if strings.TrimSpace(cfg.BaseURL) == "" {
-		return "Tool Error: image generation requires base_url on the provider."
-	}
-	if strings.TrimSpace(cfg.APIKey) == "" {
-		return "Tool Error: image generation requires api_key on the provider."
-	}
-	if strings.TrimSpace(cfg.ImageModel) == "" {
-		return "Tool Error: image_model is not configured for this provider."
-	}
-	return ""
-}
-
-func generateImageHTTP(ctx context.Context, cfg config.ProviderConfig, prompt, aspectRatio, size string) ([]byte, error) {
-	body, err := json.Marshal(imageGenerateRequest{
-		Model:       cfg.ImageModel,
-		Prompt:      prompt,
-		AspectRatio: strings.TrimSpace(aspectRatio),
-		Size:        strings.TrimSpace(size),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("marshal image request: %w", err)
-	}
-
-	endpoint := strings.TrimRight(cfg.BaseURL, "/") + "/images"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create image request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("execute image request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read image response: %w", err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("image request failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-
-	var result imageGenerateResponse
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("parse image response: %w", err)
-	}
-	if len(result.Data) == 0 || strings.TrimSpace(result.Data[0].B64JSON) == "" {
-		return nil, fmt.Errorf("image generation returned no images")
-	}
-
-	data, err := base64.StdEncoding.DecodeString(result.Data[0].B64JSON)
-	if err != nil {
-		return nil, fmt.Errorf("decode generated image: %w", err)
-	}
-	return data, nil
 }
 
 func validateImageBytes(data []byte) (string, string) {

@@ -28,7 +28,7 @@ skills: they are procedures over files, shell, and Python.
 | `send_image` | Keep | Inline image previews. |
 | `send_file` | Keep | Implemented: sends a workspace file as a document attachment. |
 | `ask_user` | Keep | Implemented: structured question with optional Telegram buttons. |
-| `generate_image` | Keep | Register only when the provider is configured for image generation. |
+| `generate_image` | Keep | Register only when `[image_generation]` is configured. |
 | `cronjob` | Keep | Compact schema in P2. |
 | `web_search` | Keep | Single search path when `[search]` is configured. |
 | `web_fetch` | Keep | Only when the provider implements `search.Fetcher`. |

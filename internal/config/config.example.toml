@@ -37,7 +37,7 @@ type = "gemini"
 api_key = "..."
 default_model = "gemini-2.0-flash"
 
-# OpenRouter example with voice transcription and image generation for Telegram:
+# OpenRouter example with voice transcription for Telegram:
 # [providers.openrouter]
 # type = "openai-compatible"
 # api_key = "sk-or-..."
@@ -45,8 +45,6 @@ default_model = "gemini-2.0-flash"
 # default_model = "deepseek/deepseek-v4-pro"
 # transcription_enabled = true
 # transcription_model = "openai/whisper-1"
-# image_generation_enabled = true
-# image_model = "openai/gpt-image-1"
 
 # DeepSeek example. Thinking is optional at the API level; set it explicitly
 # when you want reasoning content.
@@ -63,6 +61,14 @@ default_model = "gemini-2.0-flash"
 # api_key = ""            # defaults to providers.deepseek.api_key
 # base_url = ""           # defaults to https://api.deepseek.com
 # max_results = 10        # default results per search (1-50)
+
+# Image generation (generate_image tool), independent of the chat provider.
+# Uses OpenRouter's Image API: POST {base_url}/images.
+# [image_generation]
+# provider = "openrouter"                    # "" disables the tool; supported: openrouter
+# api_key = "sk-or-..."                      # OpenRouter key with image-model access
+# base_url = "https://openrouter.ai/api/v1"  # optional; default shown
+# model = "bytedance-seed/seedream-5-0-flash"  # Seedream 5.0 Flash (1K/2K, ~$0.018/image)
 
 # Context compression (triggers at 85% of 200K window)
 # [context]
