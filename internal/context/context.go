@@ -311,7 +311,7 @@ var clientToolPolicies = []struct {
 }{
 	{
 		name:   "generate_image",
-		policy: "Generate an image from a prompt, or edit an existing photo by passing its workspace path. Saves under `images/` and delivers to the client by default. Photo edits must use this tool, not a pixel-editing script.",
+		policy: "Generate an image from a prompt, or transform existing images using workspace image paths as references. Saves under `images/` and delivers to the client by default.",
 	},
 	{
 		name:   "send_image",

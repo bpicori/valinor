@@ -43,12 +43,12 @@ func generateImageParams() map[string]any {
 		"properties": map[string]any{
 			"prompt": map[string]string{
 				"type":        "string",
-				"description": "Text description of the image to generate, or of the change to apply when images are supplied.",
+				"description": "Text description of the image, or of the transformation to apply when reference images are supplied.",
 			},
 			"images": map[string]any{
 				"type":        "array",
 				"items":       map[string]string{"type": "string"},
-				"description": "Optional workspace-relative paths of reference images to edit, restyle, or combine (at most 14). Read them with read_image first. When set, the prompt describes the desired change.",
+				"description": "Optional workspace-relative paths of reference images that guide generation or transformation (at most 14). Read them with `read_image` first.",
 			},
 			"send": map[string]any{
 				"type":        "boolean",

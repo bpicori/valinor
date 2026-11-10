@@ -110,7 +110,7 @@ func BuildTools(workspaceDir string, providerName, model string) ([]Tool, *RunCo
 		return nil, nil, err
 	}
 	if imageProvider != nil {
-		result = append(result, buildTool(generateImageName, "Generate or edit an image. Saves to workspace. Use for photo edits by passing images (workspace paths) instead of writing an image-processing script. Parameters: prompt, send (default true), images (optional reference image paths to edit or restyle), aspect_ratio (optional), size (optional: resolution tier or pixels).", generateImageParams(), func(a json.RawMessage) (string, error) { return generateImageExec(rt, run, imageProvider, a) }))
+		result = append(result, buildTool(generateImageName, "Generate an image from a prompt, or transform existing images using workspace image paths as references. Saves to workspace.", generateImageParams(), func(a json.RawMessage) (string, error) { return generateImageExec(rt, run, imageProvider, a) }))
 	}
 
 	searchProvider, err := searchfactory.Create(cfg.Search)
