@@ -107,3 +107,12 @@ func Exclude(tools []Tool, names ...string) []Tool {
 	}
 	return filtered
 }
+
+// Names returns tool names in slice order.
+func Names(tools []Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}

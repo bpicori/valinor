@@ -27,6 +27,17 @@ const memorySectionEnd = "<!-- /LoadedMemory -->"
 // first line because the base prompt mentions the header by name.
 const memorySectionStart = "## LoadedMemory\nCurrent content of MEMORY.md"
 
+// clientToolsPlaceholder is replaced during composition with the client-facing
+// tools registered for the run.
+const clientToolsPlaceholder = "<!-- client-tools -->"
+
+// clientToolsStart and clientToolsEnd delimit the generated Client Tools block
+// so it can be refreshed when the registered tool set changes.
+const (
+	clientToolsStart = "<!-- client-tools:start -->"
+	clientToolsEnd   = "<!-- client-tools:end -->"
+)
+
 var (
 	skillHeaderRE      = regexp.MustCompile(`(?s)^---\s*\n(.*?)\n---`)
 	skillNameRE        = regexp.MustCompile(`(?m)^name:\s*(.+)$`)
@@ -96,8 +107,9 @@ func SystemPrompt() string {
 	return embeddedSystemPrompt
 }
 
-// BuildSystemPrompt builds the composed system prompt for the workspace.
-func BuildSystemPrompt(workspaceDir string) (string, error) {
+// BuildSystemPrompt builds the composed system prompt for the workspace and the
+// tools registered for this run.
+func BuildSystemPrompt(workspaceDir string, toolNames []string) (string, error) {
 	logger.Debug("context build start", logger.BuildMetadata("workspace_dir", workspaceDir))
 	identity, err := LoadIdentity(workspaceDir)
 	if err != nil {
@@ -115,7 +127,7 @@ func BuildSystemPrompt(workspaceDir string) (string, error) {
 		return "", fmt.Errorf("load memory: %w", err)
 	}
 
-	prompt := composeSystemPrompt(SystemPrompt(), identity, skills, memoryContent)
+	prompt := composeSystemPrompt(SystemPrompt(), identity, skills, memoryContent, toolNames)
 	logger.Info("context build success", logger.BuildMetadata("workspace_dir", workspaceDir, "identity_size", len(identity), "skill_count", len(skills), "memory_size", len(memoryContent)))
 	return prompt, nil
 }
@@ -254,9 +266,10 @@ func loadNestedSkill(skillsDir, subdir string) *Skill {
 	}
 }
 
-func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory string) string {
+func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory string, toolNames []string) string {
 	var sb strings.Builder
-	sb.WriteString(strings.TrimSpace(basePrompt))
+	base := strings.Replace(strings.TrimSpace(basePrompt), clientToolsPlaceholder, clientToolsSection(toolNames), 1)
+	sb.WriteString(base)
 
 	sb.WriteString("\n\n")
 	sb.WriteString(currentDateContext())
@@ -288,6 +301,74 @@ func composeSystemPrompt(basePrompt, identity string, skills []Skill, memory str
 	sb.WriteString(memorySection(memory))
 
 	return strings.TrimSpace(sb.String())
+}
+
+// clientToolPolicies describes how client-facing tools are used. Parameters are
+// intentionally omitted; tool schemas are authoritative.
+var clientToolPolicies = []struct {
+	name   string
+	policy string
+}{
+	{
+		name:   "generate_image",
+		policy: "Generate an image from a prompt, or edit an existing photo by passing its workspace path. Saves under `images/` and delivers to the client by default. Photo edits must use this tool, not a pixel-editing script.",
+	},
+	{
+		name:   "send_image",
+		policy: "Send an existing workspace image to the client inline. Use for charts, downloads, or re-sending saved images.",
+	},
+	{
+		name:   "send_file",
+		policy: "Send an existing workspace file to the client as a document attachment. Use for PDFs, Office files, archives, and original-quality images; prefer send_image for inline previews.",
+	},
+	{
+		name:   "ask_user",
+		policy: "Ask the user a structured question when their choice changes what you do next. Call it, then end the turn and wait; do not guess the answer.",
+	},
+}
+
+// clientToolsSection renders the Client Tools block for the registered tools.
+func clientToolsSection(toolNames []string) string {
+	present := make(map[string]struct{}, len(toolNames))
+	for _, name := range toolNames {
+		present[name] = struct{}{}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(clientToolsStart)
+	sb.WriteString("\n")
+	count := 0
+	for _, tool := range clientToolPolicies {
+		if _, ok := present[tool.name]; !ok {
+			continue
+		}
+		sb.WriteString("- **")
+		sb.WriteString(tool.name)
+		sb.WriteString("** — ")
+		sb.WriteString(tool.policy)
+		sb.WriteString("\n")
+		count++
+	}
+	if count == 0 {
+		sb.WriteString("No client tools are available in this run.\n")
+	}
+	sb.WriteString(clientToolsEnd)
+	return sb.String()
+}
+
+// injectClientTools replaces the generated Client Tools block with one matching
+// the given tool names. It returns the prompt unchanged when the markers are absent.
+func injectClientTools(prompt string, toolNames []string) string {
+	start := strings.Index(prompt, clientToolsStart)
+	if start == -1 {
+		return prompt
+	}
+	endRel := strings.Index(prompt[start:], clientToolsEnd)
+	if endRel == -1 {
+		return prompt
+	}
+	end := start + endRel + len(clientToolsEnd)
+	return prompt[:start] + clientToolsSection(toolNames) + prompt[end:]
 }
 
 // memorySection renders the LoadedMemory block for a MEMORY.md snapshot.

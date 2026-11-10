@@ -18,13 +18,13 @@ type Context struct {
 
 // New creates a fresh context with a built system prompt and tools.
 func New(workspaceDir string, providerName, model string) (Context, error) {
-	systemPrompt, err := BuildSystemPrompt(workspaceDir)
-	if err != nil {
-		return Context{}, fmt.Errorf("build system prompt: %w", err)
-	}
 	builtTools, runContext, err := tools.BuildTools(workspaceDir, providerName, model)
 	if err != nil {
 		return Context{}, fmt.Errorf("build tools: %w", err)
+	}
+	systemPrompt, err := BuildSystemPrompt(workspaceDir, tools.Names(builtTools))
+	if err != nil {
+		return Context{}, fmt.Errorf("build system prompt: %w", err)
 	}
 	return Context{
 		systemPrompt: systemPrompt,
@@ -37,13 +37,13 @@ func New(workspaceDir string, providerName, model string) (Context, error) {
 
 // Resume creates a context from persisted messages, normalizing the system prompt.
 func Resume(workspaceDir string, providerName, model string, messages []Message) (Context, error) {
-	systemPrompt, err := BuildSystemPrompt(workspaceDir)
-	if err != nil {
-		return Context{}, fmt.Errorf("build system prompt: %w", err)
-	}
 	builtTools, runContext, err := tools.BuildTools(workspaceDir, providerName, model)
 	if err != nil {
 		return Context{}, fmt.Errorf("build tools: %w", err)
+	}
+	systemPrompt, err := BuildSystemPrompt(workspaceDir, tools.Names(builtTools))
+	if err != nil {
+		return Context{}, fmt.Errorf("build system prompt: %w", err)
 	}
 	return Context{
 		systemPrompt: systemPrompt,
@@ -77,9 +77,10 @@ func (c *Context) RunContext() *tools.RunContext {
 }
 
 // SetTools updates the tools available in this context.
-func (c *Context) SetTools(tools []tools.Tool, runContext *tools.RunContext) {
-	c.tools = tools
+func (c *Context) SetTools(ts []tools.Tool, runContext *tools.RunContext) {
+	c.tools = ts
 	c.runContext = runContext
+	c.systemPrompt = injectClientTools(c.systemPrompt, tools.Names(ts))
 }
 
 // AppendUserMessage appends a user message to the context.
