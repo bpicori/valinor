@@ -43,7 +43,12 @@ func generateImageParams() map[string]any {
 		"properties": map[string]any{
 			"prompt": map[string]string{
 				"type":        "string",
-				"description": "Text description of the image to generate.",
+				"description": "Text description of the image to generate, or of the change to apply when images are supplied.",
+			},
+			"images": map[string]any{
+				"type":        "array",
+				"items":       map[string]string{"type": "string"},
+				"description": "Optional workspace-relative paths of reference images to edit, restyle, or combine (at most 14). Read them with read_image first. When set, the prompt describes the desired change.",
 			},
 			"send": map[string]any{
 				"type":        "boolean",
@@ -103,10 +108,11 @@ func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, generator im
 	}
 
 	var payload struct {
-		Prompt      string `json:"prompt"`
-		Send        *bool  `json:"send"`
-		AspectRatio string `json:"aspect_ratio"`
-		Size        string `json:"size"`
+		Prompt      string   `json:"prompt"`
+		Images      []string `json:"images"`
+		Send        *bool    `json:"send"`
+		AspectRatio string   `json:"aspect_ratio"`
+		Size        string   `json:"size"`
 	}
 	if err := json.Unmarshal(args, &payload); err != nil {
 		return "", err
@@ -115,6 +121,11 @@ func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, generator im
 	prompt := strings.TrimSpace(payload.Prompt)
 	if prompt == "" {
 		return "Tool Error: prompt is required.", nil
+	}
+
+	references, referenceErr := loadImageReferences(rt, payload.Images)
+	if referenceErr != "" {
+		return referenceErr, nil
 	}
 
 	send := true
@@ -129,6 +140,7 @@ func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, generator im
 		Prompt:      prompt,
 		AspectRatio: payload.AspectRatio,
 		Size:        payload.Size,
+		References:  references,
 	})
 	if err != nil {
 		return "", fmt.Errorf("generate image: %w", err)
@@ -158,6 +170,35 @@ func generateImageExec(rt *sandbox.Runtime, runContext *RunContext, generator im
 		return fmt.Sprintf("%s (sent to client)", relativePath), nil
 	}
 	return relativePath, nil
+}
+
+// loadImageReferences reads workspace images used to guide generation or
+// editing. It returns a tool error message when a path or file is invalid.
+func loadImageReferences(rt *sandbox.Runtime, paths []string) ([]imagegen.Reference, string) {
+	if len(paths) == 0 {
+		return nil, ""
+	}
+	if len(paths) > imagegen.MaxReferences {
+		return nil, fmt.Sprintf("Tool Error: at most %d reference images are supported.", imagegen.MaxReferences)
+	}
+
+	references := make([]imagegen.Reference, 0, len(paths))
+	for _, raw := range paths {
+		cleaned, validationErr := validateRelativePath(raw)
+		if validationErr != "" {
+			return nil, validationErr
+		}
+		data, err := os.ReadFile(filepath.Join(rt.WorkspaceDir(), filepath.FromSlash(cleaned)))
+		if err != nil {
+			return nil, fmt.Sprintf("Tool Error: read reference image %q: %v", raw, err)
+		}
+		mimeType, imageErr := validateImageBytes(data)
+		if imageErr != "" {
+			return nil, imageErr
+		}
+		references = append(references, imagegen.Reference{Data: data, MimeType: mimeType})
+	}
+	return references, ""
 }
 
 func validateImageBytes(data []byte) (string, string) {

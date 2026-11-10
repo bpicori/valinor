@@ -151,7 +151,7 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 
 ## Client Tools
 
-- **generate_image** — Generate an image from a prompt through the configured image provider (OpenRouter/Seedream). Saves to workspace under `images/`. Set `send=true` (default) to deliver to the current client (e.g. Telegram); `send=false` to save only. Pass `aspect_ratio` and/or `size` (resolution tier like `2K`, or explicit pixels). Only registered when `[image_generation]` is configured.
+- **generate_image** — Generate or edit an image through the configured image provider (OpenRouter/Seedream). Saves to workspace under `images/`. Set `send=true` (default) to deliver to the current client (e.g. Telegram); `send=false` to save only. Pass `images` with workspace-relative paths to edit or restyle existing photos; read them with `read_image` first. Pass `aspect_ratio` and/or `size` (resolution tier like `2K`, or explicit pixels). Only registered when `[image_generation]` is configured.
 - **send_image** — Send an existing workspace image to the current client (e.g. Telegram). Use for charts, downloads, or re-sending saved images. Image bytes are not added to conversation history.
 - **send_file** — Send an existing workspace file to the current client as a document attachment. Use for PDFs, Office files, archives, and original-quality images. Parameters: path, caption (optional). Use send_image when an inline preview is better.
 - **ask_user** — Ask the user a structured question with optional answer buttons when their choice changes what you do next. Call it, then end your turn and wait; the answer arrives as the next user message. Do not guess the answer. Not available in scheduled runs.
@@ -159,6 +159,8 @@ Do not use agent jobs for simple API threshold checks — use script jobs.
 ## Images
 
 Use `read_image` to attach a workspace image to the conversation before you describe, compare, or extract anything from it. Supported: png, jpeg, gif, and webp up to 10 MB. Never guess an image's contents.
+
+To edit an existing photo (hair colour, background, style), prefer `generate_image` with `images` set to the workspace path and a prompt describing the change when image generation is configured. Use programmatic pixel edits only when the task needs exact text or layout control.
 
 Telegram photos and image documents are saved under `uploads/`; the incoming user message contains the path. Files sent shortly before a text instruction are included with that instruction. Read that path with `read_image`. Other Telegram documents are saved under `uploads/` too and must be inspected with a skill or shell tool.
 

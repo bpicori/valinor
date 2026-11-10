@@ -25,6 +25,10 @@ const (
 	// maxResponseSize bounds the image response before decoding. A base64
 	// payload of a 10 MB image stays well below this limit.
 	maxResponseSize = 20 << 20
+
+	// maxReferenceBytes bounds the combined size of reference images sent in
+	// one request.
+	maxReferenceBytes = 30 << 20
 )
 
 // Provider generates images through OpenRouter's Image API.
@@ -63,11 +67,21 @@ func (p *Provider) Name() string {
 }
 
 type generateRequest struct {
-	Model       string `json:"model"`
-	Prompt      string `json:"prompt"`
-	AspectRatio string `json:"aspect_ratio,omitempty"`
-	Resolution  string `json:"resolution,omitempty"`
-	Size        string `json:"size,omitempty"`
+	Model           string           `json:"model"`
+	Prompt          string           `json:"prompt"`
+	AspectRatio     string           `json:"aspect_ratio,omitempty"`
+	Resolution      string           `json:"resolution,omitempty"`
+	Size            string           `json:"size,omitempty"`
+	InputReferences []referenceImage `json:"input_references,omitempty"`
+}
+
+type referenceImage struct {
+	Type     string   `json:"type"`
+	ImageURL imageURL `json:"image_url"`
+}
+
+type imageURL struct {
+	URL string `json:"url"`
 }
 
 type imageData struct {
@@ -100,12 +114,18 @@ func (p *Provider) Generate(ctx context.Context, params imagegen.Params) ([]byte
 		aspectRatio = ""
 	}
 
+	references, err := buildReferences(params.References)
+	if err != nil {
+		return nil, err
+	}
+
 	body, err := json.Marshal(generateRequest{
-		Model:       p.model,
-		Prompt:      prompt,
-		AspectRatio: aspectRatio,
-		Resolution:  resolution,
-		Size:        size,
+		Model:           p.model,
+		Prompt:          prompt,
+		AspectRatio:     aspectRatio,
+		Resolution:      resolution,
+		Size:            size,
+		InputReferences: references,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal image request: %w", err)
@@ -163,6 +183,40 @@ func (p *Provider) Generate(ctx context.Context, params imagegen.Params) ([]byte
 		"duration_ms", time.Since(start).Milliseconds(),
 	))
 	return data, nil
+}
+
+// buildReferences encodes reference images as base64 data URIs. OpenRouter's
+// Image API accepts HTTP(S) URLs or data URIs in input_references.
+func buildReferences(refs []imagegen.Reference) ([]referenceImage, error) {
+	if len(refs) == 0 {
+		return nil, nil
+	}
+	if len(refs) > imagegen.MaxReferences {
+		return nil, fmt.Errorf("at most %d reference images are supported", imagegen.MaxReferences)
+	}
+
+	total := 0
+	references := make([]referenceImage, 0, len(refs))
+	for i, ref := range refs {
+		if len(ref.Data) == 0 {
+			return nil, fmt.Errorf("reference image %d is empty", i+1)
+		}
+		total += len(ref.Data)
+		if total > maxReferenceBytes {
+			return nil, fmt.Errorf("reference images exceed %d byte limit", maxReferenceBytes)
+		}
+		mimeType := strings.TrimSpace(ref.MimeType)
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		references = append(references, referenceImage{
+			Type: "image_url",
+			ImageURL: imageURL{
+				URL: "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(ref.Data),
+			},
+		})
+	}
+	return references, nil
 }
 
 // splitSize maps a tool size argument to the OpenRouter resolution or pixel
